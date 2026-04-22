@@ -231,7 +231,8 @@ the `init` event lists each server with `{"name":"...","status":"connected"|"pen
 
 - **`--permission-prompt-tool` alternative for approver shim**: flag is absent.
   Task 16 (approver shim) must be redesigned. Recommended path: PreToolUse hook
-  that calls back to claw-drive's approval API.
+  that calls back to claw-drive's approval API. See "Hook timeout and control
+  behavior" section below — this path is now confirmed fully viable.
 - **Content-as-array input**: not probed. Likely works (Anthropic API standard)
   but not confirmed.
 - **Error result shape**: `subtype` of error cases (e.g. `error_max_turns`,
@@ -264,3 +265,185 @@ the `init` event lists each server with `{"name":"...","status":"connected"|"pen
 --model <alias-or-full-name>   Override model
 --max-budget-usd <amount>      Spend cap
 ```
+
+---
+
+## Hook timeout and control behavior (probe 2)
+
+Probed 2026-04-22 against claude 2.1.117. All probes run from
+`~/tmp/claw-drive-hook-probe/` with `--permission-mode=default`,
+`--max-turns=2`, `--verbose`, `--include-hook-events`.
+
+### Default hook timeout
+
+Per official docs (`code.claude.com/docs/en/hooks`): **600 seconds (10 minutes)**
+for `"type":"command"` hooks when no `timeout` field is specified.
+
+Empirically verified: a 30-second blocking hook with **no** `timeout` field in
+settings completed successfully — `HOOK_END` was logged after 30s, tool ran.
+Wall time was ~45s total (includes API call).
+
+### What happens on timeout
+
+A hook that sleeps 30s with `"timeout": 15` in settings.json was killed at 15s.
+The hook_response event shows:
+
+    {"hook_name":"PreToolUse:Bash","exit_code":1,"outcome":"cancelled","stdout":"","stderr":""}
+
+Key observations:
+- `"outcome":"cancelled"` — the hook was killed (SIGTERM/SIGKILL from claude)
+- `"exit_code":1` — treated as a non-blocking error (NOT exit code 2)
+- **The tool ran anyway** — the Bash tool still executed after the hook timeout
+- `"permission_denials":[]` in the result — no denial was recorded
+
+Implication: **hook timeout = allow by default**. A hook that times out does
+NOT block the tool. For an approver shim, this means:
+- The hook MUST respond before the configured timeout, OR
+- Set timeout high enough that it never fires during normal operation, OR
+- Use exit code 2 to explicitly deny before timing out (a "fail-secure" pattern:
+  deny if the approver doesn't respond in time)
+
+### Configured timeout field
+
+The `"timeout"` field (integer, seconds) in a hook entry is **honored by
+claude 2.1.117**. Example settings.json:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/path/to/hook.sh",
+            "timeout": 600
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Setting `"timeout": 600` gives the hook up to 10 minutes — the same as the
+undocumented default. For human-in-the-loop escalations via Telegram/web,
+values in the 300–600 range are practical. The existing pretooluse-guard.sh in
+`~/.claude/settings.json` uses `"timeout": 10`; the PostToolUse hook uses
+`"timeout": 60`.
+
+### PreToolUse stdin payload shape
+
+The exact JSON piped to a PreToolUse hook on stdin (captured from Probe A):
+
+```json
+{
+  "session_id": "70f95d72-cb8d-42af-b0d0-0ec3e5051357",
+  "transcript_path": "~/.claude/projects/-home-ren-tmp-claw-drive-hook-probe/70f95d72-cb8d-42af-b0d0-0ec3e5051357.jsonl",
+  "cwd": "/tmp/claw-drive-hook-probe",
+  "permission_mode": "default",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "echo hello-hook",
+    "description": "Print hello-hook"
+  },
+  "tool_use_id": "toolu_01NmKMQtqanMZw2bzFMwZBas"
+}
+```
+
+Fields always present: `session_id`, `transcript_path`, `cwd`,
+`permission_mode`, `hook_event_name` (`"PreToolUse"`), `tool_name`,
+`tool_input` (object matching the tool's input schema), `tool_use_id`.
+
+### Structured decision responses
+
+Two response formats were tested. Both work in 2.1.117.
+
+**Approve (hookSpecificOutput format — preferred):**
+
+```json
+{
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "allow",
+    "permissionDecisionReason": "approved by claw-drive approver"
+  }
+}
+```
+Exit 0. Tool runs. `permission_denials: []`.
+
+**Block (hookSpecificOutput format):**
+
+```json
+{
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "deny",
+    "permissionDecisionReason": "denied: approval required"
+  }
+}
+```
+Exit 2. Tool does NOT run. The `permissionDecisionReason` string propagates as
+the error message in the `tool_result` fed back to the model:
+
+    {"type":"tool_result","content":"denied: approval required","is_error":true}
+
+The model correctly interprets this as a hook block (it cited the hook path and
+reason in its response). The `result` event includes:
+
+    "permission_denials": [{"tool_name": "Bash", "tool_use_id": "toolu_...", "tool_input": {...}}]
+
+**Block (exit code 2 only — no JSON):**
+
+Writing to stderr and exiting 2 (without JSON stdout) also blocks. The error
+message fed back to the model is formatted as:
+
+    "PreToolUse:Bash hook error: [/path/to/hook.sh]: <stderr content>"
+
+Both paths populate `permission_denials` in the result event.
+
+**The simple `{"decision":"approve"}` format is NOT the correct format for
+PreToolUse.** The correct field is `hookSpecificOutput.permissionDecision` with
+values `allow`, `deny`, `ask`, or `defer`. Exit code 2 alone (without JSON) is
+the simplest block path.
+
+### Hook event stream behavior
+
+With `--include-hook-events`:
+- `{"type":"system","subtype":"hook_started","hook_name":"PreToolUse:Bash",...}`
+  fires immediately when claude starts the hook.
+- `{"type":"system","subtype":"hook_response","hook_name":"PreToolUse:Bash",
+  "exit_code":N,"outcome":"success"|"error"|"cancelled",...}` fires when the
+  hook completes or times out.
+- Multiple hooks can fire for the same PreToolUse event (one per registered
+  hook). The global `~/.claude/settings.json` hooks run alongside the
+  `--settings` hooks.
+
+### Note: `--output-format=stream-json` requires `--verbose`
+
+In 2.1.117, running `claude -p --output-format=stream-json` without `--verbose`
+produces the error:
+
+    Error: When using --print, --output-format=stream-json requires --verbose
+
+Always add `--verbose` when using `--output-format=stream-json` with `-p`.
+
+### Recommendation for approver shim (Task 16)
+
+**Hook-based approver is fully viable with a configured high timeout.**
+
+Recommended pattern:
+1. Set `"timeout": 600` in the PreToolUse hook entry.
+2. Hook receives stdin JSON with `tool_name`, `tool_input`, `tool_use_id`.
+3. Hook POSTs to claw-drive's approval queue and polls for a decision.
+4. If approved: output `hookSpecificOutput` with `permissionDecision: "allow"`
+   and exit 0.
+5. If denied: output `hookSpecificOutput` with `permissionDecision: "deny"` and
+   reason, then exit 2.
+6. If approver unreachable or times out: exit 2 (fail-secure — deny by default).
+
+The `permissionDecisionReason` string is surfaced to the model in the tool
+result error, so it can be used to convey denial context back to the session.
+
