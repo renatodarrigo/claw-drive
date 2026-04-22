@@ -14,6 +14,8 @@ import { readState, writeState, type SessionState } from "../lib/state.js";
 import { appendEvent, type Event } from "../lib/events.js";
 import { policyDigest } from "../lib/policy.js";
 import { parseClaudeLine } from "./stream-parser.js";
+import { startSocketServer } from "./socket-server.js";
+import type { ControlRequest, ControlResponse } from "../lib/socket-protocol.js";
 
 interface RunnerContext {
   sessionId: string;
@@ -87,6 +89,44 @@ async function runStdoutLoop(ctx: RunnerContext): Promise<void> {
         await emitEvent(ctx, partial as Omit<Event, "seq" | "at">);
       }
     }
+  }
+}
+
+async function handleRequest(
+  ctx: RunnerContext,
+  req: ControlRequest
+): Promise<ControlResponse> {
+  switch (req.op) {
+    case "ping":
+      return { id: req.id, ok: true, result: { alive: true } };
+
+    case "send_turn": {
+      const turnId = `turn_${ctx.state.turns + 1}`;
+      ctx.state.turns += 1;
+      ctx.currentTurnId = turnId;
+      await emitEvent(ctx, {
+        kind: "turn_started",
+        turn_id: turnId,
+        message: req.message,
+      } as Omit<Event, "seq" | "at">);
+      // Write the user turn to B's stdin as stream-json
+      const payload = {
+        type: "user",
+        message: { role: "user", content: req.message },
+      };
+      ctx.b.stdin!.write(JSON.stringify(payload) + "\n");
+      return { id: req.id, ok: true, result: { turn_id: turnId } };
+    }
+
+    // Other ops added in Tasks 13–15 (approve_tool, resolve_tool_call,
+    // update_policy, interrupt_turn, stop_session)
+    default:
+      return {
+        id: req.id,
+        ok: false,
+        error: "UNKNOWN_OP",
+        message: `unimplemented op: ${(req as ControlRequest).op}`,
+      };
   }
 }
 
@@ -169,6 +209,20 @@ export async function runRunner(sessionId: string): Promise<void> {
   });
   void stdoutDone;
 
+  const server = await startSocketServer(socketPath(ctx.sessionId), (req) =>
+    handleRequest(ctx, req)
+  );
+
+  // If scenario_brief was supplied at session-start, queue it as the first turn
+  const brief = (ctx.state as unknown as { scenario_brief?: string }).scenario_brief;
+  if (typeof brief === "string" && brief.length > 0) {
+    await handleRequest(ctx, {
+      id: "boot",
+      op: "send_turn",
+      message: brief,
+    });
+  }
+
   await new Promise<void>((resolve) => {
     process.on("SIGTERM", () => resolve());
     process.on("SIGINT", () => resolve());
@@ -180,6 +234,7 @@ export async function runRunner(sessionId: string): Promise<void> {
   });
 
   // Teardown
+  try { server.close(); } catch { /* */ }
   try { b.kill("SIGTERM"); } catch { /* already dead */ }
   await fs.rm(readyMarkerPath(sessionId), { force: true });
   await logHandle.close().catch(() => {});
