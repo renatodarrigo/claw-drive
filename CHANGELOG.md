@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.1] — 2026-04-22
+
+### Fixed
+
+- **`claw-drive watch` subscribe-race: driver missed pending gates that landed before it subscribed.** When the driver's flow is `start_session → Monitor(watch_command)`, the ~100 ms between the two is enough for the runner to emit `session_started`, `turn_started` (scenario_brief auto-send), and often the first `tool_decision_required`. v0.2's watch default "from current seq" skipped them, and the driver sat silent on a pending it never saw. Surfaced during the CLV-16 Delivery dogfood (2026-04-22). Fix: on subscribe, watch now emits a one-shot "catch-up" of events the new subscriber needs to know about — `tool_decision_required` without a matching `tool_decision_resolved` (unresolved gates) and `session_stopped` if present (so watch exits a dead session immediately). Anti-flood design intent preserved: history like `session_started`, `turn_started`, `assistant_text`, completed turns are still skipped. `--replay` behavior unchanged.
+
+### Added
+
+- **`catchUpPending(events)`** — pure helper in `src/cli/commands/watch.ts`, exported for unit testing. Given the full event history, returns the subset a new subscriber needs: unresolved `tool_decision_required` + `session_stopped`.
+- 7 new unit tests covering `catchUpPending` edge cases (empty, unresolved-only, mixed, skipped-resolved, session_stopped propagation, noise rejection, order preservation).
+
 ## [0.2.0] — 2026-04-22
 
 ### Added
