@@ -1,0 +1,30 @@
+{
+  "name": "claw-drive",
+  "version": "0.1.0",
+  "description": "Drive-as-user MCP server + CLI for Claude Code dogfooding",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "claw-drive": "bin/claw-drive"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:unit": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "author": "Renato D'Arrigo",
+  "license": "MIT"
+}
