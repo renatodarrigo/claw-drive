@@ -12,7 +12,7 @@ import {
 } from "../lib/paths.js";
 import { readState, writeState, type SessionState } from "../lib/state.js";
 import { appendEvent, type Event } from "../lib/events.js";
-import { policyDigest, matchPolicy } from "../lib/policy.js";
+import { policyDigest, matchPolicy, deriveRuleFromResolved, validatePolicy } from "../lib/policy.js";
 import { parseClaudeLine } from "./stream-parser.js";
 import { startSocketServer } from "./socket-server.js";
 import type { ControlRequest, ControlResponse } from "../lib/socket-protocol.js";
@@ -213,8 +213,67 @@ async function handleRequest(
       });
     }
 
-    // Other ops added in Tasks 14–15 (resolve_tool_call,
-    // update_policy, interrupt_turn, stop_session)
+    case "resolve_tool_call": {
+      const pending = ctx.pendingApprovals.get(req.call_id);
+      if (!pending) {
+        return {
+          id: req.id,
+          ok: false,
+          error: "NOT_PENDING",
+          message: "call_id not awaiting resolution",
+        };
+      }
+      ctx.pendingApprovals.delete(req.call_id);
+
+      await emitEvent(ctx, {
+        kind: "tool_decision_resolved",
+        turn_id: pending.turn_id,
+        call_id: req.call_id,
+        action: req.action,
+        reason: req.reason,
+        resolved_by: "user_mcp",
+      } as Omit<Event, "seq" | "at">);
+
+      if (req.remember_as_policy) {
+        const rule = deriveRuleFromResolved(
+          req.action,
+          pending.tool,
+          pending.args as Record<string, unknown>
+        );
+        const p = ctx.state.policy;
+        if (p !== "bypass") {
+          const list = req.action === "approve" ? "auto_approve" : "auto_reject";
+          const updated = { ...p, [list]: [...(p[list] ?? []), rule] };
+          ctx.state.policy = updated;
+          await writeState(statePath(ctx.sessionId), ctx.state);
+        }
+      }
+
+      // Release the held approver request
+      pending.resolve({
+        behavior: req.action === "approve" ? "allow" : "deny",
+        message: req.reason,
+      });
+
+      return { id: req.id, ok: true };
+    }
+
+    case "update_policy": {
+      const v = validatePolicy(req.policy);
+      if (!v.ok) {
+        return {
+          id: req.id,
+          ok: false,
+          error: "INVALID_POLICY",
+          message: v.error,
+        };
+      }
+      ctx.state.policy = req.policy;
+      await writeState(statePath(ctx.sessionId), ctx.state);
+      return { id: req.id, ok: true };
+    }
+
+    // Other ops added in Tasks 15 (interrupt_turn, stop_session)
     default:
       return {
         id: req.id,
