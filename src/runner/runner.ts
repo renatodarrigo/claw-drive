@@ -34,6 +34,8 @@ interface RunnerContext {
   seq: number;
   pendingApprovals: Map<string, PendingApproval>;
   deferredCalls: Map<string, DeferredCall>;
+  /** Set to true by stop_session handler so the main loop's b.on("exit") yields. */
+  stopping: boolean;
 }
 
 // Placeholder type; populated in Task 13 when the approval flow lands.
@@ -324,6 +326,8 @@ async function handleRequest(
     }
 
     case "stop_session": {
+      // Mark stopping so the main loop's b.on("exit") yields control to us.
+      ctx.stopping = true;
       // Return first (so the caller sees ok:true promptly), then tear down.
       setImmediate(async () => {
         try {
@@ -518,6 +522,7 @@ export async function runRunner(sessionId: string): Promise<void> {
     seq: 1,
     pendingApprovals: new Map(),
     deferredCalls: new Map(),
+    stopping: false,
   };
 
   // Start the stdout loop; run it in the background. If it fails, emit an
@@ -556,13 +561,15 @@ export async function runRunner(sessionId: string): Promise<void> {
     process.on("SIGTERM", () => resolve());
     process.on("SIGINT", () => resolve());
     b.on("exit", (code) => {
+      // If stop_session is managing teardown, let it handle session_stopped + process.exit.
+      if (ctx.stopping) return;
       sess.exit_code = code;
       sess.status = "stopped";
       writeState(statePath(sessionId), sess).finally(() => resolve());
     });
   });
 
-  // Teardown
+  // Teardown (only reached when NOT in a stop_session flow)
   try { server.close(); } catch { /* */ }
   try { b.kill("SIGTERM"); } catch { /* already dead */ }
   await fs.rm(readyMarkerPath(sessionId), { force: true });
