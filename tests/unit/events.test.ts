@@ -60,6 +60,28 @@ describe("events", () => {
     expect(nextSince).toBe(0);
   });
 
+  it("tool_output_provided round-trips", async () => {
+    const file = path.join(tmpDir, "events.jsonl");
+    await appendEvent(file, {
+      seq: 1,
+      at: "2026-04-22T00:00:00Z",
+      turn_id: "turn_1",
+      kind: "tool_output_provided",
+      call_id: "toolu_abc",
+      stdout_len: 42,
+      stderr_len: 0,
+      exit_code: 0,
+    } as any);
+    const { events } = await readEventsSince(file, 0);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      kind: "tool_output_provided",
+      call_id: "toolu_abc",
+      stdout_len: 42,
+      exit_code: 0,
+    });
+  });
+
   it("readEventsSince tolerates a partial last line (still being written)", async () => {
     const file = path.join(tmpDir, "events.jsonl");
     await appendEvent(file, { seq: 1, at: "t", kind: "session_started" } as any);
