@@ -12,7 +12,7 @@ import {
 } from "../lib/paths.js";
 import { readState, writeState, type SessionState } from "../lib/state.js";
 import { appendEvent, type Event } from "../lib/events.js";
-import { policyDigest } from "../lib/policy.js";
+import { policyDigest, matchPolicy } from "../lib/policy.js";
 import { parseClaudeLine } from "./stream-parser.js";
 import { startSocketServer } from "./socket-server.js";
 import type { ControlRequest, ControlResponse } from "../lib/socket-protocol.js";
@@ -118,7 +118,102 @@ async function handleRequest(
       return { id: req.id, ok: true, result: { turn_id: turnId } };
     }
 
-    // Other ops added in Tasks 13–15 (approve_tool, resolve_tool_call,
+    case "approve_tool": {
+      const call_id = String(req.pretooluse.tool_use_id);
+      const tool = String(req.pretooluse.tool_name);
+      const args = (req.pretooluse.tool_input ?? {}) as Record<string, unknown>;
+      const decision = matchPolicy(ctx.state.policy, { tool, args });
+      const turnId = ctx.currentTurnId ?? "turn_unknown";
+
+      // Always record that B wanted to make the call
+      await emitEvent(ctx, {
+        kind: "tool_call_requested",
+        turn_id: turnId,
+        call_id,
+        tool,
+        args,
+      } as Omit<Event, "seq" | "at">);
+
+      if (decision.decision === "approve_silent") {
+        await emitEvent(ctx, {
+          kind: "tool_decision_resolved",
+          turn_id: turnId,
+          call_id,
+          action: "approve",
+          reason: decision.matched_rule?.name ?? "auto_approve",
+          resolved_by: "policy",
+        } as Omit<Event, "seq" | "at">);
+        return { id: req.id, ok: true, result: { behavior: "allow" } };
+      }
+
+      if (decision.decision === "deny_silent") {
+        await emitEvent(ctx, {
+          kind: "tool_decision_resolved",
+          turn_id: turnId,
+          call_id,
+          action: "reject",
+          reason: "escalate_default=false",
+          resolved_by: "policy",
+        } as Omit<Event, "seq" | "at">);
+        return {
+          id: req.id,
+          ok: true,
+          result: { behavior: "deny", message: "denied by policy" },
+        };
+      }
+
+      // decision.decision === "escalate" — emit required, pause on socket
+      const timeoutSec = ctx.state.decision_timeout_seconds ?? 300;
+      const timeoutMs = timeoutSec * 1000;
+      const defaultAt = new Date(Date.now() + timeoutMs).toISOString();
+      await emitEvent(ctx, {
+        kind: "tool_decision_required",
+        turn_id: turnId,
+        call_id,
+        tool,
+        args,
+        severity: decision.severity,
+        default_action: decision.default_action,
+        matched_rule: decision.matched_rule?.name,
+        default_at: defaultAt,
+      } as Omit<Event, "seq" | "at">);
+
+      return new Promise<ControlResponse>((resolve) => {
+        const timer = setTimeout(async () => {
+          ctx.pendingApprovals.delete(call_id);
+          await emitEvent(ctx, {
+            kind: "tool_decision_resolved",
+            turn_id: turnId,
+            call_id,
+            action: decision.default_action,
+            reason: "timeout → default",
+            resolved_by: "timeout",
+          } as Omit<Event, "seq" | "at">);
+          resolve({
+            id: req.id,
+            ok: true,
+            result: {
+              behavior: decision.default_action === "approve" ? "allow" : "deny",
+            },
+          });
+        }, timeoutMs);
+
+        ctx.pendingApprovals.set(call_id, {
+          call_id,
+          turn_id: turnId,
+          tool,
+          args,
+          default_action: decision.default_action,
+          resolve: (dec) => {
+            clearTimeout(timer);
+            resolve({ id: req.id, ok: true, result: dec });
+          },
+          timer,
+        });
+      });
+    }
+
+    // Other ops added in Tasks 14–15 (resolve_tool_call,
     // update_policy, interrupt_turn, stop_session)
     default:
       return {
