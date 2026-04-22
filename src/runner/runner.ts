@@ -377,9 +377,6 @@ export async function runRunner(sessionId: string): Promise<void> {
     policy_digest: policyDigest(sess.policy),
   } as Event);
 
-  // Touch ready marker — MCP's start_session polls for this
-  await fs.writeFile(readyMarkerPath(sessionId), new Date().toISOString());
-
   const ctx: RunnerContext = {
     sessionId,
     state: sess,
@@ -400,9 +397,16 @@ export async function runRunner(sessionId: string): Promise<void> {
   });
   void stdoutDone;
 
+  // Start the socket server BEFORE touching the ready marker. Callers poll for
+  // the marker and will send_turn immediately on appearance — if the socket
+  // isn't listening yet the first send race-fails with ECONNREFUSED. Fixed
+  // race found by the b-crash integration test.
   const server = await startSocketServer(socketPath(ctx.sessionId), (req) =>
     handleRequest(ctx, req)
   );
+
+  // Touch ready marker — MCP's start_session polls for this
+  await fs.writeFile(readyMarkerPath(sessionId), new Date().toISOString());
 
   // If scenario_brief was supplied at session-start, queue it as the first turn
   const brief = (ctx.state as unknown as { scenario_brief?: string }).scenario_brief;
