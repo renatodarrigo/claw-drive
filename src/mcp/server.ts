@@ -106,7 +106,7 @@ async function handleStartSession(args: Record<string, unknown>) {
     status: "starting",
     cwd,
     policy,
-    decision_timeout_seconds: (args.decision_timeout_seconds as number) ?? 300,
+    decision_timeout_seconds: (args.decision_timeout_seconds as number) ?? 3600,
     model: (args.model as string | null) ?? null,
     runner_pid: null,
     started_at: new Date().toISOString(),
@@ -135,7 +135,17 @@ async function handleStartSession(args: Record<string, unknown>) {
   while (Date.now() < deadline) {
     try {
       await fs.access(readyMarkerPath(sessionId));
-      return ok({ session_id: sessionId });
+      const selfBinAbs = resolveSelfBinPath();
+      return ok({
+        session_id: sessionId,
+        watch_command: {
+          command: selfBinAbs,
+          args: ["watch", sessionId],
+          description: `notable events from claw-drive session ${sessionId}`,
+          timeout_ms: 3_600_000,
+          persistent: true,
+        },
+      });
     } catch {
       await new Promise((r) => setTimeout(r, 50));
     }
@@ -361,6 +371,39 @@ async function handleResolveToolCall(args: Record<string, any>) {
   return err("CALL_NOT_FOUND", "call_id not found in any live session");
 }
 
+async function handleProvideToolOutput(args: Record<string, any>) {
+  const sessionId = args.session_id;
+  if (typeof sessionId !== "string" || !isValidSessionId(sessionId)) {
+    return err("SESSION_NOT_FOUND", "invalid session_id");
+  }
+  if (typeof args.call_id !== "string" || args.call_id.length === 0) {
+    return err("BAD_REQUEST", "call_id required");
+  }
+  for (const field of ["stdout", "stderr", "extra"] as const) {
+    if (args[field] !== undefined && typeof args[field] !== "string") {
+      return err("BAD_REQUEST", `${field} must be a string if provided`);
+    }
+  }
+  if (args.exit_code !== undefined && typeof args.exit_code !== "number") {
+    return err("BAD_REQUEST", "exit_code must be a number if provided");
+  }
+  try {
+    const resp = await sendRequest(socketPath(sessionId), {
+      id: "pto_" + Date.now(),
+      op: "provide_tool_output",
+      call_id: args.call_id,
+      stdout: args.stdout,
+      stderr: args.stderr,
+      exit_code: args.exit_code,
+      extra: args.extra,
+    });
+    if (!resp.ok) return err(resp.error, resp.message);
+    return ok(resp.result ?? {});
+  } catch (e) {
+    return err("SESSION_UNREACHABLE", (e as Error).message);
+  }
+}
+
 async function handleUpdatePolicy(args: Record<string, any>) {
   const sessionId = args.session_id;
   if (typeof sessionId !== "string" || !isValidSessionId(sessionId)) {
@@ -415,7 +458,9 @@ export async function runMcpServer(): Promise<void> {
     {
       name: "start_session",
       description:
-        "Start a new driven Claude Code session in the given cwd. Returns session_id.",
+        "Start a new driven Claude Code session in the given cwd. " +
+        "Returns session_id + watch_command (a ready-made payload for the Monitor tool; invoke " +
+        "Monitor(watch_command) to stream only human-actionable events — approvals, deferrals, completions, errors).",
       inputSchema: {
         type: "object",
         properties: {
@@ -511,6 +556,26 @@ export async function runMcpServer(): Promise<void> {
         required: ["call_id", "action", "reason"],
       },
       handler: handleResolveToolCall,
+    },
+    {
+      name: "provide_tool_output",
+      description:
+        "Provide the output of a deferred command that the human ran manually. " +
+        "Injects the output as a new user turn into the driven session B, so B can continue. " +
+        "Auto-resolves any still-pending approval as `defer` if needed.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          session_id: { type: "string" },
+          call_id: { type: "string" },
+          stdout: { type: "string" },
+          stderr: { type: "string" },
+          exit_code: { type: "number" },
+          extra: { type: "string" },
+        },
+        required: ["session_id", "call_id"],
+      },
+      handler: handleProvideToolOutput,
     },
     {
       name: "update_policy",
