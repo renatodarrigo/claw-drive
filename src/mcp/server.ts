@@ -8,6 +8,7 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs/promises";
 import {
   approverBinPath,
+  eventsPath,
   isInsideHome,
   isValidSessionId,
   mcpConfigPath,
@@ -17,6 +18,7 @@ import {
   socketPath,
   statePath,
 } from "../lib/paths.js";
+import { readEventsSince, type Event } from "../lib/events.js";
 import { writeState, type SessionState } from "../lib/state.js";
 import { validatePolicy, type Policy } from "../lib/policy.js";
 import { sendRequest } from "../runner/socket-server.js";
@@ -166,6 +168,96 @@ async function handleStopSession(args: Record<string, unknown>) {
   }
 }
 
+async function readEventsWithWait(
+  sessionId: string,
+  since: number,
+  waitMs: number,
+  turnId?: string
+): Promise<{ events: Event[]; nextSince: number }> {
+  const filterTurn = (events: Event[]) =>
+    turnId ? events.filter((e) => (e as any).turn_id === turnId) : events;
+
+  let cur = await readEventsSince(eventsPath(sessionId), since);
+  let filtered = filterTurn(cur.events);
+  if (filtered.length > 0 || waitMs <= 0) {
+    return { events: filtered, nextSince: cur.nextSince };
+  }
+
+  const deadline = Date.now() + waitMs;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, Math.min(200, deadline - Date.now())));
+    cur = await readEventsSince(eventsPath(sessionId), since);
+    filtered = filterTurn(cur.events);
+    if (filtered.length > 0) return { events: filtered, nextSince: cur.nextSince };
+  }
+  return { events: [], nextSince: cur.nextSince };
+}
+
+function deriveTurnStatus(
+  allEvents: Event[],
+  turnId: string
+): "running" | "awaiting_approval" | "completed" | "failed" {
+  const turnEvents = allEvents.filter((e) => (e as any).turn_id === turnId);
+  if (turnEvents.some((e) => e.kind === "turn_completed")) return "completed";
+  if (turnEvents.some((e) => e.kind === "turn_failed")) return "failed";
+  const requiredCalls = new Set(
+    turnEvents
+      .filter((e) => e.kind === "tool_decision_required")
+      .map((e) => (e as any).call_id as string)
+  );
+  const resolvedCalls = new Set(
+    turnEvents
+      .filter((e) => e.kind === "tool_decision_resolved")
+      .map((e) => (e as any).call_id as string)
+  );
+  for (const c of requiredCalls) if (!resolvedCalls.has(c)) return "awaiting_approval";
+  return "running";
+}
+
+async function handleSendTurn(args: Record<string, any>) {
+  const sessionId = args.session_id;
+  if (typeof sessionId !== "string" || !isValidSessionId(sessionId)) {
+    return err("SESSION_NOT_FOUND", "invalid session_id");
+  }
+  if (typeof args.message !== "string") {
+    return err("BAD_REQUEST", "message must be a string");
+  }
+  try {
+    const resp = await sendRequest(socketPath(sessionId), {
+      id: "st_" + Date.now(),
+      op: "send_turn",
+      message: args.message,
+    });
+    if (!resp.ok) return err(resp.error, resp.message);
+    return ok(resp.result ?? {});
+  } catch (e) {
+    return err("SESSION_UNREACHABLE", (e as Error).message);
+  }
+}
+
+async function handlePollTurn(args: Record<string, any>) {
+  const sessionId = args.session_id;
+  const turnId = args.turn_id;
+  if (typeof sessionId !== "string" || !isValidSessionId(sessionId)) {
+    return err("SESSION_NOT_FOUND", "invalid session_id");
+  }
+  if (typeof turnId !== "string" || !turnId.startsWith("turn_")) {
+    return err("TURN_NOT_FOUND", "invalid turn_id");
+  }
+  const since = typeof args.since_event === "number" ? args.since_event : 0;
+  const waitMs = typeof args.wait_ms === "number" ? args.wait_ms : 0;
+  const { events: newEvents, nextSince } = await readEventsWithWait(
+    sessionId,
+    since,
+    waitMs,
+    turnId
+  );
+  // For status derivation, read ALL events for the turn (not just since)
+  const all = (await readEventsSince(eventsPath(sessionId), 0)).events;
+  const turn_status = deriveTurnStatus(all, turnId);
+  return ok({ events: newEvents, turn_status, next_since: nextSince });
+}
+
 export async function runMcpServer(): Promise<void> {
   const server = new Server(
     { name: "claw-drive", version: "0.1.0" },
@@ -207,6 +299,36 @@ export async function runMcpServer(): Promise<void> {
         required: ["session_id"],
       },
       handler: handleStopSession,
+    },
+    {
+      name: "send_turn",
+      description:
+        "Send a user turn to a live session. Non-blocking; returns a turn_id the caller can poll.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          session_id: { type: "string" },
+          message: { type: "string" },
+        },
+        required: ["session_id", "message"],
+      },
+      handler: handleSendTurn,
+    },
+    {
+      name: "poll_turn",
+      description:
+        "Fetch events + derived status for a specific turn. Use wait_ms>0 to long-poll.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          session_id: { type: "string" },
+          turn_id: { type: "string" },
+          since_event: { type: "number" },
+          wait_ms: { type: "number" },
+        },
+        required: ["session_id", "turn_id"],
+      },
+      handler: handlePollTurn,
     },
   ];
 
