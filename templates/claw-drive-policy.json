@@ -1,0 +1,24 @@
+{
+  "_comment": "Starting-point dogfood policy shipped with claw-drive. Tighten or loosen as you learn what a driven session actually does. Rules in order: auto_approve beats auto_reject; unmatched calls escalate.",
+
+  "auto_approve": [
+    { "tool": "Read" },
+    { "tool": "Glob" },
+    { "tool": "Grep" },
+    { "tool": "Bash", "bash_command_matches": "^git (status|diff|log|show|branch|stash list|ls-files|rev-parse|worktree list) ?" },
+    { "tool": "Bash", "bash_command_matches": "^(ls|cat|head|tail|find|file|tree|wc|pwd|echo) " },
+    { "tool": "Bash", "bash_command_matches": "^(npm|npx|node) " },
+    { "tool": "Bash", "bash_command_matches": "^cloverleaf-cli " }
+  ],
+
+  "auto_reject": [
+    {
+      "tool": "Bash",
+      "bash_command_matches": "\\bsudo\\b|\\brm -rf\\b|\\bgit push\\b|\\bgit reset --hard\\b|> /dev/|\\bnpm publish\\b",
+      "severity": "high"
+    }
+  ],
+
+  "escalate_default": true,
+  "decision_timeout_seconds": 300
+}

@@ -18,12 +18,45 @@ See `docs/superpowers/specs/2026-04-21-claw-drive-design.md` for the full design
 ```bash
 git clone <your fork> claw-drive
 cd claw-drive
-npm install
-npm run build
-npm link    # exposes `claw-drive` on PATH
+./install.sh
 ```
 
-Runtime deps for the Bash approver: **`jq`** and a Unix-socket-capable **`nc`** (OpenBSD `nc` or nmap `ncat`). Install via your package manager (`apt install jq netcat-openbsd` / `brew install jq nmap`).
+The installer symlinks `claw-drive` + `claw-drive-approver` into `~/.local/bin/`, builds if needed, and sanity-runs the CLI. If `~/.local/bin` isn't on your `PATH`, it prints the one-liner to add.
+
+Runtime deps for the Bash approver: **`jq`** and a Unix-socket-capable **`nc`** (OpenBSD `nc` or nmap `ncat`). The installer warns if either is missing — install via your package manager:
+
+- Debian/Ubuntu: `sudo apt install jq netcat-openbsd`
+- macOS: `brew install jq nmap`
+
+### Install flags
+
+```bash
+./install.sh --copy                              # Copy binaries instead of symlinking (snapshot install;
+                                                 # re-run after repo updates to refresh the copy)
+./install.sh --bin-dir /usr/local/bin            # Custom install location (may need sudo)
+./install.sh --project ~/Workspace/cloverleaf    # Also register claw-drive in that project's .mcp.json
+./install.sh --policy ~/Workspace/cloverleaf/.cloverleaf/claw-drive-policy.json
+                                                 # Also drop the starter policy template there
+./install.sh --uninstall                         # Remove bins (and the .mcp.json entry with --project)
+```
+
+All flags compose. Typical first-run for a cloverleaf dogfood:
+
+```bash
+./install.sh \
+  --project ~/Workspace/cloverleaf \
+  --policy  ~/Workspace/cloverleaf/.cloverleaf/claw-drive-policy.json
+```
+
+Installer is idempotent — re-run it any time (to switch modes, change bin dir, re-register a project, etc.).
+
+### Manual install (without the script)
+
+```bash
+npm install && npm run build
+ln -s "$(pwd)/bin/claw-drive"          ~/.local/bin/
+ln -s "$(pwd)/bin/claw-drive-approver" ~/.local/bin/
+```
 
 ## Quick start — from the CLI
 

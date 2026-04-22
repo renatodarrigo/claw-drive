@@ -49,18 +49,22 @@ export function runnerPidPath(sessionId: string): string {
 }
 
 /**
- * Absolute path to bin/claw-drive-approver in the installed package.
+ * Absolute path to bin/claw-drive-approver.
  *
- * At build time this resolves to <package_root>/bin/claw-drive-approver.
- * At runtime (dist/lib/paths.js), we ascend two levels from __dirname to
- * reach the package root, then descend into bin/. This works for:
- *   - developer mode: running from <repo>/dist/lib/paths.js
- *   - npm link: symlink resolves to the package dir
- *   - global install: normal node_modules/claw-drive/bin/claw-drive-approver
+ * Resolution order:
+ *   1. `CLAW_DRIVE_APPROVER_BIN` env var (set by install.sh's copy-mode shim
+ *      so the MCP server points at the user's $BIN_DIR copy, not the repo).
+ *   2. Package-relative default: two dirs up from this compiled file
+ *      (`dist/lib/paths.js`) + `bin/claw-drive-approver`. Works for:
+ *        - developer mode: running from <repo>/dist/lib/paths.js
+ *        - symlink install: Node follows symlinks, so import.meta.url
+ *          resolves to the real repo path
+ *        - npm / global install: normal node_modules layout
  */
 export function approverBinPath(): string {
+  const override = process.env.CLAW_DRIVE_APPROVER_BIN;
+  if (override && override.length > 0) return override;
   const here = fileURLToPath(import.meta.url);
-  // here: .../dist/lib/paths.js  → package root is two dirs up
   const pkgRoot = path.resolve(path.dirname(here), "..", "..");
   return path.join(pkgRoot, "bin", "claw-drive-approver");
 }

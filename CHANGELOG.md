@@ -1,5 +1,21 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- `install.sh` — idempotent installer. Default mode symlinks `claw-drive` + `claw-drive-approver` into `~/.local/bin`; `--copy` mode writes an absolute-path shim + a self-contained approver copy; `--project <path>` merges claw-drive into that project's `.mcp.json` (preserving other entries); `--policy <path>` drops the starter `templates/claw-drive-policy.json` template; `--uninstall` removes bins and the `.mcp.json` entry cleanly.
+- `templates/claw-drive-policy.json` — starter dogfood policy (auto-approves Read/Glob/Grep + common safe Bash; auto-rejects destructive Bash; escalates the rest).
+- `CLAW_DRIVE_APPROVER_BIN` environment variable — overrides the default package-relative approver resolution in `paths.approverBinPath()`. Set by the copy-mode shim so the MCP server's `settings.json` points at the installed copy instead of the repo's original.
+
+### Fixed
+
+- `approverBinPath()` now honors `CLAW_DRIVE_APPROVER_BIN` before falling back to the package-relative default. Required for copy-mode installs.
+
+### Tests
+
+- 2 new unit tests: `approverBinPath honors CLAW_DRIVE_APPROVER_BIN when set`, `approverBinPath ignores empty CLAW_DRIVE_APPROVER_BIN`. Existing test hardened to clear the env var before running.
+
 ## [0.1.0] — 2026-04-22
 
 Initial release.

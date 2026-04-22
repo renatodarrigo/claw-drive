@@ -62,10 +62,39 @@ describe("paths", () => {
   });
 
   it("approverBinPath points at bin/claw-drive-approver in the package", () => {
-    const p = approverBinPath();
-    expect(p.endsWith(path.join("bin", "claw-drive-approver"))).toBe(true);
-    // Must be absolute
-    expect(path.isAbsolute(p)).toBe(true);
+    const original = process.env.CLAW_DRIVE_APPROVER_BIN;
+    delete process.env.CLAW_DRIVE_APPROVER_BIN;
+    try {
+      const p = approverBinPath();
+      expect(p.endsWith(path.join("bin", "claw-drive-approver"))).toBe(true);
+      expect(path.isAbsolute(p)).toBe(true);
+    } finally {
+      if (original !== undefined) process.env.CLAW_DRIVE_APPROVER_BIN = original;
+    }
+  });
+
+  it("approverBinPath honors CLAW_DRIVE_APPROVER_BIN when set", () => {
+    const original = process.env.CLAW_DRIVE_APPROVER_BIN;
+    process.env.CLAW_DRIVE_APPROVER_BIN = "/opt/claw-drive/bin/claw-drive-approver";
+    try {
+      expect(approverBinPath()).toBe("/opt/claw-drive/bin/claw-drive-approver");
+    } finally {
+      if (original === undefined) delete process.env.CLAW_DRIVE_APPROVER_BIN;
+      else process.env.CLAW_DRIVE_APPROVER_BIN = original;
+    }
+  });
+
+  it("approverBinPath ignores empty CLAW_DRIVE_APPROVER_BIN", () => {
+    const original = process.env.CLAW_DRIVE_APPROVER_BIN;
+    process.env.CLAW_DRIVE_APPROVER_BIN = "";
+    try {
+      const p = approverBinPath();
+      // Falls back to package-relative resolution
+      expect(p.endsWith(path.join("bin", "claw-drive-approver"))).toBe(true);
+    } finally {
+      if (original === undefined) delete process.env.CLAW_DRIVE_APPROVER_BIN;
+      else process.env.CLAW_DRIVE_APPROVER_BIN = original;
+    }
   });
 
   it("isValidSessionId accepts canonical shape", () => {
