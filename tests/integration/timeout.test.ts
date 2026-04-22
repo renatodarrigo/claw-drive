@@ -17,7 +17,11 @@ describe("decision timeout (integration)", () => {
     const policy = {
       auto_approve: [{ tool: "Read" }],
       escalate_default: true,
-      decision_timeout_seconds: 3,
+      // 10s gives claude time to stream the tool_use + hook to fire, yet keeps
+      // the total test wall-time under 2 min. 3s was too aggressive — claude
+      // sometimes hasn't reached the Bash call by then, and the test became
+      // flaky for a reason unrelated to the timeout mechanism.
+      decision_timeout_seconds: 10,
     };
     const policyPath = `${sess.clawDriveRoot}/policy.json`;
     await fs.writeFile(policyPath, JSON.stringify(policy));
@@ -34,19 +38,30 @@ describe("decision timeout (integration)", () => {
     await runCliBlocking(sess.binPath, sess.env, [
       "send",
       sessionId,
-      "Run `echo hello`. One bash call, then reply 'done'.",
+      "Use the Bash tool to run exactly `echo hello` and report the stdout. Do not use any other tool.",
     ]);
 
-    // Don't approve; wait for timeout to fire (escalate_default=true → default_action=approve)
-    const deadline = Date.now() + 60_000;
+    // Wait for *either* tool_decision_required to show up (proves escalation
+    // happened) OR the test deadline. Then wait for the timer.
+    const escalationDeadline = Date.now() + 90_000;
+    let sawRequired = false;
+    while (Date.now() < escalationDeadline && !sawRequired) {
+      const tail = await runCliBlocking(sess.binPath, sess.env, ["tail", sessionId]);
+      if (tail.stdout.includes('"kind":"tool_decision_required"')) sawRequired = true;
+      else await new Promise((r) => setTimeout(r, 500));
+    }
+    expect(sawRequired, "expected a tool_decision_required event to surface").toBe(true);
+
+    // Now wait for the timeout resolver (escalate_default=true → default_action=approve)
+    const timeoutDeadline = Date.now() + 30_000;
     let sawTimeout = false;
-    while (Date.now() < deadline && !sawTimeout) {
+    while (Date.now() < timeoutDeadline && !sawTimeout) {
       const tail = await runCliBlocking(sess.binPath, sess.env, ["tail", sessionId]);
       if (tail.stdout.includes('"resolved_by":"timeout"')) sawTimeout = true;
       else await new Promise((r) => setTimeout(r, 500));
     }
-    expect(sawTimeout).toBe(true);
+    expect(sawTimeout, "expected a resolved_by:timeout event within the timer window").toBe(true);
 
     await runCliBlocking(sess.binPath, sess.env, ["stop", sessionId]);
-  }, 90_000);
+  }, 180_000);
 });
