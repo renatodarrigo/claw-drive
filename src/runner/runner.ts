@@ -125,15 +125,6 @@ async function handleRequest(
       const decision = matchPolicy(ctx.state.policy, { tool, args });
       const turnId = ctx.currentTurnId ?? "turn_unknown";
 
-      // Always record that B wanted to make the call
-      await emitEvent(ctx, {
-        kind: "tool_call_requested",
-        turn_id: turnId,
-        call_id,
-        tool,
-        args,
-      } as Omit<Event, "seq" | "at">);
-
       if (decision.decision === "approve_silent") {
         await emitEvent(ctx, {
           kind: "tool_decision_resolved",

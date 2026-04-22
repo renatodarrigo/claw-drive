@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import * as path from "node:path";
 import {
   approverBinPath,
+  isInsideHome,
   mcpConfigPath,
   readyMarkerPath,
   sessionDir,
@@ -40,6 +41,21 @@ export async function cmdStart(argv: string[]): Promise<number> {
     return 2;
   }
   const cwdAbs = path.resolve(cwd);
+
+  try {
+    const st = await fs.stat(cwdAbs);
+    if (!st.isDirectory()) {
+      console.error(`cwd is not a directory: ${cwdAbs}`);
+      return 2;
+    }
+  } catch {
+    console.error(`cwd does not exist: ${cwdAbs}`);
+    return 2;
+  }
+  if (!isInsideHome(cwdAbs)) {
+    console.error(`cwd must be inside $HOME: ${cwdAbs}`);
+    return 2;
+  }
 
   let policy: Policy = "bypass";
   if (policyFile) policy = JSON.parse(await fs.readFile(policyFile, "utf-8"));
