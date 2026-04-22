@@ -25,6 +25,42 @@ export function shouldEmit(ev: Event): boolean {
   }
 }
 
+/**
+ * Given the full event history, return the subset a NEW watch subscriber
+ * needs to see to understand the current state of the session:
+ *   - every `tool_decision_required` that still lacks a matching
+ *     `tool_decision_resolved` (unresolved gates the driver must act on)
+ *   - `session_stopped` if present (so watch exits immediately instead of
+ *     tailing a dead session)
+ *
+ * Events are returned in their original seq order. Without this catch-up,
+ * `watch`'s default "from current seq" behavior (v0.2) silently missed
+ * pending gates that landed between `start_session` returning and `Monitor`
+ * subscribing — see the cloverleaf CLV-16 dogfood finding.
+ *
+ * Exported for unit-testing.
+ */
+export function catchUpPending(events: Event[]): Event[] {
+  const resolved = new Set<string>();
+  for (const e of events) {
+    if (e.kind === "tool_decision_resolved") {
+      resolved.add((e as any).call_id);
+    }
+  }
+  const out: Event[] = [];
+  for (const e of events) {
+    if (
+      e.kind === "tool_decision_required" &&
+      !resolved.has((e as any).call_id)
+    ) {
+      out.push(e);
+    } else if (e.kind === "session_stopped") {
+      out.push(e);
+    }
+  }
+  return out;
+}
+
 export async function cmdWatch(argv: string[]): Promise<number> {
   const id = argv[0];
   if (!id || !isValidSessionId(id)) {
@@ -42,13 +78,21 @@ export async function cmdWatch(argv: string[]): Promise<number> {
     else if (argv[i] === "--replay") since = 0;
   }
 
-  // Default: stream NEW events only. Avoids flooding a mid-run monitor.
+  // Default: stream NEW events only, BUT catch up on unresolved gates +
+  // session_stopped first. This plugs a race where events emitted between
+  // start_session's return and Monitor's spawn-of-watch would otherwise be
+  // skipped (cloverleaf CLV-16 dogfood finding, 2026-04-22).
+  let stopped = false;
   if (since === "current") {
     const all = await readEventsSince(eventsPath(id), 0);
+    const catchup = catchUpPending(all.events);
+    for (const e of catchup) {
+      process.stdout.write(JSON.stringify(e) + "\n");
+      if (e.kind === "session_stopped") stopped = true;
+    }
     since = all.nextSince;
   }
 
-  let stopped = false;
   let cursor: number = since;
   const emit = async () => {
     const { events, nextSince } = await readEventsSince(eventsPath(id), cursor);
