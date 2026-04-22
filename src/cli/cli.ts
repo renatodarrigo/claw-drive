@@ -10,6 +10,7 @@ import { cmdStop } from "./commands/stop.js";
 import { cmdInterrupt } from "./commands/interrupt.js";
 import { cmdPolicy } from "./commands/policy.js";
 import { cmdPrune } from "./commands/prune.js";
+import { cmdWatch } from "./commands/watch.js";
 
 const commands: Record<string, (argv: string[]) => Promise<number>> = {
   sessions: cmdSessions,
@@ -24,6 +25,7 @@ const commands: Record<string, (argv: string[]) => Promise<number>> = {
   interrupt: cmdInterrupt,
   policy: cmdPolicy,
   prune: cmdPrune,
+  watch: cmdWatch,
 };
 
 export async function runCli(argv: string[]): Promise<void> {
@@ -49,6 +51,9 @@ Commands:
   sessions                      List all sessions (including orphaned)
   show <session>                State + pending + recent events
   tail <session> [--since N] [--follow]
+  watch <session> [--replay|--since N]
+                                Stream human-actionable events as JSONL (for Monitor);
+                                defaults to new events only; --replay = full history
   pending [<session>]           List awaiting-approval calls
   approve <call_id> [--reason R]
   reject <call_id> [--reason R]
