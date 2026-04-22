@@ -10,6 +10,8 @@ import { cmdStop } from "./commands/stop.js";
 import { cmdInterrupt } from "./commands/interrupt.js";
 import { cmdPolicy } from "./commands/policy.js";
 import { cmdPrune } from "./commands/prune.js";
+import { cmdWatch } from "./commands/watch.js";
+import { cmdProvideOutput } from "./commands/provide-output.js";
 
 const commands: Record<string, (argv: string[]) => Promise<number>> = {
   sessions: cmdSessions,
@@ -24,6 +26,8 @@ const commands: Record<string, (argv: string[]) => Promise<number>> = {
   interrupt: cmdInterrupt,
   policy: cmdPolicy,
   prune: cmdPrune,
+  watch: cmdWatch,
+  "provide-output": cmdProvideOutput,
 };
 
 export async function runCli(argv: string[]): Promise<void> {
@@ -49,6 +53,9 @@ Commands:
   sessions                      List all sessions (including orphaned)
   show <session>                State + pending + recent events
   tail <session> [--since N] [--follow]
+  watch <session> [--replay|--since N]
+                                Stream human-actionable events as JSONL (for Monitor);
+                                defaults to new events only; --replay = full history
   pending [<session>]           List awaiting-approval calls
   approve <call_id> [--reason R]
   reject <call_id> [--reason R]
@@ -58,5 +65,7 @@ Commands:
   interrupt <session> <turn>
   policy <session> [--set FILE] [--show]
   prune [--older-than 24h]
+  provide-output <call_id> [--stdout S] [--stderr S] [--exit N] [--extra S] [--from-file PATH]
+                                Relay human-run command output to a deferred call
 `);
 }

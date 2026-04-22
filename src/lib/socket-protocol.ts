@@ -32,6 +32,15 @@ export type ControlRequest =
   | { id: string; op: "stop_session" }
   | {
       id: string;
+      op: "provide_tool_output";
+      call_id: string;
+      stdout?: string;
+      stderr?: string;
+      exit_code?: number;
+      extra?: string;
+    }
+  | {
+      id: string;
       op: "approve_tool";
       pretooluse: PreToolUsePayload;
     };

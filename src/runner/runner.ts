@@ -12,10 +12,19 @@ import {
 } from "../lib/paths.js";
 import { readState, writeState, type SessionState } from "../lib/state.js";
 import { appendEvent, type Event } from "../lib/events.js";
-import { policyDigest, matchPolicy, deriveRuleFromResolved, validatePolicy } from "../lib/policy.js";
+import { policyDigest, matchPolicy, deriveRuleFromResolved, validatePolicy, type DecisionAction } from "../lib/policy.js";
 import { parseClaudeLine } from "./stream-parser.js";
 import { startSocketServer } from "./socket-server.js";
 import type { ControlRequest, ControlResponse } from "../lib/socket-protocol.js";
+
+interface DeferredCall {
+  call_id: string;
+  turn_id: string;
+  tool: string;
+  args: Record<string, unknown>;
+  deferred_at: string;
+  reason: string;
+}
 
 interface RunnerContext {
   sessionId: string;
@@ -24,6 +33,9 @@ interface RunnerContext {
   currentTurnId: string | null;
   seq: number;
   pendingApprovals: Map<string, PendingApproval>;
+  deferredCalls: Map<string, DeferredCall>;
+  /** Set to true by stop_session handler so the main loop's b.on("exit") yields. */
+  stopping: boolean;
 }
 
 // Placeholder type; populated in Task 13 when the approval flow lands.
@@ -32,7 +44,7 @@ interface PendingApproval {
   turn_id: string;
   tool: string;
   args: Record<string, unknown>;
-  default_action: "approve" | "reject";
+  default_action: DecisionAction;
   resolve: (decision: { behavior: "allow" | "deny"; message?: string }) => void;
   timer: NodeJS.Timeout;
 }
@@ -154,7 +166,7 @@ async function handleRequest(
       }
 
       // decision.decision === "escalate" — emit required, pause on socket
-      const timeoutSec = ctx.state.decision_timeout_seconds ?? 300;
+      const timeoutSec = ctx.state.decision_timeout_seconds ?? 3600;
       const timeoutMs = timeoutSec * 1000;
       const defaultAt = new Date(Date.now() + timeoutMs).toISOString();
       await emitEvent(ctx, {
@@ -179,7 +191,28 @@ async function handleRequest(
             action: decision.default_action,
             reason: "timeout → default",
             resolved_by: "timeout",
-          } as Omit<Event, "seq" | "at">);
+          } as any);
+
+          if (decision.default_action === "defer") {
+            ctx.deferredCalls.set(call_id, {
+              call_id,
+              turn_id: turnId,
+              tool,
+              args,
+              deferred_at: new Date().toISOString(),
+              reason: "timeout → auto-defer",
+            });
+            resolve({
+              id: req.id,
+              ok: true,
+              result: {
+                behavior: "deny",
+                message: "DEFERRED (timeout default). Human will run this; wait for a follow-up user turn.",
+              },
+            });
+            return;
+          }
+
           resolve({
             id: req.id,
             ok: true,
@@ -225,6 +258,24 @@ async function handleRequest(
         resolved_by: "user_mcp",
       } as Omit<Event, "seq" | "at">);
 
+      if (req.action === "defer") {
+        // Move into deferredCalls tracking; release approver with DEFERRED reason
+        ctx.deferredCalls.set(req.call_id, {
+          call_id: req.call_id,
+          turn_id: pending.turn_id,
+          tool: pending.tool,
+          args: pending.args as Record<string, unknown>,
+          deferred_at: new Date().toISOString(),
+          reason: req.reason,
+        });
+        pending.resolve({
+          behavior: "deny",
+          message: `DEFERRED: ${req.reason}. Human will run this command manually; wait for a follow-up user turn with the output.`,
+        });
+        return { id: req.id, ok: true };
+      }
+
+      // approve or reject
       if (req.remember_as_policy) {
         const rule = deriveRuleFromResolved(
           req.action,
@@ -233,19 +284,18 @@ async function handleRequest(
         );
         const p = ctx.state.policy;
         if (p !== "bypass") {
-          const list = req.action === "approve" ? "auto_approve" : "auto_reject";
+          const list =
+            req.action === "approve" ? "auto_approve" : "auto_reject";
           const updated = { ...p, [list]: [...(p[list] ?? []), rule] };
           ctx.state.policy = updated;
           await writeState(statePath(ctx.sessionId), ctx.state);
         }
       }
 
-      // Release the held approver request
       pending.resolve({
         behavior: req.action === "approve" ? "allow" : "deny",
         message: req.reason,
       });
-
       return { id: req.id, ok: true };
     }
 
@@ -276,6 +326,8 @@ async function handleRequest(
     }
 
     case "stop_session": {
+      // Mark stopping so the main loop's b.on("exit") yields control to us.
+      ctx.stopping = true;
       // Return first (so the caller sees ok:true promptly), then tear down.
       setImmediate(async () => {
         try {
@@ -307,6 +359,91 @@ async function handleRequest(
         });
       });
       return { id: req.id, ok: true };
+    }
+
+    case "provide_tool_output": {
+      let deferred = ctx.deferredCalls.get(req.call_id);
+
+      // If still pending (not yet resolved), auto-resolve as defer.
+      if (!deferred) {
+        const pending = ctx.pendingApprovals.get(req.call_id);
+        if (pending) {
+          ctx.pendingApprovals.delete(req.call_id);
+          await emitEvent(ctx, {
+            kind: "tool_decision_resolved",
+            turn_id: pending.turn_id,
+            call_id: req.call_id,
+            action: "defer",
+            reason: "auto-deferred by provide_tool_output",
+            resolved_by: "user_mcp_auto",
+          } as Omit<Event, "seq" | "at">);
+          pending.resolve({
+            behavior: "deny",
+            message: "DEFERRED: human will run this command manually.",
+          });
+          deferred = {
+            call_id: req.call_id,
+            turn_id: pending.turn_id,
+            tool: pending.tool,
+            args: pending.args as Record<string, unknown>,
+            deferred_at: new Date().toISOString(),
+            reason: "auto-deferred by provide_tool_output",
+          };
+          ctx.deferredCalls.set(req.call_id, deferred);
+        }
+      }
+
+      if (!deferred) {
+        return {
+          id: req.id,
+          ok: false,
+          error: "CALL_NOT_FOUND",
+          message: "no deferred or pending call with this call_id",
+        };
+      }
+
+      const stdout = req.stdout ?? "";
+      const stderr = req.stderr ?? "";
+      const exit_code = typeof req.exit_code === "number" ? req.exit_code : null;
+      const extra = req.extra ?? "";
+
+      const userMessage =
+        `[claw-drive] The deferred \`${deferred.tool}\` call (call_id: ${deferred.call_id}) was executed by the human.\n\n` +
+        `Original args: ${JSON.stringify(deferred.args)}\n\n` +
+        `Exit code: ${exit_code === null ? "(not provided)" : String(exit_code)}\n\n` +
+        `Stdout:\n${stdout || "(empty)"}\n\n` +
+        `Stderr:\n${stderr || "(empty)"}\n\n` +
+        `Notes: ${extra || "(none)"}\n\n` +
+        `Please continue from where you left off, using this as the tool's output.`;
+
+      // Compose the user turn and pipe it to B's stdin (same path as send_turn).
+      const turnId = `turn_${ctx.state.turns + 1}`;
+      ctx.state.turns += 1;
+      ctx.currentTurnId = turnId;
+      await emitEvent(ctx, {
+        kind: "turn_started",
+        turn_id: turnId,
+        message: userMessage,
+      } as Omit<Event, "seq" | "at">);
+      const payload = {
+        type: "user",
+        message: { role: "user", content: userMessage },
+      };
+      ctx.b.stdin!.write(JSON.stringify(payload) + "\n");
+
+      // Emit the tool_output_provided audit event.
+      await emitEvent(ctx, {
+        kind: "tool_output_provided",
+        turn_id: deferred.turn_id,
+        call_id: deferred.call_id,
+        stdout_len: stdout.length,
+        stderr_len: stderr.length,
+        exit_code,
+      } as Omit<Event, "seq" | "at">);
+
+      ctx.deferredCalls.delete(req.call_id);
+
+      return { id: req.id, ok: true, result: { turn_id: turnId } };
     }
 
     default: {
@@ -384,6 +521,8 @@ export async function runRunner(sessionId: string): Promise<void> {
     currentTurnId: null,
     seq: 1,
     pendingApprovals: new Map(),
+    deferredCalls: new Map(),
+    stopping: false,
   };
 
   // Start the stdout loop; run it in the background. If it fails, emit an
@@ -422,13 +561,15 @@ export async function runRunner(sessionId: string): Promise<void> {
     process.on("SIGTERM", () => resolve());
     process.on("SIGINT", () => resolve());
     b.on("exit", (code) => {
+      // If stop_session is managing teardown, let it handle session_stopped + process.exit.
+      if (ctx.stopping) return;
       sess.exit_code = code;
       sess.status = "stopped";
       writeState(statePath(sessionId), sess).finally(() => resolve());
     });
   });
 
-  // Teardown
+  // Teardown (only reached when NOT in a stop_session flow)
   try { server.close(); } catch { /* */ }
   try { b.kill("SIGTERM"); } catch { /* already dead */ }
   await fs.rm(readyMarkerPath(sessionId), { force: true });

@@ -82,6 +82,40 @@ describe("matchPolicy", () => {
     const no = matchPolicy(p, { tool: "Write", args: { file_path: "/etc/x", content: "y" } });
     expect(no.decision).toBe("escalate");
   });
+
+  it("auto_defer matches before auto_reject when both would match", () => {
+    const p: Policy = {
+      auto_defer: [{ tool: "Bash", bash_command_matches: "^sudo " }],
+      auto_reject: [{ tool: "Bash", bash_command_matches: "sudo" }],
+    };
+    const r = matchPolicy(p, { tool: "Bash", args: { command: "sudo apt install foo" } });
+    expect(r.decision).toBe("escalate");
+    if (r.decision === "escalate") {
+      expect(r.default_action).toBe("defer");
+      expect(r.severity).toBe("high");
+    }
+  });
+
+  it("auto_approve wins over auto_defer", () => {
+    const p: Policy = {
+      auto_approve: [{ tool: "Bash", bash_command_matches: "^sudo -n true$" }],
+      auto_defer: [{ tool: "Bash", bash_command_matches: "^sudo " }],
+    };
+    const r = matchPolicy(p, { tool: "Bash", args: { command: "sudo -n true" } });
+    expect(r.decision).toBe("approve_silent");
+  });
+
+  it("auto_defer with custom severity is honored", () => {
+    const p: Policy = {
+      auto_defer: [{ tool: "Bash", bash_command_matches: "^echo 'CLAW-GATE:", severity: "medium" }],
+    };
+    const r = matchPolicy(p, { tool: "Bash", args: { command: "echo 'CLAW-GATE: review please'" } });
+    expect(r.decision).toBe("escalate");
+    if (r.decision === "escalate") {
+      expect(r.default_action).toBe("defer");
+      expect(r.severity).toBe("medium");
+    }
+  });
 });
 
 describe("deriveRuleFromResolved", () => {
@@ -124,6 +158,15 @@ describe("validatePolicy", () => {
     const r = validatePolicy({
       auto_approve: [{ tool: "Bash", bash_command_matches: "[unclosed" }],
     });
+    expect(r.ok).toBe(false);
+  });
+
+  it("auto_defer is a valid top-level key", () => {
+    expect(validatePolicy({ auto_defer: [{ tool: "Bash", bash_command_matches: "^sudo " }] })).toEqual({ ok: true });
+  });
+
+  it("invalid regex in auto_defer is rejected", () => {
+    const r = validatePolicy({ auto_defer: [{ tool: "Bash", bash_command_matches: "[bad" }] });
     expect(r.ok).toBe(false);
   });
 });
