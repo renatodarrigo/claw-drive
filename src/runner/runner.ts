@@ -12,7 +12,7 @@ import {
 } from "../lib/paths.js";
 import { readState, writeState, type SessionState } from "../lib/state.js";
 import { appendEvent, type Event } from "../lib/events.js";
-import { policyDigest, matchPolicy, deriveRuleFromResolved, validatePolicy } from "../lib/policy.js";
+import { policyDigest, matchPolicy, deriveRuleFromResolved, validatePolicy, type DecisionAction } from "../lib/policy.js";
 import { parseClaudeLine } from "./stream-parser.js";
 import { startSocketServer } from "./socket-server.js";
 import type { ControlRequest, ControlResponse } from "../lib/socket-protocol.js";
@@ -32,7 +32,7 @@ interface PendingApproval {
   turn_id: string;
   tool: string;
   args: Record<string, unknown>;
-  default_action: "approve" | "reject";
+  default_action: DecisionAction;
   resolve: (decision: { behavior: "allow" | "deny"; message?: string }) => void;
   timer: NodeJS.Timeout;
 }

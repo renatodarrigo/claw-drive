@@ -1,5 +1,5 @@
 export type Severity = "low" | "medium" | "high";
-export type DecisionAction = "approve" | "reject";
+export type DecisionAction = "approve" | "reject" | "defer";
 
 export interface Rule {
   name?: string;
@@ -11,6 +11,7 @@ export interface Rule {
 
 export interface PolicyObject {
   auto_approve?: Rule[];
+  auto_defer?: Rule[];
   auto_reject?: Rule[];
   escalate_default?: boolean;
   decision_timeout_seconds?: number;
@@ -38,6 +39,16 @@ export function matchPolicy(policy: Policy, call: ToolCall): MatchDecision {
 
   for (const rule of policy.auto_approve ?? []) {
     if (ruleMatches(rule, call)) return { decision: "approve_silent", matched_rule: rule };
+  }
+  for (const rule of policy.auto_defer ?? []) {
+    if (ruleMatches(rule, call)) {
+      return {
+        decision: "escalate",
+        default_action: "defer",
+        severity: rule.severity ?? "high",
+        matched_rule: rule,
+      };
+    }
   }
   for (const rule of policy.auto_reject ?? []) {
     if (ruleMatches(rule, call)) {
@@ -105,11 +116,11 @@ export function validatePolicy(p: unknown): { ok: true } | { ok: false; error: s
   if (typeof p !== "object" || p === null)
     return { ok: false, error: "policy must be 'bypass' or an object" };
   const obj = p as Record<string, unknown>;
-  const allowedKeys = new Set(["auto_approve", "auto_reject", "escalate_default", "decision_timeout_seconds"]);
+  const allowedKeys = new Set(["auto_approve", "auto_defer", "auto_reject", "escalate_default", "decision_timeout_seconds"]);
   for (const key of Object.keys(obj)) {
     if (!allowedKeys.has(key)) return { ok: false, error: `unknown key '${key}'` };
   }
-  for (const listKey of ["auto_approve", "auto_reject"] as const) {
+  for (const listKey of ["auto_approve", "auto_defer", "auto_reject"] as const) {
     const list = obj[listKey];
     if (list === undefined) continue;
     if (!Array.isArray(list)) return { ok: false, error: `${listKey} must be an array` };
