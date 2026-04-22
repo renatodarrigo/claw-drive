@@ -50,6 +50,12 @@ export async function cmdStart(argv: string[]): Promise<number> {
   }
   const brief = briefFile ? await fs.readFile(briefFile, "utf-8") : undefined;
 
+  // Honor decision_timeout_seconds from policy object if present
+  const decisionTimeoutSec =
+    typeof policy === "object" && policy !== null && "decision_timeout_seconds" in policy
+      ? (policy as { decision_timeout_seconds?: number }).decision_timeout_seconds ?? 300
+      : 300;
+
   const sessionId = newSessionId();
   await fs.mkdir(sessionDir(sessionId), { recursive: true });
 
@@ -78,7 +84,7 @@ export async function cmdStart(argv: string[]): Promise<number> {
     status: "starting",
     cwd: cwdAbs,
     policy,
-    decision_timeout_seconds: 300,
+    decision_timeout_seconds: decisionTimeoutSec,
     model: null,
     runner_pid: null,
     started_at: new Date().toISOString(),
