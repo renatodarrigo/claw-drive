@@ -88,6 +88,30 @@ In your Claude Code session ask:
 
 Claude Code calls `start_session`, `send_turn`, `poll_turn`, `resolve_tool_call` via MCP.
 
+## Recommended driving pattern (Monitor + watch)
+
+Instead of polling `poll_turn` in a loop-and-ask-user cycle, wire Session A to react to notable events via Claude Code's `Monitor` tool. `start_session` returns a ready-made `watch_command` payload for exactly this:
+
+```
+// A's flow
+const { session_id, watch_command } = await claw-drive.start_session({
+  cwd: "/path/to/project",
+  policy: <policy>,
+  scenario_brief: "<the brief>",
+});
+
+await Monitor(watch_command);  // spawns `claw-drive watch <id>` and streams notifications
+
+// A now waits for notifications. For each:
+//   kind === "tool_decision_required" → surface to human, resolve_tool_call or provide_tool_output
+//   kind === "tool_output_provided"   → confirm defer follow-through completed
+//   kind === "turn_completed"         → decide whether to send next turn or wrap up
+//   kind === "turn_failed"            → surface the failure details
+//   kind === "session_stopped"        → wrap up
+```
+
+`claw-drive watch` filters `events.jsonl` to only events a human/A needs to act on (see `docs/superpowers/specs/...` §4.8 for the exact predicate). It exits cleanly on `session_stopped` or SIGINT.
+
 ## Policy
 
 A policy is either `"bypass"` (no gating) or an object. Rules in order: `auto_approve` wins over `auto_reject`; unmatched calls escalate by default.
@@ -108,11 +132,37 @@ A policy is either `"bypass"` (no gating) or an object. Rules in order: `auto_ap
 
 On timeout: the `default_action` for escalated calls is `approve` (when `escalate_default: true`) or `reject` (when `escalate_default: false`). The approver script self-times-out 5s before claude's 600s hook ceiling and fails secure (exit 2 / deny).
 
+### Deferring commands the human must run
+
+Some commands can't run inside B (sudo, interactive logins, anything needing auth or a TTY). Put them in `auto_defer` in your policy:
+
+```json
+"auto_defer": [
+  { "tool": "Bash", "bash_command_matches": "^sudo\\s", "name": "sudo → human" }
+]
+```
+
+When B attempts a matching call, the approver hook denies it with a `DEFERRED:` message, a `tool_decision_required` event surfaces to the monitor, and the human runs the command locally. Once they have the output, call `claw-drive provide-output <call_id> --stdout "<output>" --exit 0` (or the `provide_tool_output` MCP tool). The runner formats the output as a user turn to B and B continues.
+
+### Review gates (B pauses for human OK mid-task)
+
+Use the `CLAW-GATE:` convention — baked into the default policy template:
+
+```json
+"auto_defer": [
+  { "tool": "Bash", "bash_command_matches": "^echo 'CLAW-GATE:" }
+]
+```
+
+In the scenario brief, tell B: *"Before each risky step, run `echo 'CLAW-GATE: <your question>'` with the Bash tool and wait for my response."*
+
+B's echo fires the hook → policy defers → monitor alerts A → human answers → A calls `provide_tool_output` with the answer as stdout → B reads it and proceeds. No new primitive; same flow as sudo.
+
 ## MCP tools
 
 | Tool | Purpose |
 |---|---|
-| `start_session` | Start a driven session; returns `session_id` |
+| `start_session` | Start a driven session; returns `{session_id, watch_command}` (the latter is a ready-made Monitor payload) |
 | `stop_session` | Reap B; keep session dir for inspection |
 | `send_turn` | Non-blocking; returns `turn_id` |
 | `poll_turn` | Fetch events + status for a turn (optional long-poll) |
@@ -121,6 +171,7 @@ On timeout: the `default_action` for escalated calls is `approve` (when `escalat
 | `resolve_tool_call` | Approve/reject a paused tool call; optionally remember as policy |
 | `update_policy` | Replace a session's policy |
 | `interrupt_turn` | SIGINT B to cancel the current turn |
+| `provide_tool_output` | Inject human-run command output back into B's conversation; auto-resolves pending defer if needed |
 
 Full signatures in `docs/superpowers/specs/2026-04-21-claw-drive-design.md` §5.
 
@@ -140,6 +191,8 @@ Full signatures in `docs/superpowers/specs/2026-04-21-claw-drive-design.md` §5.
 | `interrupt <session> <turn>` | SIGINT B |
 | `policy <session> [--set FILE] [--show]` | View/replace policy |
 | `prune [--older-than 24h]` | Remove dead sessions older than cutoff |
+| `watch <session>` | Stream noteworthy events as JSONL (used internally by the Monitor flow) |
+| `provide-output <call_id> [--stdout S] [--stderr S] [--exit N] [--extra S] [--from-file PATH]` | Relay human-run command output to a deferred call |
 
 ## Troubleshooting
 
@@ -158,6 +211,26 @@ The Bash approver requires `jq` and a Unix-socket-capable `nc` (or `ncat`). Inst
 ### Stream-json parse errors in events
 
 If you see `error` events with `"unparseable stream-json line"`, claude's output format may have changed. Re-run `scripts/probe-claude-cli.sh` and update the stream parser accordingly.
+
+## Defaults worth knowing
+
+### `decision_timeout_seconds: 3600` (1 hour)
+
+The v0.2 start-time default. If an escalation sits unresolved for this long, the runner fires the rule's `default_action` (`approve` for plain escalations, `reject` for `auto_reject` matches, `defer` for `auto_defer` matches) and emits `tool_decision_resolved(resolved_by:"timeout")`. You can override per-session via `start_session`'s `decision_timeout_seconds` arg, or per-policy via the policy object's field.
+
+The v0.1 default was 300 s. It was a footgun for interactive dogfoods — if the driver's monitor had a transient gap, sensitive calls auto-approved silently. 1 h gives humans enough slack.
+
+### `claw-drive watch` defaults to current seq
+
+`watch` does **not** replay historical events by default — it starts from the current end of `events.jsonl` and streams new ones as they arrive. Pass `--replay` (or `--since 0`) for a full replay.
+
+This was a deliberate change from `tail --follow`, which does replay from 0. `watch` is intended for `Monitor` flows where a mid-run subscription should not flood the driver.
+
+### `poll_session` can hit the MCP token budget
+
+Under heavy concurrency (e.g., B with many subagents), a single `poll_session` call can return hundreds of events. The MCP response has a token limit. Use `claw-drive watch` (filtered + streaming) for active driving; reserve `poll_session` for one-shot catch-up between clear checkpoints.
+
+A future pagination overhaul is tracked for v0.3.
 
 ## Testing
 
