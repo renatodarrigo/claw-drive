@@ -72,4 +72,30 @@ describe("socket-protocol", () => {
     expect(() => decodeMessage("42")).toThrow();
     expect(() => decodeMessage("null")).toThrow();
   });
+
+  it("encodes/decodes provide_tool_output request", () => {
+    const req: ControlRequest = {
+      id: "r4",
+      op: "provide_tool_output",
+      call_id: "toolu_abc",
+      stdout: "Reading package lists... Done\n",
+      stderr: "",
+      exit_code: 0,
+      extra: "human override: approved via chat",
+    };
+    const decoded = decodeMessage(encodeMessage(req).trimEnd());
+    expect(decoded).toEqual(req);
+  });
+
+  it("resolve_tool_call accepts 'defer' action", () => {
+    const req: ControlRequest = {
+      id: "r5",
+      op: "resolve_tool_call",
+      call_id: "toolu_def",
+      action: "defer",
+      reason: "human will run sudo",
+    };
+    const decoded = decodeMessage(encodeMessage(req).trimEnd());
+    expect(decoded).toEqual(req);
+  });
 });
