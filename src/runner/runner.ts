@@ -13,6 +13,7 @@ import {
 import { readState, writeState, type SessionState } from "../lib/state.js";
 import { appendEvent, type Event } from "../lib/events.js";
 import { policyDigest } from "../lib/policy.js";
+import { parseClaudeLine } from "./stream-parser.js";
 
 interface RunnerContext {
   sessionId: string;
@@ -32,6 +33,61 @@ interface PendingApproval {
   default_action: "approve" | "reject";
   resolve: (decision: { behavior: "allow" | "deny"; message?: string }) => void;
   timer: NodeJS.Timeout;
+}
+
+/**
+ * Append an event to events.jsonl with auto-assigned seq + at, and update
+ * last_event_at in state.json. Only called from the runner's single-writer
+ * context — no locking needed.
+ */
+async function emitEvent(
+  ctx: RunnerContext,
+  partial: Omit<Event, "seq" | "at">
+): Promise<void> {
+  ctx.seq += 1;
+  const ev = { ...partial, seq: ctx.seq, at: new Date().toISOString() } as Event;
+  await appendEvent(eventsPath(ctx.sessionId), ev);
+  ctx.state.last_event_at = ev.at;
+  await writeState(statePath(ctx.sessionId), ctx.state);
+}
+
+/**
+ * Read-loop over B's stdout: each line is claude stream-json, fed through
+ * parseClaudeLine and emitted as Events to events.jsonl.
+ *
+ * The `currentTurnId` on ctx is stamped on parsed events so each event is
+ * associated with the in-flight user turn (set by the send_turn handler in
+ * Task 12). If no turn is in flight (e.g. during startup before any user
+ * turn), events are stamped with turn_id "turn_unknown".
+ */
+async function runStdoutLoop(ctx: RunnerContext): Promise<void> {
+  const stdout = ctx.b.stdout!;
+  stdout.setEncoding("utf-8");
+  let buffer = "";
+  for await (const chunk of stdout) {
+    buffer += chunk;
+    let nl;
+    while ((nl = buffer.indexOf("\n")) !== -1) {
+      const line = buffer.slice(0, nl);
+      buffer = buffer.slice(nl + 1);
+      if (!line) continue;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(line);
+      } catch {
+        await emitEvent(ctx, {
+          kind: "error",
+          message: "unparseable stream-json line",
+          recoverable: true,
+        } as Omit<Event, "seq" | "at">);
+        continue;
+      }
+      const { events } = parseClaudeLine(parsed, ctx.currentTurnId ?? "turn_unknown");
+      for (const partial of events) {
+        await emitEvent(ctx, partial as Omit<Event, "seq" | "at">);
+      }
+    }
+  }
 }
 
 /**
@@ -102,9 +158,16 @@ export async function runRunner(sessionId: string): Promise<void> {
     pendingApprovals: new Map(),
   };
 
-  // Placeholder for Tasks 11–15: runStdoutLoop(ctx), startSocketServer(...), etc.
-  // For Task 10, we just wait for a signal or B's exit.
-  void ctx;
+  // Start the stdout loop; run it in the background. If it fails, emit an
+  // error event and let the teardown path in the signal wait handle the rest.
+  const stdoutDone = runStdoutLoop(ctx).catch(async (err) => {
+    await emitEvent(ctx, {
+      kind: "error",
+      message: String(err),
+      recoverable: false,
+    } as Omit<Event, "seq" | "at">);
+  });
+  void stdoutDone;
 
   await new Promise<void>((resolve) => {
     process.on("SIGTERM", () => resolve());
