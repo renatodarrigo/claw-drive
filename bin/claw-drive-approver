@@ -40,20 +40,17 @@ fi
 
 # Pick a Unix-socket-capable nc. Prefer ncat (nmap) for portability; fall back
 # to OpenBSD nc. Both support -U for Unix sockets.
+#
+# IMPORTANT: do NOT use -N (OpenBSD) or --recv-only (ncat). The runner handler
+# is async; it writes the response after awaiting emitEvent. If nc sends a FIN
+# (via -N) before the response arrives, nc has already closed its read side and
+# the response is lost. We instead rely on `head -n1` (below) to close the
+# pipeline once one response line is received, which terminates nc naturally.
 NC=""
 if command -v ncat >/dev/null 2>&1; then
-  NC="ncat -U --recv-only"
-  # ncat doesn't have --recv-only in all versions; fallback below if needed
-  if ! ncat --help 2>&1 | grep -q -- '--recv-only'; then
-    NC="ncat -U"
-  fi
+  NC="ncat -U"
 elif command -v nc >/dev/null 2>&1; then
-  # OpenBSD nc uses -N to close after EOF on stdin; -U for unix sockets
-  if nc -h 2>&1 | grep -q -- '-N'; then
-    NC="nc -NU"
-  else
-    NC="nc -U"
-  fi
+  NC="nc -U"
 else
   jq -nc --arg r "approver: neither ncat nor nc found on PATH" \
     '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}'
