@@ -166,7 +166,7 @@ async function handleRequest(
       }
 
       // decision.decision === "escalate" — emit required, pause on socket
-      const timeoutSec = ctx.state.decision_timeout_seconds ?? 300;
+      const timeoutSec = ctx.state.decision_timeout_seconds ?? 3600;
       const timeoutMs = timeoutSec * 1000;
       const defaultAt = new Date(Date.now() + timeoutMs).toISOString();
       await emitEvent(ctx, {

@@ -18,7 +18,7 @@ export type EventKind =
 
 export type ResolvedBy = "policy" | "user_mcp" | "user_mcp_auto" | "user_cli" | "timeout";
 export type Severity = "low" | "medium" | "high";
-export type DecisionAction = "approve" | "reject";
+export type DecisionAction = "approve" | "reject" | "defer";
 
 export type Event =
   | { seq: number; at: string; kind: "session_started"; cwd: string; policy_digest: string }
