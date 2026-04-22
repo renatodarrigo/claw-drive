@@ -273,14 +273,60 @@ async function handleRequest(
       return { id: req.id, ok: true };
     }
 
-    // Other ops added in Tasks 15 (interrupt_turn, stop_session)
-    default:
+    case "interrupt_turn": {
+      if (ctx.b.pid) {
+        try {
+          process.kill(ctx.b.pid, "SIGINT");
+        } catch {
+          /* already dead */
+        }
+      }
+      return { id: req.id, ok: true };
+    }
+
+    case "stop_session": {
+      // Return first (so the caller sees ok:true promptly), then tear down.
+      setImmediate(async () => {
+        try {
+          ctx.b.stdin?.end();
+        } catch { /* */ }
+        const killSigterm = setTimeout(() => {
+          if (ctx.b.pid) {
+            try { process.kill(ctx.b.pid, "SIGTERM"); } catch { /* */ }
+          }
+        }, 10_000);
+        const killSigkill = setTimeout(() => {
+          if (ctx.b.pid) {
+            try { process.kill(ctx.b.pid, "SIGKILL"); } catch { /* */ }
+          }
+        }, 20_000);
+        ctx.b.once("exit", async (code) => {
+          clearTimeout(killSigterm);
+          clearTimeout(killSigkill);
+          ctx.state.status = "stopped";
+          ctx.state.exit_code = code;
+          await writeState(statePath(ctx.sessionId), ctx.state);
+          await emitEvent(ctx, {
+            kind: "session_stopped",
+            reason: "stop_session",
+            exit_code: code,
+          } as Omit<Event, "seq" | "at">);
+          await fs.rm(readyMarkerPath(ctx.sessionId), { force: true });
+          process.exit(0);
+        });
+      });
+      return { id: req.id, ok: true };
+    }
+
+    default: {
+      const unknown = req as unknown as ControlRequest;
       return {
-        id: req.id,
+        id: unknown.id,
         ok: false,
         error: "UNKNOWN_OP",
-        message: `unimplemented op: ${(req as ControlRequest).op}`,
+        message: `unimplemented op: ${unknown.op}`,
       };
+    }
   }
 }
 
