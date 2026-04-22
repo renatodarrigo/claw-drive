@@ -1,0 +1,129 @@
+import { describe, it, expect } from "vitest";
+import {
+  matchPolicy,
+  deriveRuleFromResolved,
+  validatePolicy,
+  type Policy,
+  type Rule,
+} from "../../src/lib/policy.js";
+
+describe("matchPolicy", () => {
+  it("bypass approves everything without decision events", () => {
+    const r = matchPolicy("bypass", { tool: "Bash", args: { command: "rm -rf /" } });
+    expect(r.decision).toBe("approve_silent");
+  });
+
+  it("auto_approve Read tool matches", () => {
+    const p: Policy = { auto_approve: [{ tool: "Read" }] };
+    const r = matchPolicy(p, { tool: "Read", args: { file_path: "/x" } });
+    expect(r.decision).toBe("approve_silent");
+    expect(r.matched_rule).toBeDefined();
+  });
+
+  it("auto_approve Bash with command regex matches", () => {
+    const p: Policy = {
+      auto_approve: [{ tool: "Bash", bash_command_matches: "^git (status|diff) " }],
+    };
+    const ok = matchPolicy(p, { tool: "Bash", args: { command: "git status -s" } });
+    expect(ok.decision).toBe("approve_silent");
+    const no = matchPolicy(p, { tool: "Bash", args: { command: "git push" } });
+    expect(no.decision).toBe("escalate");
+  });
+
+  it("auto_approve beats auto_reject when both match", () => {
+    const p: Policy = {
+      auto_approve: [{ tool: "Bash", bash_command_matches: "^git status" }],
+      auto_reject: [{ tool: "Bash", bash_command_matches: "^git " }],
+    };
+    const r = matchPolicy(p, { tool: "Bash", args: { command: "git status" } });
+    expect(r.decision).toBe("approve_silent");
+  });
+
+  it("auto_reject triggers escalate with default reject", () => {
+    const p: Policy = {
+      auto_reject: [{ tool: "Bash", bash_command_matches: "rm -rf", severity: "high" }],
+    };
+    const r = matchPolicy(p, { tool: "Bash", args: { command: "rm -rf /tmp/x" } });
+    expect(r.decision).toBe("escalate");
+    if (r.decision === "escalate") {
+      expect(r.default_action).toBe("reject");
+      expect(r.severity).toBe("high");
+    }
+  });
+
+  it("unmatched with escalate_default=false becomes deny_silent", () => {
+    const p: Policy = { escalate_default: false };
+    const r = matchPolicy(p, { tool: "Bash", args: { command: "whatever" } });
+    expect(r.decision).toBe("deny_silent");
+  });
+
+  it("unmatched with escalate_default=true becomes escalate/approve-default", () => {
+    const p: Policy = {};
+    const r = matchPolicy(p, { tool: "Bash", args: { command: "whatever" } });
+    expect(r.decision).toBe("escalate");
+    if (r.decision === "escalate") {
+      expect(r.default_action).toBe("approve");
+      expect(r.severity).toBe("medium");
+    }
+  });
+
+  it("regex tool via /pattern/ syntax", () => {
+    const p: Policy = { auto_approve: [{ tool: "/^mcp__cloverleaf__/" }] };
+    const r = matchPolicy(p, { tool: "mcp__cloverleaf__foo", args: {} });
+    expect(r.decision).toBe("approve_silent");
+  });
+
+  it("arg_matches for non-Bash tools", () => {
+    const p: Policy = {
+      auto_approve: [{ tool: "Write", arg_matches: { file_path: "^/tmp/" } }],
+    };
+    const ok = matchPolicy(p, { tool: "Write", args: { file_path: "/tmp/x", content: "y" } });
+    expect(ok.decision).toBe("approve_silent");
+    const no = matchPolicy(p, { tool: "Write", args: { file_path: "/etc/x", content: "y" } });
+    expect(no.decision).toBe("escalate");
+  });
+});
+
+describe("deriveRuleFromResolved", () => {
+  it("Bash rule extracts first token + anchors", () => {
+    const rule = deriveRuleFromResolved("approve", "Bash", { command: "pytest tests/foo" });
+    expect(rule).toEqual({
+      tool: "Bash",
+      bash_command_matches: "^pytest ",
+      name: "remembered: approve pytest",
+    });
+  });
+
+  it("non-Bash rule has no arg_matches", () => {
+    const rule = deriveRuleFromResolved("approve", "Read", { file_path: "/x" });
+    expect(rule).toEqual({ tool: "Read", name: "remembered: approve Read" });
+  });
+});
+
+describe("validatePolicy", () => {
+  it("bypass string is valid", () => {
+    expect(validatePolicy("bypass")).toEqual({ ok: true });
+  });
+
+  it("object with well-formed rules is valid", () => {
+    const p: Policy = { auto_approve: [{ tool: "Read" }] };
+    expect(validatePolicy(p)).toEqual({ ok: true });
+  });
+
+  it("unknown top-level key is rejected", () => {
+    const r = validatePolicy({ typo_key: 1 } as any);
+    expect(r.ok).toBe(false);
+  });
+
+  it("rule missing tool is rejected", () => {
+    const r = validatePolicy({ auto_approve: [{} as any] });
+    expect(r.ok).toBe(false);
+  });
+
+  it("invalid regex in bash_command_matches is rejected", () => {
+    const r = validatePolicy({
+      auto_approve: [{ tool: "Bash", bash_command_matches: "[unclosed" }],
+    });
+    expect(r.ok).toBe(false);
+  });
+});
