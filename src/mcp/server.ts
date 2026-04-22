@@ -14,12 +14,13 @@ import {
   mcpConfigPath,
   readyMarkerPath,
   sessionDir,
+  sessionsRoot,
   settingsPath,
   socketPath,
   statePath,
 } from "../lib/paths.js";
 import { readEventsSince, type Event } from "../lib/events.js";
-import { writeState, type SessionState } from "../lib/state.js";
+import { writeState, readState, isPidAlive, type SessionState } from "../lib/state.js";
 import { validatePolicy, type Policy } from "../lib/policy.js";
 import { sendRequest } from "../runner/socket-server.js";
 
@@ -258,6 +259,146 @@ async function handlePollTurn(args: Record<string, any>) {
   return ok({ events: newEvents, turn_status, next_since: nextSince });
 }
 
+async function handlePollSession(args: Record<string, any>) {
+  const sessionId = args.session_id;
+  if (typeof sessionId !== "string" || !isValidSessionId(sessionId)) {
+    return err("SESSION_NOT_FOUND", "invalid session_id");
+  }
+  const since = typeof args.since_event === "number" ? args.since_event : 0;
+  const waitMs = typeof args.wait_ms === "number" ? args.wait_ms : 0;
+  const { events, nextSince } = await readEventsWithWait(sessionId, since, waitMs);
+  const state = await readState(statePath(sessionId));
+  let session_status: string = state?.status ?? "orphaned";
+  if (state && state.runner_pid && !isPidAlive(state.runner_pid)) {
+    if (state.status === "ready" || state.status === "running" || state.status === "starting") {
+      session_status = "orphaned";
+    }
+  }
+  return ok({ events, session_status, next_since: nextSince });
+}
+
+async function handleListSessions(args: Record<string, any>) {
+  const includeOrphaned = args.include_orphaned ?? true;
+  let entries: string[];
+  try {
+    entries = await fs.readdir(sessionsRoot());
+  } catch {
+    return ok({ sessions: [] });
+  }
+  const out: any[] = [];
+  for (const id of entries) {
+    if (!isValidSessionId(id)) continue;
+    const s = await readState(statePath(id));
+    if (!s) continue;
+    const alive = s.runner_pid ? isPidAlive(s.runner_pid) : false;
+    let effectiveStatus = s.status;
+    if (!alive && (s.status === "ready" || s.status === "running" || s.status === "starting")) {
+      effectiveStatus = "orphaned";
+    }
+    if (!includeOrphaned && effectiveStatus === "orphaned") continue;
+    const events = (await readEventsSince(eventsPath(id), 0)).events;
+    const requiredCalls = new Set(
+      events
+        .filter((e) => e.kind === "tool_decision_required")
+        .map((e) => (e as any).call_id as string)
+    );
+    const resolvedCalls = new Set(
+      events
+        .filter((e) => e.kind === "tool_decision_resolved")
+        .map((e) => (e as any).call_id as string)
+    );
+    let pendingCount = 0;
+    for (const c of requiredCalls) if (!resolvedCalls.has(c)) pendingCount++;
+    out.push({
+      session_id: id,
+      status: effectiveStatus,
+      cwd: s.cwd,
+      started_at: s.started_at,
+      last_event_at: s.last_event_at,
+      turns: s.turns,
+      pending_approvals: pendingCount,
+    });
+  }
+  return ok({ sessions: out });
+}
+
+async function handleResolveToolCall(args: Record<string, any>) {
+  if (typeof args.call_id !== "string") return err("BAD_REQUEST", "call_id required");
+  if (args.action !== "approve" && args.action !== "reject") {
+    return err("BAD_REQUEST", "action must be 'approve' or 'reject'");
+  }
+  if (typeof args.reason !== "string") return err("BAD_REQUEST", "reason required");
+
+  // Scan live sessions for the pending call_id. The approve_tool request flow
+  // registers each pending entry keyed by call_id in the runner's in-memory
+  // Map. Only one session at a time can hold a given call_id, so first hit wins.
+  let entries: string[];
+  try {
+    entries = await fs.readdir(sessionsRoot());
+  } catch {
+    return err("SESSION_NOT_FOUND", "no sessions directory");
+  }
+  for (const id of entries) {
+    if (!isValidSessionId(id)) continue;
+    const s = await readState(statePath(id));
+    if (!s || !s.runner_pid || !isPidAlive(s.runner_pid)) continue;
+    try {
+      const resp = await sendRequest(socketPath(id), {
+        id: "rtc_" + Date.now(),
+        op: "resolve_tool_call",
+        call_id: args.call_id,
+        action: args.action,
+        reason: args.reason,
+        remember_as_policy: Boolean(args.remember_as_policy),
+      });
+      if (resp.ok) return ok({ ok: true });
+      if (resp.error === "NOT_PENDING") continue; // try next session
+      return err(resp.error, resp.message);
+    } catch {
+      continue;
+    }
+  }
+  return err("CALL_NOT_FOUND", "call_id not found in any live session");
+}
+
+async function handleUpdatePolicy(args: Record<string, any>) {
+  const sessionId = args.session_id;
+  if (typeof sessionId !== "string" || !isValidSessionId(sessionId)) {
+    return err("SESSION_NOT_FOUND", "invalid session_id");
+  }
+  const pv = validatePolicy(args.policy);
+  if (!pv.ok) return err("INVALID_POLICY", (pv as any).error);
+  try {
+    const resp = await sendRequest(socketPath(sessionId), {
+      id: "up_" + Date.now(),
+      op: "update_policy",
+      policy: args.policy,
+    });
+    if (!resp.ok) return err(resp.error, resp.message);
+    return ok({ ok: true });
+  } catch (e) {
+    return err("SESSION_UNREACHABLE", (e as Error).message);
+  }
+}
+
+async function handleInterruptTurn(args: Record<string, any>) {
+  const sessionId = args.session_id;
+  if (typeof sessionId !== "string" || !isValidSessionId(sessionId)) {
+    return err("SESSION_NOT_FOUND", "invalid session_id");
+  }
+  try {
+    const resp = await sendRequest(socketPath(sessionId), {
+      id: "int_" + Date.now(),
+      op: "interrupt_turn",
+      turn_id: String(args.turn_id ?? ""),
+    });
+    if (!resp.ok) return err(resp.error, resp.message);
+    return ok({ ok: true });
+  } catch (e) {
+    return err("SESSION_UNREACHABLE", (e as Error).message);
+  }
+}
+
 export async function runMcpServer(): Promise<void> {
   const server = new Server(
     { name: "claw-drive", version: "0.1.0" },
@@ -329,6 +470,74 @@ export async function runMcpServer(): Promise<void> {
         required: ["session_id", "turn_id"],
       },
       handler: handlePollTurn,
+    },
+    {
+      name: "poll_session",
+      description:
+        "Tail events for a session and return current session status. Use wait_ms>0 to long-poll.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          session_id: { type: "string" },
+          since_event: { type: "number" },
+          wait_ms: { type: "number" },
+        },
+        required: ["session_id"],
+      },
+      handler: handlePollSession,
+    },
+    {
+      name: "list_sessions",
+      description:
+        "List sessions on disk (live + orphaned). Orphaned = state.json status is running/ready/starting but runner_pid is dead.",
+      inputSchema: {
+        type: "object",
+        properties: { include_orphaned: { type: "boolean" } },
+      },
+      handler: handleListSessions,
+    },
+    {
+      name: "resolve_tool_call",
+      description:
+        "Approve or reject a paused tool call by call_id. Scans live sessions; first session holding the call_id wins. Set remember_as_policy to append the resolved decision as a new Rule.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          call_id: { type: "string" },
+          action: { enum: ["approve", "reject"] },
+          reason: { type: "string" },
+          remember_as_policy: { type: "boolean" },
+        },
+        required: ["call_id", "action", "reason"],
+      },
+      handler: handleResolveToolCall,
+    },
+    {
+      name: "update_policy",
+      description: "Replace a session's permission policy.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          session_id: { type: "string" },
+          policy: {},
+        },
+        required: ["session_id", "policy"],
+      },
+      handler: handleUpdatePolicy,
+    },
+    {
+      name: "interrupt_turn",
+      description:
+        "Send SIGINT to the driven Claude session to interrupt the current turn. Session remains alive.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          session_id: { type: "string" },
+          turn_id: { type: "string" },
+        },
+        required: ["session_id", "turn_id"],
+      },
+      handler: handleInterruptTurn,
     },
   ];
 
