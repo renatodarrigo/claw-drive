@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# claw-drive-approver — PreToolUse hook for claude-driven sessions.
+#
+# Invocation: registered in a session's settings.json as:
+#   {"hooks":{"PreToolUse":[{"matcher":"*","hooks":[{
+#     "type":"command",
+#     "command":"/abs/path/to/bin/claw-drive-approver <session_id>",
+#     "timeout":600
+#   }]}]}}
+#
+# Contract:
+#   - Reads the PreToolUse JSON payload from stdin (claude provides it).
+#   - Forwards it to the per-session runner via ~/.claw-drive/sessions/<id>/control.sock
+#     as {"id":"h_<nonce>","op":"approve_tool","pretooluse":<raw>}.
+#   - Runner matches policy → returns {"ok":true,"result":{"behavior":"allow"|"deny",...}}.
+#   - Translates the verdict to claude's hookSpecificOutput envelope and exits
+#     0 (allow) or 2 (deny).
+#   - Self-times-out at 595s. On runner unreachable or timeout, fails secure
+#     (exits 2 with a deny envelope) — because claude's default on hook timeout
+#     is ALLOW, and we must never let that slip policy.
+#
+# Runtime deps: jq, nc with -U (OpenBSD nc or nmap ncat).
+
+set -euo pipefail
+
+SESSION_ID="${1:-}"
+if [[ -z "$SESSION_ID" ]]; then
+  jq -nc --arg r "approver: session_id argument missing" \
+    '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}'
+  exit 2
+fi
+
+SOCKET="${CLAW_DRIVE_HOME:-$HOME/.claw-drive}/sessions/$SESSION_ID/control.sock"
+
+if [[ ! -S "$SOCKET" ]]; then
+  jq -nc --arg r "approver: control socket missing at $SOCKET" \
+    '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}'
+  exit 2
+fi
+
+# Pick a Unix-socket-capable nc. Prefer ncat (nmap) for portability; fall back
+# to OpenBSD nc. Both support -U for Unix sockets.
+#
+# IMPORTANT: do NOT use -N (OpenBSD) or --recv-only (ncat). The runner handler
+# is async; it writes the response after awaiting emitEvent. If nc sends a FIN
+# (via -N) before the response arrives, nc has already closed its read side and
+# the response is lost. We instead rely on `head -n1` (below) to close the
+# pipeline once one response line is received, which terminates nc naturally.
+NC=""
+if command -v ncat >/dev/null 2>&1; then
+  NC="ncat -U"
+elif command -v nc >/dev/null 2>&1; then
+  NC="nc -U"
+else
+  jq -nc --arg r "approver: neither ncat nor nc found on PATH" \
+    '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}'
+  exit 2
+fi
+
+# Read the PreToolUse payload from stdin. Expect a single JSON object, possibly
+# with trailing newline. Trim surrounding whitespace; no validation here.
+payload=$(cat)
+
+if [[ -z "$payload" ]]; then
+  jq -nc --arg r "approver: empty stdin payload" \
+    '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}'
+  exit 2
+fi
+
+req_id="h_$$_$(date +%s%N)"
+
+# Build envelope. `payload` is already a JSON object — we interpolate it raw.
+# Using printf with %s for the payload preserves its structure verbatim.
+req=$(printf '{"id":"%s","op":"approve_tool","pretooluse":%s}' "$req_id" "$payload")
+
+# 595s timeout keeps us under claude's 600s hook ceiling (fail-secure).
+# On timeout, the `timeout` command kills nc and returns 124.
+resp=$(printf '%s\n' "$req" | timeout 595 $NC "$SOCKET" 2>/dev/null | head -n1) || {
+  jq -nc --arg r "approver: runner unreachable or timed out (socket: $SOCKET)" \
+    '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}'
+  exit 2
+}
+
+if [[ -z "$resp" ]]; then
+  jq -nc --arg r "approver: runner returned empty response" \
+    '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}'
+  exit 2
+fi
+
+# Parse the runner's response. Expected shape:
+#   {"id":"...","ok":true,"result":{"behavior":"allow"|"deny","message":"..."}}
+# or {"id":"...","ok":false,"error":"...","message":"..."}
+ok=$(jq -r '.ok // false' <<<"$resp")
+if [[ "$ok" != "true" ]]; then
+  err_code=$(jq -r '.error // "unknown"' <<<"$resp")
+  err_msg=$(jq -r '.message // ""' <<<"$resp")
+  jq -nc --arg r "approver: runner error $err_code: $err_msg" \
+    '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}'
+  exit 2
+fi
+
+behavior=$(jq -r '.result.behavior // "deny"' <<<"$resp")
+reason=$(jq -r '.result.message // ""' <<<"$resp")
+
+if [[ "$behavior" == "allow" ]]; then
+  jq -nc --arg r "${reason:-allowed}" \
+    '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"allow",permissionDecisionReason:$r}}'
+  exit 0
+else
+  jq -nc --arg r "${reason:-denied}" \
+    '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}'
+  exit 2
+fi
