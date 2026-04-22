@@ -73,7 +73,12 @@ export async function cmdProvideOutput(argv: string[]): Promise<number> {
         console.log(JSON.stringify({ session_id: id, ok: true, result: resp.result ?? {} }));
         return 0;
       }
-      if ((resp as any).error === "CALL_NOT_FOUND") continue;
+      // CALL_NOT_FOUND → call isn't in this session, scan next.
+      // UNKNOWN_OP     → this runner is from an earlier version that doesn't
+      //                  speak provide_tool_output; skip and try the next.
+      // NOT_PENDING    → defensive; older runners may use this for unknown call_ids.
+      const resolvableErrors = new Set(["CALL_NOT_FOUND", "UNKNOWN_OP", "NOT_PENDING"]);
+      if (resolvableErrors.has((resp as any).error)) continue;
       console.error(JSON.stringify(resp));
       return 1;
     } catch {
