@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.2.4] — 2026-04-24
+
+### Added
+
+- **6 new `auto_reject` patterns on both shipped templates** — `dd if=`, `mkfs`, `shred`, `git clean -fdx`, `rm --no-preserve-root`, disk partitioning tools (`fdisk`/`parted`/`gdisk`/`sgdisk`), and remote-exec-via-pipe (`\b(curl|wget) ... | (sudo )? (bash|sh|zsh)`; the `\b` left-anchor was tightened during review so `xcurl`/`mycurl`/`xwget` wrappers don't trigger). Closes the catch-net gap on irreversibly destructive commands that the v0.1.x rule set didn't cover.
+- **Widened the existing `rm -rf` clause** to `\brm\s+(-[a-zA-Z]*[rR]|--recursive)` — now catches `rm -r`, `rm -fr`, `rm -Rf`, `rm --recursive`, and any short-flag combo containing `r` or `R`. Previously only exact `rm -rf` matched.
+- **3 new `auto_defer` patterns** — `chmod -R 777`, `chown -R` (whitespace-flex: `\s+-R`), and `truncate` (moved here from auto_reject during review because `truncate -s 0 foo.log` is a common log-rotation idiom that the human should be able to approve at the policy layer). Recoverable but almost always wrong in a dogfood context; human gets prompted. Appended after `sudo`/`su` in the `auto_defer` list, so `sudo chmod -R 777 /etc` still matches the `sudo` rule first (verified by a pinned test).
+- **81 new unit tests** in `tests/unit/policy.test.ts` covering each new pattern on both templates, compound-bypass closures inheriting v0.2.3's order-flip protection, false-positive negatives for `/dev/null`/`/dev/stderr`/non-destructive `dd`/user-wrappers like `xcurl|mycurl|xwget`, and the `sudo chmod -R 777` ordering invariant.
+
+### Fixed
+
+- **`> /dev/null` and similar pseudo-device-redirect false positives.** The v0.1.x `> /dev/` clause in `auto_reject` matched any redirect to `/dev/*`, including legitimate `echo foo > /dev/null`, `cmd 2> /dev/stderr`, and `/dev/fd/…` uses. Narrowed the redirect clause to target block devices only: `sd[a-z]`, `nvme\d+n\d+`, `xvd[a-z]`, `hd[a-z]`, `loop\d*`, `mmcblk\d+`, `vd[a-z]`.
+
+### Notes
+
+- No API, MCP-tool, socket-protocol, event-schema, or schema-level template changes. This release is template-body + tests + docs only. Backwards-compatible with v0.2.x drivers and running sessions.
+- The v0.2.2 structural-equality test (`auto_defer`/`auto_reject` arrays in the permissive template match the starter byte-for-byte) continues to pass because both templates received identical edits.
+- Evaluation order unchanged from v0.2.3 (`auto_reject → auto_defer → auto_approve → escalate_default`). Compound commands like `git status && dd if=/dev/zero of=/dev/sda` correctly escalate to reject via the v0.2.3 bypass-closure mechanism interacting with the new `dd if=` pattern.
+- Intentionally NOT added to `auto_reject`: `kill -9` (too common in legitimate dev workflows), `systemctl stop/disable` (already deferred via the `sudo` rule in practice). Filed for possible future consideration, not for v0.2.4.
+
 ## [0.2.3] — 2026-04-24
 
 ### Fixed
