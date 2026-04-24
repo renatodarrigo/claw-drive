@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.2.2] — 2026-04-24
+
+### Fixed
+
+- **`state.json` rename-race: spurious `is_error: true` cancellations in multi-turn runs.** `writeState` used `.tmp-<process.pid>` as the intermediate filename — but the pid is shared across every writer in the runner, so two concurrent `writeState` calls collided on the same tmp. Whichever renamed second hit `ENOENT` because the first had already renamed the tmp away. The error bubbled up to the approver as `HANDLER_ERROR: ENOENT: no such file or directory, rename '~/.claw-drive/sessions/<sid>/state.json.tmp-<pid>' -> '~/.claw-drive/sessions/<sid>/state.json'`, surfaced as a `tool_call_result` with `is_error: true`, and Claude cancelled the sibling parallel tool calls. Surfaced during the CLV-16 and CLV-17 Delivery dogfoods (2026-04-22). Fix: per-path Promise-chain mutex inside `writeState` — all in-process writes against a given path are queued in submission order, so the final state.json reflects the last submitted payload (causal ordering). Memory-bounded to one entry per path; aligned with the single-writer-per-session invariant.
+
+### Added
+
+- **4 new unit tests in `tests/unit/state-concurrency.test.ts`** — 100 concurrent writes without error, last-submission-wins semantics, 10-burst stress, and two-path independence. Red/green verified: the suite fails against pre-fix code with the exact ENOENT the bug produced.
+- **`templates/claw-drive-policy-permissive.json`** — opt-in policy template that extends the conservative starter with common dev-CLI auto-approves (`rg`, `sed -n`, `awk`, `jq`, `diff`, `cmp`, `column`, `mkdir -p`, `touch`, `cp` (non-recursive), `mv`, safe `git` ops like `fetch`, `pull --ff-only`, `rebase --abort` and friends, path/env introspection `which`/`printenv`/`realpath`/etc.). Destructive rules, `sudo`/`su` auto-defer, and CLAW-GATE convention preserved verbatim from the starter (enforced by a structural-equality test). Selected via `--policy` at install time or by passing inline to `start_session`. The conservative starter remains the default.
+- **8 new unit tests covering positive matches across four categories** (read/inspect CLIs, non-destructive file ops, safe git ops, path/env introspection) plus preserved safety posture (`cp -r`, `rm -rf`, `git push`, `sudo` all still escalate or defer). Plus **4 drift-guard tests** added during code-review hardening that lock in three non-obvious regex semantics (`env` is not approved, `cp` recursive forms `-R`/`-a`/`-pR`/`--recursive`/`--archive` still escalate, bogus prefix-matched subcommands like `git fetchx`/`whichever`/`typeset` still escalate) and one structural invariant (`auto_defer`/`auto_reject` arrays in the permissive template equal the starter's, deep-equal).
+- **Regression test `tests/unit/pending-jq.test.ts`** — pipes `claw-drive pending` output through `jq -c '.'` for six tricky byte-range samples (control chars 0x01–0x1f, tab/CR/LF, quotes/backslashes, multibyte UTF-8, embedded newlines, DEL). Round-trips cleanly in every case, closing a memory note from the v0.5 Discovery dogfood that claimed the output broke jq — the claim was a misdiagnosis. Test stays as durable regression protection.
+
+### Known limitations
+
+- **Compound-command bypass (pre-existing, not v0.2.2-specific).** Both policy templates evaluate `auto_approve` before `auto_reject` in `matchPolicy`. A command whose prefix matches an approve rule short-circuits regardless of what follows a `&&`, `;`, `|`, or `$(...)`. E.g. `cp src dst && rm -rf /` auto-approves via `cp`. This is an architectural property, not a regex gap. Mitigation paths for v0.2.3: template preamble documenting the caveat, or early-exit auto_defer rules on compound operators, or flipping evaluation order (breaking change). Filed for follow-up.
+
+### Notes
+
+- No API, MCP-tool, socket-protocol, or event-schema changes. Backwards-compatible with v0.2.x drivers and running sessions.
+- README updated with a policy-templates section explaining when to pick which template.
+
 ## [0.2.1] — 2026-04-22
 
 ### Fixed
