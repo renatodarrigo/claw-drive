@@ -10,9 +10,9 @@
     { "tool": "Bash", "bash_command_matches": "cloverleaf-cli ", "name": "cloverleaf-cli anywhere in compound script (set -e, cd, REPO=, etc.)" },
     { "tool": "Bash", "bash_command_matches": "^(set -e|cd |REPO=|export\\s|source )", "name": "common shell prefixes that usually wrap a safe payload" },
     { "tool": "Bash", "bash_command_matches": "^(rg|sed -n|awk|jq|diff|cmp|column)\\s", "name": "common read/inspect CLIs" },
-    { "tool": "Bash", "bash_command_matches": "^(mkdir -p|touch|cp(?!\\s+-r)|mv)\\s", "name": "common non-destructive file ops (cp -r still escalates)" },
-    { "tool": "Bash", "bash_command_matches": "^git (fetch|pull --ff-only|rebase --abort|rebase --continue|rebase --skip|cherry-pick --abort|merge --abort)\\s?", "name": "common safe git ops" },
-    { "tool": "Bash", "bash_command_matches": "^(which|type|env|printenv|basename|dirname|realpath|readlink)\\s?", "name": "common path/env introspection" }
+    { "tool": "Bash", "bash_command_matches": "^(mkdir -p|touch|cp(?!\\s+(-[^-\\s]*[rRa]|--recursive|--archive))|mv)(\\s|$)", "name": "common non-destructive file ops — cp recursive forms (-r, -R, -a, -pR, --recursive, --archive) still escalate" },
+    { "tool": "Bash", "bash_command_matches": "^git (fetch|pull --ff-only|rebase --abort|rebase --continue|rebase --skip|cherry-pick --abort|merge --abort)(\\s|$)", "name": "common safe git ops" },
+    { "tool": "Bash", "bash_command_matches": "^(which|type|printenv|basename|dirname|realpath|readlink)(\\s|$)", "name": "common path/env introspection (env intentionally excluded — it execs its argv)" }
   ],
 
   "auto_defer": [

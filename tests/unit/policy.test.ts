@@ -207,7 +207,7 @@ describe("permissive policy template", () => {
   });
 
   it("auto-approves common path/env introspection", () => {
-    for (const command of ["which node", "env", "realpath foo"]) {
+    for (const command of ["which node", "printenv PATH", "realpath foo"]) {
       const r = matchPolicy(policy, { tool: "Bash", args: { command } });
       expect(r.decision, `cmd: ${command}`).toBe("approve_silent");
     }
@@ -240,5 +240,33 @@ describe("permissive policy template", () => {
     if (r.decision === "escalate") {
       expect(r.default_action).toBe("defer");
     }
+  });
+
+  it("does NOT auto-approve `env` wrapping arbitrary commands", () => {
+    for (const command of ["env -i rm -rf /", "env FOO=bar bash -c 'x'", "env sudo apt update"]) {
+      const r = matchPolicy(policy, { tool: "Bash", args: { command } });
+      expect(r.decision, `cmd: ${command}`).not.toBe("approve_silent");
+    }
+  });
+
+  it("does NOT auto-approve cp recursive forms (-R, -a, --recursive, -pR)", () => {
+    for (const command of ["cp -R src dest", "cp -a src dest", "cp --recursive src dest", "cp -pR src dest", "cp --archive src dest"]) {
+      const r = matchPolicy(policy, { tool: "Bash", args: { command } });
+      expect(r.decision, `cmd: ${command}`).not.toBe("approve_silent");
+    }
+  });
+
+  it("does NOT auto-approve bogus prefix-matched git or introspection subcommands", () => {
+    for (const command of ["git fetchx origin", "git pushover main", "whichever", "typeset x=1"]) {
+      const r = matchPolicy(policy, { tool: "Bash", args: { command } });
+      expect(r.decision, `cmd: ${command}`).not.toBe("approve_silent");
+    }
+  });
+
+  it("auto_defer and auto_reject mirror the starter template byte-for-byte", () => {
+    const starterPath = nodePath.resolve(__dirname, "..", "..", "templates", "claw-drive-policy.json");
+    const starter = JSON.parse(fsSync.readFileSync(starterPath, "utf-8"));
+    expect(policy.auto_defer).toEqual(starter.auto_defer);
+    expect(policy.auto_reject).toEqual(starter.auto_reject);
   });
 });
