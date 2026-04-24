@@ -2,7 +2,7 @@
 
 Drive-as-user MCP server + CLI for Claude Code. Lets one Claude Code session drive a second fresh Claude Code session end-to-end for dogfooding — multi-turn conversation, async event polling, policy-gated permissions with human-in-the-loop escalation, restart-resilient across caller restarts.
 
-> Status: v0.1.0. Single-user, single-host, local only.
+> Single-user, single-host, local only. See `CHANGELOG.md` for release history.
 
 ## How it works
 
@@ -126,7 +126,7 @@ A policy is either `"bypass"` (no gating) or an object. Rules in order: `auto_ap
     { "tool": "Bash", "bash_command_matches": "sudo |rm -rf |git push ", "severity": "high" }
   ],
   "escalate_default": true,
-  "decision_timeout_seconds": 300
+  "decision_timeout_seconds": 3600
 }
 ```
 
@@ -241,8 +241,8 @@ Two policy templates ship in `templates/`:
 
 ## Testing
 
-- `npm run test:unit` — 64 unit tests, no real claude invocation
-- `npm run test:integration` — 5 integration tests spawning real claude (cost real tokens)
+- `npm run test:unit` — 109 unit tests, no real claude invocation
+- `npm run test:integration` — 7 integration tests spawning real claude (cost real tokens)
 - `bash scripts/self-dogfood.sh` — end-to-end acceptance smoke
 
 ## License
