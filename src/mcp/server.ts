@@ -444,7 +444,7 @@ async function handleInterruptTurn(args: Record<string, any>) {
 
 export async function runMcpServer(): Promise<void> {
   const server = new Server(
-    { name: "claw-drive", version: "0.2.4" },
+    { name: "claw-drive", version: "0.3.0" },
     { capabilities: { tools: {} } }
   );
 
