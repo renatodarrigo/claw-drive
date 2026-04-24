@@ -232,6 +232,13 @@ Under heavy concurrency (e.g., B with many subagents), a single `poll_session` c
 
 A future pagination overhaul is tracked for v0.3.
 
+## Policy templates
+
+Two policy templates ship in `templates/`:
+
+- **`claw-drive-policy.json`** — conservative starter. Default for `install.sh` and when no `--policy` is passed to `start_session`. Safe for unknown projects.
+- **`claw-drive-policy-permissive.json`** — starter plus common dev-CLI auto-approves (`rg`, `sed`, `awk`, `jq`, `diff`, `mkdir -p`, `touch`, `cp` (non-recursive), `mv`, safe `git` ops like `fetch` and `pull --ff-only`, path/env introspection). Reduces escalation volume in dev-heavy dogfood sessions. Destructive commands (`rm -rf`, `git push`, `git reset --hard`, etc.) still auto-reject. Opt in via `--policy templates/claw-drive-policy-permissive.json` at install or by passing the inline policy to `start_session`.
+
 ## Testing
 
 - `npm run test:unit` — 64 unit tests, no real claude invocation
