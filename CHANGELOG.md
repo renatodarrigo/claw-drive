@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.3.0] — 2026-04-24
+
+### Added
+
+- **`remember_as_policy: true` now works with `action: "defer"`.** `resolve_tool_call` previously ignored the flag on defer because the remember block sat behind the defer early-return in the runner's `handleRequest`. Moved; now appends the derived rule to `auto_defer` before denying B's hook with the DEFERRED message.
+- **Narrow-by-default derivation for non-Bash tools in `deriveRuleFromResolved`.** Remembered rules now scope on the tool's identifying argument (`file_path`, `pattern`, `subagent_type`) instead of matching every call to the same tool. `Edit /path/foo.ts` now derives `{tool: "Edit", arg_matches: {file_path: "^/path/foo\\.ts$"}}` instead of `{tool: "Edit"}`. Applies to Edit, Write, Read, Glob, Grep, Agent, Task. Tools without a recognised identifying arg (TodoWrite, ExitPlanMode, custom MCP tools) keep the tool-wide fallback, now clearly labelled in the rule name as `(tool-wide fallback)`.
+- **CLI: new `claw-drive defer <call_id>` subcommand and `--remember` flag on approve/reject/defer.** The `--remember` flag sets `remember_as_policy: true` on the underlying `resolve_tool_call` socket request.
+- **9 new unit tests and 1 new integration test** covering the narrow derivation (Edit, Write, Glob, Grep, Agent, fallback), defer-specific derivation (Bash, Edit), and the end-to-end runtime wire-up (`claw-drive defer <id> --remember` appends to state.json's auto_defer).
+
+### Changed
+
+- **BREAKING (rule-shape, not API):** remembered rules for non-Bash tools now carry `arg_matches` and only match the exact scope of the remembered action. Users who relied on the old broad tool-wide remembering (which was the memory-flagged "useless blanket rule" bug) will see a fresh escalation the next time B calls the same tool on a different path/pattern/subagent. **Migration:** manually add a tool-wide rule via `update_policy` or direct policy JSON edit if broad trust is desired; alternatively, keep remembering narrow rules as they're encountered and let the policy grow organically.
+
+### Notes
+
+- No MCP tool, socket-protocol, event-schema, schema, or template changes. The `resolve_tool_call` signature is unchanged (`action`, `reason`, `remember_as_policy`).
+- The v0.2.2 structural-equality test (permissive template's `auto_defer`/`auto_reject` ≡ starter's) continues to pass — templates are not touched.
+- The v0.2.3 evaluation order (`auto_reject → auto_defer → auto_approve → escalate_default`) is unchanged — narrow-scope learned rules interact with it the same way manually-authored ones do.
+- v0.3.0 is a minor bump (not patch) because the observable rule-shape changes for anyone who called `remember_as_policy` against a non-Bash tool. No API surface change, but the learned-rule structure differs.
+
 ## [0.2.4] — 2026-04-24
 
 ### Added

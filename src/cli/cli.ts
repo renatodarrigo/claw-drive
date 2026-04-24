@@ -4,6 +4,7 @@ import { cmdTail } from "./commands/tail.js";
 import { cmdPending } from "./commands/pending.js";
 import { cmdApprove } from "./commands/approve.js";
 import { cmdReject } from "./commands/reject.js";
+import { cmdDefer } from "./commands/defer.js";
 import { cmdSend } from "./commands/send.js";
 import { cmdStart } from "./commands/start.js";
 import { cmdStop } from "./commands/stop.js";
@@ -20,6 +21,7 @@ const commands: Record<string, (argv: string[]) => Promise<number>> = {
   pending: cmdPending,
   approve: cmdApprove,
   reject: cmdReject,
+  defer: cmdDefer,
   send: cmdSend,
   start: cmdStart,
   stop: cmdStop,

@@ -161,9 +161,88 @@ describe("deriveRuleFromResolved", () => {
     });
   });
 
-  it("non-Bash rule has no arg_matches", () => {
+  it("non-Bash rule with file_path scopes to exact path", () => {
     const rule = deriveRuleFromResolved("approve", "Read", { file_path: "/x" });
-    expect(rule).toEqual({ tool: "Read", name: "remembered: approve Read" });
+    expect(rule).toEqual({
+      tool: "Read",
+      arg_matches: { file_path: "^/x$" },
+      name: "remembered: approve Read /x",
+    });
+  });
+
+  it("Edit rule scopes to exact file_path (special chars escaped)", () => {
+    const rule = deriveRuleFromResolved("approve", "Edit", { file_path: "/a/b (c).ts" });
+    expect(rule).toEqual({
+      tool: "Edit",
+      arg_matches: { file_path: "^/a/b \\(c\\)\\.ts$" },
+      name: "remembered: approve Edit /a/b (c).ts",
+    });
+  });
+
+  it("Write rule scopes to exact file_path", () => {
+    const rule = deriveRuleFromResolved("reject", "Write", { file_path: "/etc/passwd" });
+    expect(rule).toEqual({
+      tool: "Write",
+      arg_matches: { file_path: "^/etc/passwd$" },
+      name: "remembered: reject Write /etc/passwd",
+    });
+  });
+
+  it("Glob rule scopes to exact pattern", () => {
+    const rule = deriveRuleFromResolved("approve", "Glob", { pattern: "**/*.ts" });
+    expect(rule).toEqual({
+      tool: "Glob",
+      arg_matches: { pattern: "^\\*\\*/\\*\\.ts$" },
+      name: "remembered: approve Glob **/*.ts",
+    });
+  });
+
+  it("Grep rule scopes to exact pattern", () => {
+    const rule = deriveRuleFromResolved("approve", "Grep", { pattern: "TODO" });
+    expect(rule).toEqual({
+      tool: "Grep",
+      arg_matches: { pattern: "^TODO$" },
+      name: "remembered: approve Grep TODO",
+    });
+  });
+
+  it("Agent rule scopes to subagent_type", () => {
+    const rule = deriveRuleFromResolved(
+      "approve",
+      "Agent",
+      { subagent_type: "general-purpose", description: "d", prompt: "p" }
+    );
+    expect(rule).toEqual({
+      tool: "Agent",
+      arg_matches: { subagent_type: "^general-purpose$" },
+      name: "remembered: approve Agent (general-purpose)",
+    });
+  });
+
+  it("falls back to tool-wide when no identifying arg present", () => {
+    const rule = deriveRuleFromResolved("approve", "TodoWrite", { todos: [] });
+    expect(rule).toEqual({
+      tool: "TodoWrite",
+      name: "remembered: approve TodoWrite (tool-wide fallback)",
+    });
+  });
+
+  it("defer action produces correct name prefix for Bash", () => {
+    const rule = deriveRuleFromResolved("defer", "Bash", { command: "sudo apt update" });
+    expect(rule).toEqual({
+      tool: "Bash",
+      bash_command_matches: "^sudo ",
+      name: "remembered: defer sudo",
+    });
+  });
+
+  it("defer action on Edit scopes to exact file_path", () => {
+    const rule = deriveRuleFromResolved("defer", "Edit", { file_path: "/etc/nginx/nginx.conf" });
+    expect(rule).toEqual({
+      tool: "Edit",
+      arg_matches: { file_path: "^/etc/nginx/nginx\\.conf$" },
+      name: "remembered: defer Edit /etc/nginx/nginx.conf",
+    });
   });
 });
 

@@ -10,12 +10,14 @@ export async function resolveCmd(
 ): Promise<number> {
   const callId = argv[0];
   if (!callId) {
-    console.error(`usage: claw-drive ${action} <call_id> [--reason R]`);
+    console.error(`usage: claw-drive ${action} <call_id> [--reason R] [--remember]`);
     return 2;
   }
   let reason = `${action}d via CLI`;
+  let remember = false;
   for (let i = 1; i < argv.length; i++) {
     if (argv[i] === "--reason") reason = argv[++i] ?? reason;
+    else if (argv[i] === "--remember") remember = true;
   }
   let entries: string[];
   try {
@@ -35,6 +37,7 @@ export async function resolveCmd(
         call_id: callId,
         action,
         reason,
+        remember_as_policy: remember,
       });
       if (resp.ok) {
         console.log(JSON.stringify({ session_id: id, ok: true }));

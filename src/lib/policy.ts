@@ -109,7 +109,32 @@ export function deriveRuleFromResolved(
       name: `remembered: ${action} ${firstToken}`,
     };
   }
-  return { tool, name: `remembered: ${action} ${tool}` };
+  // Prefer narrow scope on the tool's identifying arg.
+  const filePath = typeof args.file_path === "string" ? args.file_path : undefined;
+  const pattern = typeof args.pattern === "string" ? args.pattern : undefined;
+  const subagent = typeof args.subagent_type === "string" ? args.subagent_type : undefined;
+  if (filePath) {
+    return {
+      tool,
+      arg_matches: { file_path: "^" + escapeRegex(filePath) + "$" },
+      name: `remembered: ${action} ${tool} ${filePath}`,
+    };
+  }
+  if (pattern) {
+    return {
+      tool,
+      arg_matches: { pattern: "^" + escapeRegex(pattern) + "$" },
+      name: `remembered: ${action} ${tool} ${pattern}`,
+    };
+  }
+  if (subagent) {
+    return {
+      tool,
+      arg_matches: { subagent_type: "^" + escapeRegex(subagent) + "$" },
+      name: `remembered: ${action} ${tool} (${subagent})`,
+    };
+  }
+  return { tool, name: `remembered: ${action} ${tool} (tool-wide fallback)` };
 }
 
 function escapeRegex(s: string): string {
