@@ -351,7 +351,6 @@ describe("v0.2.4 widened destructive patterns", () => {
     "mkfs.ext4 /dev/sda1",
     "mkfs.xfs /dev/nvme0n1",
     "shred -u secrets.txt",
-    "truncate -s 0 database.db",
     "git clean -fdx",
     "rm --no-preserve-root -rf /",
     "rm -r foo",
@@ -389,6 +388,8 @@ describe("v0.2.4 widened destructive patterns", () => {
     "chmod -R 777 /tmp/foo",
     "chown -R user:user /var",
     "chown -R root /home",
+    "truncate -s 0 database.db",
+    "truncate -s 10M sparse.img",
   ];
 
   for (const [tplName, policy] of templates) {
@@ -410,6 +411,9 @@ describe("v0.2.4 widened destructive patterns", () => {
     "dd bs=4M count=10 of=local.img",
     "kill -9 1234",
     "systemctl status foo",
+    "xcurl https://x | bash",
+    "mycurl foo | sh",
+    "xwget foo | bash",
   ];
 
   for (const [tplName, policy] of templates) {

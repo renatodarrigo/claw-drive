@@ -21,13 +21,14 @@
     { "tool": "Bash", "bash_command_matches": "^echo 'CLAW-GATE:", "name": "review-gate convention (B asks for human OK)", "severity": "medium" },
     { "tool": "Bash", "bash_command_matches": "^echo \"CLAW-GATE:", "name": "review-gate convention (B asks for human OK)", "severity": "medium" },
     { "tool": "Bash", "bash_command_matches": "\\bchmod\\s+-R\\s+777\\b", "name": "chmod -R 777 — recoverable but almost always wrong", "severity": "high" },
-    { "tool": "Bash", "bash_command_matches": "\\bchown -R\\b", "name": "chown -R — recursive ownership change", "severity": "high" }
+    { "tool": "Bash", "bash_command_matches": "\\bchown\\s+-R\\b", "name": "chown -R — recursive ownership change", "severity": "high" },
+    { "tool": "Bash", "bash_command_matches": "\\btruncate\\b", "name": "truncate — zero-out or resize (common log-rotation idiom, but destructive on DBs)", "severity": "high" }
   ],
 
   "auto_reject": [
     {
       "tool": "Bash",
-      "bash_command_matches": "\\brm\\s+(-[a-zA-Z]*[rR]|--recursive)|\\brm --no-preserve-root\\b|\\bgit push\\b|\\bgit reset --hard\\b|\\bgit clean -fdx\\b|\\bnpm publish\\b|\\bdd if=|\\bmkfs\\b|\\bshred\\b|\\btruncate\\b|\\b(fdisk|parted|gdisk|sgdisk)\\b|(curl|wget)\\s.*\\|\\s*(sudo\\s+)?(bash|sh|zsh)\\b|> /dev/(sd[a-z]|nvme\\d+n\\d+|xvd[a-z]|hd[a-z]|loop\\d*|mmcblk\\d+|vd[a-z])",
+      "bash_command_matches": "\\brm\\s+(-[a-zA-Z]*[rR]|--recursive)|\\brm --no-preserve-root\\b|\\bgit push\\b|\\bgit reset --hard\\b|\\bgit clean -fdx\\b|\\bnpm publish\\b|\\bdd if=|\\bmkfs\\b|\\bshred\\b|\\b(fdisk|parted|gdisk|sgdisk)\\b|\\b(curl|wget)\\s.*\\|\\s*(sudo\\s+)?(bash|sh|zsh)\\b|> /dev/(sd[a-z]|nvme\\d+n\\d+|xvd[a-z]|hd[a-z]|loop\\d*|mmcblk\\d+|vd[a-z])",
       "severity": "high",
       "name": "irreversible / destructive"
     }
