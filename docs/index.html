@@ -22,9 +22,75 @@
     </nav>
   </header>
   <main>
-    <h1>claw-drive (scaffold)</h1>
-    <p class="subtitle">Placeholder landing — replaced in Task 2.</p>
-    <pre><code class="language-bash">echo hello</code></pre>
+    <h1 class="wordmark-big">claw-drive <span class="caret">→</span></h1>
+    <p class="tagline">Drive Claude Code. End-to-end.</p>
+    <p class="subtagline">Policy-gated. Human-supervised. Restart-resilient.</p>
+
+    <pre class="hero-install"><code class="language-bash">git clone https://github.com/renatodarrigo/claw-drive && cd claw-drive &amp;&amp; ./install.sh</code></pre>
+
+    <p class="hero-cta">
+      <a href="install.html" class="btn">Install guide →</a>
+      <a href="https://github.com/renatodarrigo/claw-drive" class="btn btn-ghost">GitHub ↗</a>
+    </p>
+
+    <h2>How it works</h2>
+    <pre class="diagram"><code>┌──────────┐   start_session    ┌─────────┐
+│ Session A│ ─────────────────▶ │ runner  │
+│ (driver) │ ◀── events.jsonl ─ │         │
+└──────────┘                    └────┬────┘
+                                     │ spawn
+                                     ▼
+                                ┌─────────┐   PreToolUse   ┌────────┐
+                                │ Session │ ─────────────▶ │ policy │
+                                │    B    │ ◀─ decision ── │  gate  │
+                                └─────────┘                └────────┘</code></pre>
+
+    <p>Session A hosts claw-drive as an MCP server and spawns Session B in another directory. B is a real <code>claude -p</code> subprocess — it runs tools, honours hooks, and can be interrupted. Every tool call B makes is gated by a policy that can approve, reject, defer to the human, or escalate to A.</p>
+
+    <h2>What you get</h2>
+    <div class="pillars">
+      <a href="policies.html" class="pillar">
+        <h3>Policy gates</h3>
+        <p><code>auto_approve</code>, <code>auto_reject</code>, <code>auto_defer</code>, <code>escalate_default</code>. Rule-shape learning via <code>remember_as_policy</code>. Two templates ship — conservative and permissive.</p>
+      </a>
+      <a href="driving-patterns.html#defer-round-trip" class="pillar">
+        <h3>Human-in-the-loop</h3>
+        <p>Escalated calls surface to you. Deferred calls — sudo, interactive logins — round-trip through <code>provide_tool_output</code>. No silent bypasses.</p>
+      </a>
+      <a href="driving-patterns.html#monitor-watch" class="pillar">
+        <h3>Monitor-driven</h3>
+        <p>Event-stream driving via <code>watch_command</code>, not polling loops. A reacts to <code>tool_decision_required</code>, <code>turn_completed</code>, and three other <code>kind</code>s.</p>
+      </a>
+    </div>
+
+    <h2>What it isn't</h2>
+    <div class="callout">
+      <ul>
+        <li><strong>Single-user.</strong> Not multi-tenant. No auth surface.</li>
+        <li><strong>Single-host, local only.</strong> No network-exposed state. No remote runners.</li>
+        <li><strong>A dogfooding tool, not production infra.</strong> Built to help you script and review agentic pipelines.</li>
+      </ul>
+    </div>
+
+    <h2>Deeper reading</h2>
+    <div class="read-grid">
+      <a href="install.html" class="read-card">
+        <h3>Install →</h3>
+        <p>Clone, script, two Bash deps. Under a minute.</p>
+      </a>
+      <a href="policies.html" class="read-card">
+        <h3>Policies →</h3>
+        <p>The full policy model: templates, evaluation order, CLAW-GATE, remembering decisions.</p>
+      </a>
+      <a href="driving-patterns.html" class="read-card">
+        <h3>Driving patterns →</h3>
+        <p>Monitor + watch. Defer round-trip. CLAW-GATE. Interrupts. Restart resilience.</p>
+      </a>
+      <a href="reference.html" class="read-card">
+        <h3>Reference →</h3>
+        <p>Every MCP tool and CLI command, in two tables.</p>
+      </a>
+    </div>
   </main>
   <footer>
     <p class="muted">claw-drive v0.3.0 · MIT · <a href="https://github.com/renatodarrigo/claw-drive">github.com/renatodarrigo/claw-drive</a> · © <span data-year></span></p>
