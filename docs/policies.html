@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Policies — claw-drive</title>
+  <meta name="description" content="How claw-drive decides what Session B can do. Rule shape, evaluation order, templates, CLAW-GATE, remembering decisions.">
+  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+  <header class="site-header">
+    <nav aria-label="Primary">
+      <a href="index.html" class="wordmark">claw-drive</a>
+      <ul>
+        <li><a href="install.html" data-page="install.html">Install</a></li>
+        <li><a href="policies.html" data-page="policies.html">Policies</a></li>
+        <li><a href="driving-patterns.html" data-page="driving-patterns.html">Driving</a></li>
+        <li><a href="reference.html" data-page="reference.html">Reference</a></li>
+        <li><a href="https://github.com/renatodarrigo/claw-drive" rel="noopener" class="ext">GitHub ↗</a></li>
+      </ul>
+    </nav>
+  </header>
+  <main>
+    <h1>Policies</h1>
+    <p class="subtitle">How claw-drive decides what Session B can do.</p>
+
+    <h2>The policy object</h2>
+    <p>A policy is either the string <code>"bypass"</code> — no gating, useful for demos, never for real work — or an object with up to four rule lists plus two scalars:</p>
+
+    <pre><code class="language-json">{
+  "auto_approve": [
+    { "tool": "Read" },
+    { "tool": "Bash", "bash_command_matches": "^git (status|diff|log|show|branch) " }
+  ],
+  "auto_defer": [
+    { "tool": "Bash", "bash_command_matches": "^sudo\\s", "name": "sudo → human" }
+  ],
+  "auto_reject": [
+    { "tool": "Bash", "bash_command_matches": "rm -rf |git push ", "severity": "high" }
+  ],
+  "escalate_default": true,
+  "decision_timeout_seconds": 3600
+}</code></pre>
+
+    <h3>Rule shape</h3>
+    <ul>
+      <li><code>tool</code> — exact match against the tool name (<code>Bash</code>, <code>Read</code>, <code>Edit</code>, <code>Glob</code>, <code>Agent</code>, …).</li>
+      <li><code>bash_command_matches</code> — regex against the full Bash command. Bash-only.</li>
+      <li><code>arg_matches</code> — regex against identifying arg fields on non-Bash tools. <code>Edit.file_path</code>, <code>Glob.pattern</code>, <code>Agent.subagent_type</code>, etc.</li>
+      <li><code>name</code> — human-readable tag. Appears in events and <code>pending</code>. Strongly recommended on <code>auto_defer</code> rules.</li>
+    </ul>
+
+    <h2 id="evaluation-order">Evaluation order</h2>
+    <p>Rules are checked in this order:</p>
+    <pre><code class="language-text">auto_reject → auto_defer → auto_approve → escalate_default</code></pre>
+
+    <div class="callout">
+      <strong>Asymmetric risk.</strong> The stricter rule wins when lists overlap. A false-reject is a human prompt — reversible. A false-approve is a silent bypass — not.
+    </div>
+
+    <p>This closes compound-command bypasses like:</p>
+    <pre><code class="language-bash">git status &amp;&amp; rm -rf /tmp
+# git status matches auto_approve, rm -rf /tmp matches auto_reject → reject wins.</code></pre>
+
+    <h2>Templates</h2>
+    <p>Two policy templates ship in <code>templates/</code>:</p>
+    <ul>
+      <li><strong><code>claw-drive-policy.json</code></strong> — conservative starter. Default when no <code>--policy</code> is passed. Safe for unknown projects.</li>
+      <li><strong><code>claw-drive-policy-permissive.json</code></strong> — starter plus common dev-CLI auto-approves: <code>rg</code>, <code>sed</code>, <code>awk</code>, <code>jq</code>, <code>diff</code>, <code>mkdir -p</code>, <code>touch</code>, non-recursive <code>cp</code>, <code>mv</code>, safe <code>git</code> ops like <code>fetch</code> and <code>pull --ff-only</code>, path/env introspection. Destructive rules preserved verbatim.</li>
+    </ul>
+
+    <h2 id="claw-gate">The CLAW-GATE convention</h2>
+    <p>The default policy includes a review-gate defer rule:</p>
+    <pre><code class="language-json">"auto_defer": [
+  { "tool": "Bash", "bash_command_matches": "^echo 'CLAW-GATE:", "name": "review gate" }
+]</code></pre>
+
+    <p>In the scenario brief, tell B:</p>
+    <blockquote class="callout">Before each risky step, run <code>echo 'CLAW-GATE: &lt;your question&gt;'</code> with the Bash tool and wait for my response.</blockquote>
+
+    <p>When B runs the echo, the defer rule fires. The monitor alerts A. The human answers. A calls <code>provide_tool_output</code> with the answer. B reads it and proceeds. No new primitive — same mechanism as a <code>sudo</code> defer.</p>
+
+    <h2 id="remember-as-policy">Learning from decisions: <code>remember_as_policy</code></h2>
+    <p>When you approve, reject, or defer a call interactively, pass <code>remember_as_policy: true</code> to have claw-drive derive a rule and append it to the session's live policy.</p>
+
+    <p>Derivation is narrow by default for non-Bash tools:</p>
+    <ul>
+      <li><code>Edit /path/foo.ts</code> → <code>{ tool: "Edit", arg_matches: { file_path: "^/path/foo\\.ts$" } }</code></li>
+      <li><code>Glob "**/*.md"</code> → <code>{ tool: "Glob", arg_matches: { pattern: "^\\*\\*/\\*\\.md$" } }</code></li>
+      <li><code>Agent</code> with <code>subagent_type: "Explore"</code> → <code>{ tool: "Agent", arg_matches: { subagent_type: "^Explore$" } }</code></li>
+    </ul>
+
+    <p>Tools without a recognised identifying arg (<code>TodoWrite</code>, <code>ExitPlanMode</code>, custom MCP tools) fall back to tool-wide matching. The derived rule's <code>name</code> is tagged <code>(tool-wide fallback)</code> so it's obvious at review time.</p>
+
+    <p>Bash remembering derives from a prefix of the command, same as before.</p>
+
+    <h2>Timeouts</h2>
+    <p>The default <code>decision_timeout_seconds</code> is <strong>3600</strong> (1 hour). If an escalation sits unresolved that long, the runner fires the rule's <code>default_action</code>:</p>
+    <ul>
+      <li>Plain <code>escalate_default: true</code> match → <code>approve</code> on timeout.</li>
+      <li><code>auto_reject</code> match → <code>reject</code> on timeout.</li>
+      <li><code>auto_defer</code> match → <code>defer</code> on timeout.</li>
+    </ul>
+
+    <p>Override per-session via <code>start_session</code>'s <code>decision_timeout_seconds</code> argument, or per-policy via the field above.</p>
+
+    <div class="callout">
+      <strong>History note.</strong> v0.1's default was 300 seconds — small enough to auto-approve sensitive calls silently when a driver's monitor had a transient gap. v0.2 widened to 3600s.
+    </div>
+  </main>
+  <footer>
+    <p class="muted">claw-drive v0.3.0 · MIT · <a href="https://github.com/renatodarrigo/claw-drive">github.com/renatodarrigo/claw-drive</a> · © <span data-year></span></p>
+  </footer>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-core.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+  <script src="assets/site.js"></script>
+</body>
+</html>
