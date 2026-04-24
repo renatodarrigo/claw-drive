@@ -33,13 +33,16 @@ describe("matchPolicy", () => {
     expect(no.decision).toBe("escalate");
   });
 
-  it("auto_approve beats auto_reject when both match", () => {
+  it("auto_reject beats auto_approve when both match (v0.2.3 ordering)", () => {
     const p: Policy = {
       auto_approve: [{ tool: "Bash", bash_command_matches: "^git status" }],
       auto_reject: [{ tool: "Bash", bash_command_matches: "^git " }],
     };
     const r = matchPolicy(p, { tool: "Bash", args: { command: "git status" } });
-    expect(r.decision).toBe("approve_silent");
+    expect(r.decision).toBe("escalate");
+    if (r.decision === "escalate") {
+      expect(r.default_action).toBe("reject");
+    }
   });
 
   it("auto_reject triggers escalate with default reject", () => {
@@ -86,7 +89,7 @@ describe("matchPolicy", () => {
     expect(no.decision).toBe("escalate");
   });
 
-  it("auto_defer matches before auto_reject when both would match", () => {
+  it("auto_reject beats auto_defer when both would match (v0.2.3 ordering)", () => {
     const p: Policy = {
       auto_defer: [{ tool: "Bash", bash_command_matches: "^sudo " }],
       auto_reject: [{ tool: "Bash", bash_command_matches: "sudo" }],
@@ -94,18 +97,21 @@ describe("matchPolicy", () => {
     const r = matchPolicy(p, { tool: "Bash", args: { command: "sudo apt install foo" } });
     expect(r.decision).toBe("escalate");
     if (r.decision === "escalate") {
-      expect(r.default_action).toBe("defer");
+      expect(r.default_action).toBe("reject");
       expect(r.severity).toBe("high");
     }
   });
 
-  it("auto_approve wins over auto_defer", () => {
+  it("auto_defer wins over auto_approve (v0.2.3 ordering)", () => {
     const p: Policy = {
       auto_approve: [{ tool: "Bash", bash_command_matches: "^sudo -n true$" }],
       auto_defer: [{ tool: "Bash", bash_command_matches: "^sudo " }],
     };
     const r = matchPolicy(p, { tool: "Bash", args: { command: "sudo -n true" } });
-    expect(r.decision).toBe("approve_silent");
+    expect(r.decision).toBe("escalate");
+    if (r.decision === "escalate") {
+      expect(r.default_action).toBe("defer");
+    }
   });
 
   it("auto_defer with custom severity is honored", () => {
@@ -117,6 +123,30 @@ describe("matchPolicy", () => {
     if (r.decision === "escalate") {
       expect(r.default_action).toBe("defer");
       expect(r.severity).toBe("medium");
+    }
+  });
+
+  it("auto_defer beats auto_approve when both match (v0.2.3 ordering)", () => {
+    const p: Policy = {
+      auto_approve: [{ tool: "Bash", bash_command_matches: "^foo" }],
+      auto_defer: [{ tool: "Bash", bash_command_matches: "^foo" }],
+    };
+    const r = matchPolicy(p, { tool: "Bash", args: { command: "foo bar" } });
+    expect(r.decision).toBe("escalate");
+    if (r.decision === "escalate") {
+      expect(r.default_action).toBe("defer");
+    }
+  });
+
+  it("auto_reject beats auto_defer when both match (v0.2.3 ordering)", () => {
+    const p: Policy = {
+      auto_defer: [{ tool: "Bash", bash_command_matches: "^sudo\\s" }],
+      auto_reject: [{ tool: "Bash", bash_command_matches: "\\brm -rf\\b" }],
+    };
+    const r = matchPolicy(p, { tool: "Bash", args: { command: "sudo rm -rf /" } });
+    expect(r.decision).toBe("escalate");
+    if (r.decision === "escalate") {
+      expect(r.default_action).toBe("reject");
     }
   });
 });
@@ -269,4 +299,35 @@ describe("permissive policy template", () => {
     expect(policy.auto_defer).toEqual(starter.auto_defer);
     expect(policy.auto_reject).toEqual(starter.auto_reject);
   });
+});
+
+describe("compound-command bypass is closed on both templates", () => {
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = nodePath.dirname(__filename);
+  const starter: Policy = JSON.parse(
+    fsSync.readFileSync(nodePath.resolve(__dirname, "..", "..", "templates", "claw-drive-policy.json"), "utf-8")
+  );
+  const permissive: Policy = JSON.parse(
+    fsSync.readFileSync(nodePath.resolve(__dirname, "..", "..", "templates", "claw-drive-policy-permissive.json"), "utf-8")
+  );
+
+  const cases: Array<{ name: string; command: string; policy: Policy }> = [
+    { name: "starter: git status; rm -rf /tmp", command: "git status; rm -rf /tmp", policy: starter },
+    { name: "starter: set -e; rm -rf /", command: "set -e; rm -rf /", policy: starter },
+    { name: "permissive: git status; rm -rf /tmp", command: "git status; rm -rf /tmp", policy: permissive },
+    { name: "permissive: set -e; rm -rf /", command: "set -e; rm -rf /", policy: permissive },
+    { name: "permissive: cp foo bar && git push origin main", command: "cp foo bar && git push origin main", policy: permissive },
+    { name: "permissive: git fetch && rm -rf /", command: "git fetch && rm -rf /", policy: permissive },
+    { name: "permissive: which node && npm publish", command: "which node && npm publish", policy: permissive },
+  ];
+
+  for (const { name, command, policy } of cases) {
+    it(`${name} → escalate with default reject`, () => {
+      const r = matchPolicy(policy, { tool: "Bash", args: { command } });
+      expect(r.decision).toBe("escalate");
+      if (r.decision === "escalate") {
+        expect(r.default_action).toBe("reject");
+      }
+    });
+  }
 });

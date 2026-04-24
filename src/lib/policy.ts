@@ -37,8 +37,20 @@ export type MatchDecision =
 export function matchPolicy(policy: Policy, call: ToolCall): MatchDecision {
   if (policy === "bypass") return { decision: "approve_silent" };
 
-  for (const rule of policy.auto_approve ?? []) {
-    if (ruleMatches(rule, call)) return { decision: "approve_silent", matched_rule: rule };
+  // Evaluation order: auto_reject > auto_defer > auto_approve > escalate_default.
+  // Rationale (v0.2.3): a command that matches both an approve rule and a
+  // reject rule — e.g. `git status; rm -rf /tmp` matching `^git ` + `\brm -rf\b`
+  // — should be rejected, not silently approved. Asymmetric risk: a false-reject
+  // is a human prompt, a false-approve is a bypass.
+  for (const rule of policy.auto_reject ?? []) {
+    if (ruleMatches(rule, call)) {
+      return {
+        decision: "escalate",
+        default_action: "reject",
+        severity: rule.severity ?? "high",
+        matched_rule: rule,
+      };
+    }
   }
   for (const rule of policy.auto_defer ?? []) {
     if (ruleMatches(rule, call)) {
@@ -50,15 +62,8 @@ export function matchPolicy(policy: Policy, call: ToolCall): MatchDecision {
       };
     }
   }
-  for (const rule of policy.auto_reject ?? []) {
-    if (ruleMatches(rule, call)) {
-      return {
-        decision: "escalate",
-        default_action: "reject",
-        severity: rule.severity ?? "high",
-        matched_rule: rule,
-      };
-    }
+  for (const rule of policy.auto_approve ?? []) {
+    if (ruleMatches(rule, call)) return { decision: "approve_silent", matched_rule: rule };
   }
   const escalate = policy.escalate_default ?? true;
   if (escalate) {
