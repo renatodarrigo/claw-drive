@@ -258,6 +258,24 @@ async function handleRequest(
         resolved_by: "user_mcp",
       } as Omit<Event, "seq" | "at">);
 
+      if (req.remember_as_policy) {
+        const rule = deriveRuleFromResolved(
+          req.action,
+          pending.tool,
+          pending.args as Record<string, unknown>
+        );
+        const p = ctx.state.policy;
+        if (p !== "bypass") {
+          const list =
+            req.action === "approve" ? "auto_approve" :
+            req.action === "defer" ? "auto_defer" :
+            "auto_reject";
+          const updated = { ...p, [list]: [...(p[list] ?? []), rule] };
+          ctx.state.policy = updated;
+          await writeState(statePath(ctx.sessionId), ctx.state);
+        }
+      }
+
       if (req.action === "defer") {
         // Move into deferredCalls tracking; release approver with DEFERRED reason
         ctx.deferredCalls.set(req.call_id, {
@@ -273,23 +291,6 @@ async function handleRequest(
           message: `DEFERRED: ${req.reason}. Human will run this command manually; wait for a follow-up user turn with the output.`,
         });
         return { id: req.id, ok: true };
-      }
-
-      // approve or reject
-      if (req.remember_as_policy) {
-        const rule = deriveRuleFromResolved(
-          req.action,
-          pending.tool,
-          pending.args as Record<string, unknown>
-        );
-        const p = ctx.state.policy;
-        if (p !== "bypass") {
-          const list =
-            req.action === "approve" ? "auto_approve" : "auto_reject";
-          const updated = { ...p, [list]: [...(p[list] ?? []), rule] };
-          ctx.state.policy = updated;
-          await writeState(statePath(ctx.sessionId), ctx.state);
-        }
       }
 
       pending.resolve({
