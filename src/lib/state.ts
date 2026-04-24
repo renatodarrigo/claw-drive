@@ -34,7 +34,25 @@ export async function readState(statePath: string): Promise<SessionState | null>
   }
 }
 
+// Per-path write queue. All writeState() calls against the same path are
+// serialised in submission order, eliminating a race where two concurrent
+// writers share the same `.tmp-<pid>` filename and the second rename() fails
+// with ENOENT because the first writer already renamed the tmp away.
+// Scope is in-process; the runner is a single process per session, which
+// matches the "single writer per session" invariant documented in the design.
+const writeChains = new Map<string, Promise<void>>();
+
 export async function writeState(statePath: string, state: SessionState): Promise<void> {
+  const prev = writeChains.get(statePath) ?? Promise.resolve();
+  const next = prev.then(() => doWriteState(statePath, state));
+  // Swallow errors on the CHAIN so one failed write doesn't poison subsequent
+  // writes (they should still run). The caller's `next` handle still rejects,
+  // so the original error is visible to whoever awaited this specific write.
+  writeChains.set(statePath, next.catch(() => undefined));
+  return next;
+}
+
+async function doWriteState(statePath: string, state: SessionState): Promise<void> {
   const tmp = statePath + ".tmp-" + process.pid;
   await fs.writeFile(tmp, JSON.stringify(state, null, 2), { encoding: "utf-8" });
   await fs.rename(tmp, statePath);

@@ -1,0 +1,36 @@
+{
+  "auto_approve": [
+    { "tool": "Read" },
+    { "tool": "Glob" },
+    { "tool": "Grep" },
+    { "tool": "Bash", "bash_command_matches": "^git (status|diff|log|show|branch|stash list|ls-files|rev-parse|worktree list) ?" },
+    { "tool": "Bash", "bash_command_matches": "^(ls|cat|head|tail|find|file|tree|wc|pwd|echo|stat|wc|du|df) " },
+    { "tool": "Bash", "bash_command_matches": "^(npm|npx|node) " },
+    { "tool": "Bash", "bash_command_matches": "^cloverleaf-cli " },
+    { "tool": "Bash", "bash_command_matches": "cloverleaf-cli ", "name": "cloverleaf-cli anywhere in compound script (set -e, cd, REPO=, etc.)" },
+    { "tool": "Bash", "bash_command_matches": "^(set -e|cd |REPO=|export\\s|source )", "name": "common shell prefixes that usually wrap a safe payload" },
+    { "tool": "Bash", "bash_command_matches": "^(rg|sed -n|awk|jq|diff|cmp|column)\\s", "name": "common read/inspect CLIs" },
+    { "tool": "Bash", "bash_command_matches": "^(mkdir -p|touch|cp(?!\\s+(-[^-\\s]*[rRa]|--recursive|--archive))|mv)(\\s|$)", "name": "common non-destructive file ops — cp recursive forms (-r, -R, -a, -pR, --recursive, --archive) still escalate" },
+    { "tool": "Bash", "bash_command_matches": "^git (fetch|pull --ff-only|rebase --abort|rebase --continue|rebase --skip|cherry-pick --abort|merge --abort)(\\s|$)", "name": "common safe git ops" },
+    { "tool": "Bash", "bash_command_matches": "^(which|type|printenv|basename|dirname|realpath|readlink)(\\s|$)", "name": "common path/env introspection (env intentionally excluded — it execs its argv)" }
+  ],
+
+  "auto_defer": [
+    { "tool": "Bash", "bash_command_matches": "^sudo\\s", "name": "sudo requires human password" },
+    { "tool": "Bash", "bash_command_matches": "^su\\s", "name": "su requires human password" },
+    { "tool": "Bash", "bash_command_matches": "^echo 'CLAW-GATE:", "name": "review-gate convention (B asks for human OK)", "severity": "medium" },
+    { "tool": "Bash", "bash_command_matches": "^echo \"CLAW-GATE:", "name": "review-gate convention (B asks for human OK)", "severity": "medium" }
+  ],
+
+  "auto_reject": [
+    {
+      "tool": "Bash",
+      "bash_command_matches": "\\brm -rf\\b|\\bgit push\\b|\\bgit reset --hard\\b|> /dev/|\\bnpm publish\\b",
+      "severity": "high",
+      "name": "irreversible / destructive"
+    }
+  ],
+
+  "escalate_default": true,
+  "decision_timeout_seconds": 3600
+}

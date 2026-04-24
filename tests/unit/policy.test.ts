@@ -6,6 +6,9 @@ import {
   type Policy,
   type Rule,
 } from "../../src/lib/policy.js";
+import * as fsSync from "node:fs";
+import * as nodePath from "node:path";
+import { fileURLToPath } from "node:url";
 
 describe("matchPolicy", () => {
   it("bypass approves everything without decision events", () => {
@@ -168,5 +171,102 @@ describe("validatePolicy", () => {
   it("invalid regex in auto_defer is rejected", () => {
     const r = validatePolicy({ auto_defer: [{ tool: "Bash", bash_command_matches: "[bad" }] });
     expect(r.ok).toBe(false);
+  });
+});
+
+describe("permissive policy template", () => {
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = nodePath.dirname(__filename);
+  const templatePath = nodePath.resolve(__dirname, "..", "..", "templates", "claw-drive-policy-permissive.json");
+  const policy: Policy = JSON.parse(fsSync.readFileSync(templatePath, "utf-8"));
+
+  it("validates without errors", () => {
+    const v = validatePolicy(policy);
+    expect(v.ok).toBe(true);
+  });
+
+  it("auto-approves common read/inspect CLIs", () => {
+    for (const command of ["rg foo src/", "sed -n '1,10p' file", "awk '{print $1}' file", "jq .foo data.json", "diff a b"]) {
+      const r = matchPolicy(policy, { tool: "Bash", args: { command } });
+      expect(r.decision, `cmd: ${command}`).toBe("approve_silent");
+    }
+  });
+
+  it("auto-approves common non-destructive file ops", () => {
+    for (const command of ["mkdir -p x/y/z", "touch foo", "cp src dest", "mv a b"]) {
+      const r = matchPolicy(policy, { tool: "Bash", args: { command } });
+      expect(r.decision, `cmd: ${command}`).toBe("approve_silent");
+    }
+  });
+
+  it("auto-approves common safe git ops", () => {
+    for (const command of ["git fetch origin", "git pull --ff-only origin main", "git rebase --abort"]) {
+      const r = matchPolicy(policy, { tool: "Bash", args: { command } });
+      expect(r.decision, `cmd: ${command}`).toBe("approve_silent");
+    }
+  });
+
+  it("auto-approves common path/env introspection", () => {
+    for (const command of ["which node", "printenv PATH", "realpath foo"]) {
+      const r = matchPolicy(policy, { tool: "Bash", args: { command } });
+      expect(r.decision, `cmd: ${command}`).toBe("approve_silent");
+    }
+  });
+
+  it("does NOT auto-approve cp -r (stays under escalation)", () => {
+    const r = matchPolicy(policy, { tool: "Bash", args: { command: "cp -r src dest" } });
+    expect(r.decision).not.toBe("approve_silent");
+  });
+
+  it("still auto-rejects destructive commands", () => {
+    const r = matchPolicy(policy, { tool: "Bash", args: { command: "rm -rf foo" } });
+    expect(r.decision).toBe("escalate");
+    if (r.decision === "escalate") {
+      expect(r.default_action).toBe("reject");
+    }
+  });
+
+  it("still auto-rejects git push", () => {
+    const r = matchPolicy(policy, { tool: "Bash", args: { command: "git push origin main" } });
+    expect(r.decision).toBe("escalate");
+    if (r.decision === "escalate") {
+      expect(r.default_action).toBe("reject");
+    }
+  });
+
+  it("still auto-defers sudo", () => {
+    const r = matchPolicy(policy, { tool: "Bash", args: { command: "sudo apt update" } });
+    expect(r.decision).toBe("escalate");
+    if (r.decision === "escalate") {
+      expect(r.default_action).toBe("defer");
+    }
+  });
+
+  it("does NOT auto-approve `env` wrapping arbitrary commands", () => {
+    for (const command of ["env -i rm -rf /", "env FOO=bar bash -c 'x'", "env sudo apt update"]) {
+      const r = matchPolicy(policy, { tool: "Bash", args: { command } });
+      expect(r.decision, `cmd: ${command}`).not.toBe("approve_silent");
+    }
+  });
+
+  it("does NOT auto-approve cp recursive forms (-R, -a, --recursive, -pR)", () => {
+    for (const command of ["cp -R src dest", "cp -a src dest", "cp --recursive src dest", "cp -pR src dest", "cp --archive src dest"]) {
+      const r = matchPolicy(policy, { tool: "Bash", args: { command } });
+      expect(r.decision, `cmd: ${command}`).not.toBe("approve_silent");
+    }
+  });
+
+  it("does NOT auto-approve bogus prefix-matched git or introspection subcommands", () => {
+    for (const command of ["git fetchx origin", "git pushover main", "whichever", "typeset x=1"]) {
+      const r = matchPolicy(policy, { tool: "Bash", args: { command } });
+      expect(r.decision, `cmd: ${command}`).not.toBe("approve_silent");
+    }
+  });
+
+  it("auto_defer and auto_reject mirror the starter template byte-for-byte", () => {
+    const starterPath = nodePath.resolve(__dirname, "..", "..", "templates", "claw-drive-policy.json");
+    const starter = JSON.parse(fsSync.readFileSync(starterPath, "utf-8"));
+    expect(policy.auto_defer).toEqual(starter.auto_defer);
+    expect(policy.auto_reject).toEqual(starter.auto_reject);
   });
 });
