@@ -4,10 +4,10 @@
 
 ### Added
 
-- **7 new `auto_reject` patterns on both shipped templates** — `dd if=`, `mkfs`, `shred`, `truncate`, `git clean -fdx`, `rm --no-preserve-root`, disk partitioning tools (`fdisk`/`parted`/`gdisk`/`sgdisk`), and remote-exec-via-pipe (`(curl|wget) ... | (sudo )? (bash|sh|zsh)`). Closes the catch-net gap on irreversibly destructive commands that the v0.1.x rule set didn't cover.
+- **6 new `auto_reject` patterns on both shipped templates** — `dd if=`, `mkfs`, `shred`, `git clean -fdx`, `rm --no-preserve-root`, disk partitioning tools (`fdisk`/`parted`/`gdisk`/`sgdisk`), and remote-exec-via-pipe (`\b(curl|wget) ... | (sudo )? (bash|sh|zsh)`; the `\b` left-anchor was tightened during review so `xcurl`/`mycurl`/`xwget` wrappers don't trigger). Closes the catch-net gap on irreversibly destructive commands that the v0.1.x rule set didn't cover.
 - **Widened the existing `rm -rf` clause** to `\brm\s+(-[a-zA-Z]*[rR]|--recursive)` — now catches `rm -r`, `rm -fr`, `rm -Rf`, `rm --recursive`, and any short-flag combo containing `r` or `R`. Previously only exact `rm -rf` matched.
-- **2 new `auto_defer` patterns** — `chmod -R 777` and `chown -R`. Recoverable (unlike `dd` / `mkfs` / `shred`) but almost always wrong in a dogfood context; human gets prompted and can approve if they really mean it. Appended after `sudo`/`su` in the `auto_defer` list, so `sudo chmod -R 777 /etc` still matches the `sudo` rule first (verified by a pinned test).
-- **73 new unit tests** in `tests/unit/policy.test.ts` covering each new pattern on both templates, compound-bypass closures inheriting v0.2.3's order-flip protection, false-positive negatives for `/dev/null`/`/dev/stderr`/non-destructive `dd`, and the `sudo chmod -R 777` ordering invariant.
+- **3 new `auto_defer` patterns** — `chmod -R 777`, `chown -R` (whitespace-flex: `\s+-R`), and `truncate` (moved here from auto_reject during review because `truncate -s 0 foo.log` is a common log-rotation idiom that the human should be able to approve at the policy layer). Recoverable but almost always wrong in a dogfood context; human gets prompted. Appended after `sudo`/`su` in the `auto_defer` list, so `sudo chmod -R 777 /etc` still matches the `sudo` rule first (verified by a pinned test).
+- **81 new unit tests** in `tests/unit/policy.test.ts` covering each new pattern on both templates, compound-bypass closures inheriting v0.2.3's order-flip protection, false-positive negatives for `/dev/null`/`/dev/stderr`/non-destructive `dd`/user-wrappers like `xcurl|mycurl|xwget`, and the `sudo chmod -R 777` ordering invariant.
 
 ### Fixed
 
