@@ -2,6 +2,8 @@
 
 Drive-as-user MCP server + CLI for Claude Code. Lets one Claude Code session drive a second fresh Claude Code session end-to-end for dogfooding — multi-turn conversation, async event polling, policy-gated permissions with human-in-the-loop escalation, restart-resilient across caller restarts.
 
+**Website:** https://renatodarrigo.github.io/claw-drive/ — install, policies, driving patterns, reference.
+
 > Single-user, single-host, local only. See `CHANGELOG.md` for release history.
 
 ## How it works
