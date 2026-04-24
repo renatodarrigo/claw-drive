@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.2.3] — 2026-04-24
+
+### Fixed
+
+- **Compound-command bypass in `matchPolicy`.** Previously, a command matching an `auto_approve` rule short-circuited past `auto_reject` — so `git status; rm -rf /tmp` silently auto-approved because it matched `^git (status|...)` in the starter's `auto_approve` list and never reached `\brm -rf\b` in `auto_reject`. Affected both shipped templates (starter + permissive) and any user policy with overlapping approve/reject rules. Surfaced during the v0.2.2 final code review (2026-04-24) and filed as v0.2.3 follow-up. Fix: evaluation order in `matchPolicy` flipped from `auto_approve → auto_defer → auto_reject → escalate_default` to `auto_reject → auto_defer → auto_approve → escalate_default`. Both shipped templates catch compound bypasses automatically via their pre-existing destructive-pattern regex; no template edits needed.
+
+### Changed
+
+- **Policy evaluation order changed from `auto_approve → auto_defer → auto_reject` to `auto_reject → auto_defer → auto_approve`.** When a command matches rules in multiple lists, the stricter rule now wins: reject beats defer beats approve. Asymmetric risk justifies this — a false-reject is a human prompt, a false-approve is a silent bypass. Policies whose rule lists don't have overlapping entries are unaffected; the only behavioural changes land on commands that matched rules in two or more lists. Migration: if you authored a policy relying on approve winning over reject for a specific command, narrow the reject pattern so it doesn't overlap, or move the specific approve pattern onto a non-overlapping path.
+
+### Added
+
+- **9 new unit tests in `tests/unit/policy.test.ts`** — 2 ordering invariants and 7 compound-bypass closures exercising both templates (`git status; rm -rf /tmp`, `set -e; rm -rf /`, `cp foo bar && git push origin main`, `git fetch && rm -rf /`, `which node && npm publish`). Three pre-existing tests renamed with flipped assertions to reflect new ordering (`auto_approve beats auto_reject` → `auto_reject beats auto_approve`; `auto_defer matches before auto_reject` → `auto_reject beats auto_defer`; `auto_approve wins over auto_defer` → `auto_defer wins over auto_approve`).
+
+### Notes
+
+- No API, MCP-tool, socket-protocol, event-schema, or template changes. Backwards-compatible with v0.2.x drivers and running sessions.
+- The v0.2.2 structural-equality test (`auto_defer`/`auto_reject` arrays in the permissive template match the starter byte-for-byte) continues to pass because templates are not edited.
+- Filed for post-v0.2.3: widen the `auto_reject` pattern set to include `dd if=`, `mkfs`, `chmod -R 777`, `shred`, `git clean -fdx`, `truncate`, `chown -R`. Tracked in project memory.
+
 ## [0.2.2] — 2026-04-24
 
 ### Fixed
