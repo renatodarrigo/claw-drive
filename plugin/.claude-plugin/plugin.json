@@ -1,0 +1,20 @@
+{
+  "name": "claw-drive",
+  "description": "Drive Claude Code from Claude Code. Slash commands for spawning a driven session, wiring it into a project, and resolving paused tool calls. Pairs with the claw-drive CLI (install via curl -fsSL https://raw.githubusercontent.com/renatodarrigo/claw-drive/main/install.sh | bash).",
+  "version": "0.5.0",
+  "author": {
+    "name": "Renato D'Arrigo",
+    "email": "renato.darrigo@gmail.com"
+  },
+  "homepage": "https://renatodarrigo.github.io/claw-drive/",
+  "repository": "https://github.com/renatodarrigo/claw-drive",
+  "license": "MIT",
+  "keywords": [
+    "claude-code",
+    "mcp",
+    "drive-as-user",
+    "dogfooding",
+    "automation",
+    "human-in-the-loop"
+  ]
+}

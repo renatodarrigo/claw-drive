@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.5.0] — 2026-04-24
+
+### Added
+
+- **Claude Code plugin** at `plugin/`. Ships three slash commands as a UX layer over the existing CLI + MCP: `/claw-drive-init` (idempotently registers claw-drive in the current project's `.mcp.json`, optionally drops a starter policy), `/claw-drive-start` (spawns Session B and starts the Monitor flow against the returned `watch_command`), and `/claw-drive-resolve` (handles paused `tool_decision_required` calls, including the defer-with-output round-trip via `provide_tool_output`).
+- Plugin manifest at `plugin/.claude-plugin/plugin.json` (name, version, author, repo URL, MIT licence). Install locally via `/plugin install local /path/to/claw-drive/plugin` until a marketplace listing is in place.
+
+### Notes
+
+- The plugin layer is UX only — it does NOT install the CLI or auto-register the MCP server in every project. Run `curl … | bash` to install the binary, then `/claw-drive-init` per project. Both steps are idempotent.
+- Plugin version tracks the CLI version: v0.5.0 plugin works with v0.5.x CLI.
+- No code, MCP-tool, socket-protocol, event-schema, or schema changes. This release is plugin scaffolding + version sync only. Backwards-compatible with v0.4.x running sessions.
+
 ## [0.4.0] — 2026-04-24
 
 ### Added

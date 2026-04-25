@@ -34,6 +34,17 @@ Runtime deps for the Bash approver: **`jq`** and a Unix-socket-capable **`nc`** 
 - Debian/Ubuntu: `sudo apt install jq netcat-openbsd`
 - macOS: `brew install jq nmap`
 
+### Claude Code plugin (UX layer)
+
+If you live in Claude Code, install the companion plugin for slash commands (`/claw-drive-init`, `/claw-drive-start`, `/claw-drive-resolve`). The plugin is a UX layer — it does not replace the curl-pipe install, it sits on top of it.
+
+```
+# In any Claude Code session:
+/plugin install local /path/to/claw-drive/plugin
+```
+
+After install, run `/claw-drive-init` in your project to wire claw-drive into `.mcp.json`.
+
 ### From source
 
 ```bash

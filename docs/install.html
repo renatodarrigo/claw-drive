@@ -49,6 +49,12 @@ brew install jq nmap</code></pre>
   --project ~/code/your-project \
   --policy  ~/code/your-project/.claw-drive/policy.json</code></pre>
 
+    <h3>Claude Code plugin (UX layer)</h3>
+    <p>If you live in Claude Code, install the companion plugin for slash commands (<code>/claw-drive-init</code>, <code>/claw-drive-start</code>, <code>/claw-drive-resolve</code>). The plugin is a UX layer — it doesn't replace the curl-pipe install, it sits on top of it.</p>
+    <pre><code class="language-bash"># In any Claude Code session:
+/plugin install local /path/to/claw-drive/plugin</code></pre>
+    <p>Once a public marketplace listing exists, this becomes <code>/plugin install renatodarrigo/claw-drive</code>. After install, run <code>/claw-drive-init</code> in your project to wire claw-drive into <code>.mcp.json</code>.</p>
+
     <h3>From source</h3>
     <p>For contributors, or if you want symlink-mode (changes in your working tree apply to the installed bins immediately):</p>
     <pre><code class="language-bash">git clone https://github.com/renatodarrigo/claw-drive
@@ -83,7 +89,7 @@ ln -s "$(pwd)/bin/claw-drive-approver" ~/.local/bin/</code></pre>
     <pre><code class="language-bash">./install.sh --uninstall</code></pre>
   </main>
   <footer>
-    <p class="muted">claw-drive v0.4.0 · MIT · <a href="https://github.com/renatodarrigo/claw-drive">github.com/renatodarrigo/claw-drive</a> · © <span data-year></span></p>
+    <p class="muted">claw-drive v0.5.0 · MIT · <a href="https://github.com/renatodarrigo/claw-drive">github.com/renatodarrigo/claw-drive</a> · © <span data-year></span></p>
   </footer>
   <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-core.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
