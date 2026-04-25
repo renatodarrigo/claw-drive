@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Plugin — claw-drive</title>
+  <meta name="description" content="claw-drive Claude Code plugin: slash commands for spawning a driven session, wiring it into a project, and resolving paused tool calls.">
+  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+  <header class="site-header">
+    <nav aria-label="Primary">
+      <a href="index.html" class="wordmark">claw-drive</a>
+      <ul>
+        <li><a href="install.html" data-page="install.html">Install</a></li>
+        <li><a href="plugin.html" data-page="plugin.html">Plugin</a></li>
+        <li><a href="policies.html" data-page="policies.html">Policies</a></li>
+        <li><a href="driving-patterns.html" data-page="driving-patterns.html">Driving</a></li>
+        <li><a href="reference.html" data-page="reference.html">Reference</a></li>
+        <li><a href="https://github.com/renatodarrigo/claw-drive" rel="noopener" class="ext">GitHub ↗</a></li>
+      </ul>
+    </nav>
+  </header>
+  <main>
+    <h1>Plugin</h1>
+    <p class="subtitle">Slash commands for driving Claude Code from Claude Code.</p>
+
+    <h2>Install</h2>
+    <pre><code class="language-bash"># In any Claude Code session:
+/plugin install renatodarrigo/claw-drive</code></pre>
+
+    <p>The plugin is a UX layer. It assumes the <code>claw-drive</code> CLI is on your <code>PATH</code> — see <a href="install.html">Install</a>.</p>
+
+    <h2>Slash commands</h2>
+
+    <h3 id="init"><code>/claw-drive-init</code></h3>
+    <p>Idempotently registers claw-drive in the current project's <code>.mcp.json</code>. Run once per project.</p>
+
+    <pre><code class="language-bash">/claw-drive-init [--policy &lt;path&gt;]</code></pre>
+
+    <p>Verifies the CLI is on <code>PATH</code> (else prints the install one-liner and stops). Adds the <code>"claw-drive"</code> entry under <code>mcpServers</code>, preserving any existing entries. With <code>--policy &lt;path&gt;</code>, also drops the conservative starter policy at the given path (skips if the file already exists).</p>
+
+    <p>After init, restart Claude Code (or run <code>/mcp</code>) to see <code>claw-drive</code> in the MCP list.</p>
+
+    <h3 id="start"><code>/claw-drive-start</code></h3>
+    <p>Spawns Session B and starts the Monitor flow.</p>
+
+    <pre><code class="language-bash">/claw-drive-start &lt;cwd&gt; [--brief &lt;file&gt;] [--policy &lt;file&gt;]</code></pre>
+
+    <ul>
+      <li><code>&lt;cwd&gt;</code> — absolute or <code>~</code>-relative path to a project. Must exist and not equal the parent session's cwd.</li>
+      <li><code>--brief &lt;file&gt;</code> — scenario brief. If omitted, the skill asks for one inline.</li>
+      <li><code>--policy &lt;file&gt;</code> — policy JSON. If omitted, claw-drive uses the conservative starter.</li>
+    </ul>
+
+    <p>The skill calls <code>start_session</code> via MCP, sends the brief as the first user turn, and starts the Monitor on the returned <code>watch_command</code>. Notifications surface as they arrive: <code>tool_decision_required</code> events become approval prompts, <code>turn_completed</code> events let you decide on the next turn.</p>
+
+    <p>See <a href="driving-patterns.html#monitor-watch">Driving patterns → Monitor + watch</a> for the full event flow.</p>
+
+    <h3 id="resolve"><code>/claw-drive-resolve</code></h3>
+    <p>Resolves a paused tool call.</p>
+
+    <pre><code class="language-bash">/claw-drive-resolve &lt;call_id&gt; &lt;action&gt; [--remember] [--reason &lt;text&gt;] [--stdout &lt;text&gt;] [--exit &lt;n&gt;]</code></pre>
+
+    <ul>
+      <li><code>&lt;call_id&gt;</code> — from a <code>tool_decision_required</code> notification.</li>
+      <li><code>&lt;action&gt;</code> — <code>approve</code>, <code>reject</code>, or <code>defer</code>.</li>
+      <li><code>--remember</code> — append a derived rule to the session's policy. Narrow-by-default for non-Bash tools (matches only the exact arg shape).</li>
+      <li><code>--reason &lt;text&gt;</code> — recorded in the audit event.</li>
+      <li><code>--stdout &lt;text&gt;</code> + <code>--exit &lt;n&gt;</code> — for the defer-with-output round-trip. The skill switches from <code>resolve_tool_call</code> to <code>provide_tool_output</code>.</li>
+    </ul>
+
+    <p>See <a href="driving-patterns.html#defer-round-trip">Driving patterns → Defer round-trip</a> for the full mechanism.</p>
+
+    <h2>Scope</h2>
+    <p>The plugin is a UX layer. It does NOT:</p>
+    <ul>
+      <li>Install the CLI binary. Run the <a href="install.html">curl-pipe install</a> first.</li>
+      <li>Auto-register the MCP server in every project. Run <code>/claw-drive-init</code> per project (idempotent).</li>
+    </ul>
+
+    <p>Plugin version tracks the CLI version: v0.5.x plugin works with v0.5.x CLI.</p>
+  </main>
+  <footer>
+    <p class="muted">claw-drive v0.5.0 · MIT · <a href="https://github.com/renatodarrigo/claw-drive">github.com/renatodarrigo/claw-drive</a> · © <span data-year></span></p>
+  </footer>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-core.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+  <script src="assets/site.js"></script>
+</body>
+</html>

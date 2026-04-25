@@ -14,6 +14,7 @@
       <a href="index.html" class="wordmark">claw-drive</a>
       <ul>
         <li><a href="install.html" data-page="install.html">Install</a></li>
+        <li><a href="plugin.html" data-page="plugin.html">Plugin</a></li>
         <li><a href="policies.html" data-page="policies.html">Policies</a></li>
         <li><a href="driving-patterns.html" data-page="driving-patterns.html">Driving</a></li>
         <li><a href="reference.html" data-page="reference.html">Reference</a></li>
@@ -48,12 +49,6 @@ brew install jq nmap</code></pre>
     <pre><code class="language-bash">curl -fsSL https://raw.githubusercontent.com/renatodarrigo/claw-drive/main/install.sh | bash -s -- \
   --project ~/code/your-project \
   --policy  ~/code/your-project/.claw-drive/policy.json</code></pre>
-
-    <h3>Claude Code plugin (UX layer)</h3>
-    <p>If you live in Claude Code, install the companion plugin for slash commands (<code>/claw-drive-init</code>, <code>/claw-drive-start</code>, <code>/claw-drive-resolve</code>). The plugin is a UX layer — it doesn't replace the curl-pipe install, it sits on top of it.</p>
-    <pre><code class="language-bash"># In any Claude Code session:
-/plugin install renatodarrigo/claw-drive</code></pre>
-    <p>After install, run <code>/claw-drive-init</code> in your project to wire claw-drive into <code>.mcp.json</code>.</p>
 
     <h3>From source</h3>
     <p>For contributors, or if you want symlink-mode (changes in your working tree apply to the installed bins immediately):</p>

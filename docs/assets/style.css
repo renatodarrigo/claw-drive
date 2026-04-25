@@ -185,10 +185,11 @@ blockquote.callout { font-style: normal; }
 
 .read-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, 1fr);
   gap: 12px;
   margin: 0 0 32px;
 }
+@media (max-width: 900px) { .read-grid { grid-template-columns: repeat(2, 1fr); } }
 .read-card {
   display: block;
   padding: 16px;
