@@ -69,7 +69,7 @@
       </svg>
     </div>
 
-    <p>Session A hosts claw-drive as an MCP server and spawns Session B in another directory. B is a real <code>claude -p</code> subprocess — it runs tools, honours hooks, and can be interrupted. Every tool call B makes is gated by a policy that can approve, reject, defer to the human, or escalate to A.</p>
+    <p>Session A hosts claw-drive as an MCP server and can spawn one or more driven sessions — Session B above, plus a Session C, D, … by calling <code>start_session</code> again. Each is a real <code>claude -p</code> subprocess in its own directory, with its own policy, scenario brief, and event log; they run in parallel. Every tool call a driven session makes is gated by a policy that can approve, reject, defer to the human, or escalate to A.</p>
 
     <h2>What you get</h2>
     <div class="pillars">

@@ -29,8 +29,9 @@
 
     <h2>The A/B session model</h2>
     <p><strong>Session A</strong> is the <em>driver</em>: a Claude Code session running in the project you're building. It hosts claw-drive as an MCP server.</p>
-    <p><strong>Session B</strong> is the <em>driven</em> session: a fresh <code>claude -p --input-format=stream-json --output-format=stream-json</code> subprocess that Session A spawns in another working directory. B acts like a human user would — it even runs hooks.</p>
-    <p>Every tool call B makes is intercepted by a <code>PreToolUse</code> hook that talks to claw-drive's runner. The runner checks policy and auto-approves, auto-rejects, defers to the human, or escalates to A.</p>
+    <p><strong>Session B</strong> is a <em>driven</em> session: a fresh <code>claude -p --input-format=stream-json --output-format=stream-json</code> subprocess that Session A spawns in another working directory. B acts like a human user would — it even runs hooks.</p>
+    <p>Each call to <code>start_session</code> spawns its own driven session, so a single Session A can hold a fan-out of Session B, C, D, … running in parallel — each with its own working directory, policy, scenario brief, and event log. <code>list_sessions</code> (MCP) and <code>claw-drive sessions</code> (CLI) enumerate them all; <code>claw-drive pending</code> shows awaiting-approval calls across every running session in one view.</p>
+    <p>Every tool call a driven session makes is intercepted by a <code>PreToolUse</code> hook that talks to claw-drive's runner. The runner checks policy and auto-approves, auto-rejects, defers to the human, or escalates to A.</p>
 
     <h2 id="monitor-watch">Monitor + <code>watch_command</code></h2>
     <p><code>start_session</code> returns a ready-made payload for Claude Code's <code>Monitor</code> tool:</p>

@@ -1,6 +1,6 @@
 # claw-drive
 
-Drive-as-user MCP server + CLI for Claude Code. Lets one Claude Code session drive a second fresh Claude Code session end-to-end — multi-turn conversation, async event polling, policy-gated permissions with human-in-the-loop escalation, restart-resilient across caller restarts.
+Drive-as-user MCP server + CLI for Claude Code. Lets one Claude Code session drive one or more fresh Claude Code sessions end-to-end — multi-turn conversation, async event polling, policy-gated permissions with human-in-the-loop escalation, restart-resilient across caller restarts.
 
 **Website:** https://renatodarrigo.github.io/claw-drive/ — install, policies, driving patterns, reference.
 
@@ -10,10 +10,10 @@ Drive-as-user MCP server + CLI for Claude Code. Lets one Claude Code session dri
 
 ## How it works
 
-- Your **dev session** (Session A, running Claude Code where you're building something) asks claw-drive to spawn a fresh **driven session** (Session B) in another directory.
-- Session B is a real `claude -p --input-format=stream-json --output-format=stream-json` subprocess. It runs like a user would — it even uses hooks.
-- Every tool call B makes is gated through a PreToolUse hook that talks to claw-drive's runner. Policy rules auto-approve, auto-reject, or escalate to you.
-- Events stream to `~/.claw-drive/sessions/<id>/events.jsonl` — MCP `poll_*` tools and `claw-drive tail` both read it.
+- Your **dev session** (Session A, running Claude Code where you're building something) asks claw-drive to spawn one or more fresh **driven sessions** — Session B, C, D, …, each in its own directory.
+- Each driven session is a real `claude -p --input-format=stream-json --output-format=stream-json` subprocess. It runs like a user would — it even uses hooks. Sessions run in parallel; each has its own policy, scenario brief, and event log.
+- Every tool call a driven session makes is gated through a PreToolUse hook that talks to claw-drive's runner. Policy rules auto-approve, auto-reject, or escalate to you.
+- Events stream to `~/.claw-drive/sessions/<id>/events.jsonl` per session — MCP `poll_*` tools and `claw-drive tail` both read it. `claw-drive pending` (and the MCP tool listing) shows awaiting-approval calls across every running session in one view.
 
 ## Install
 
