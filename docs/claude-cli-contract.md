@@ -27,8 +27,8 @@ Each line is one of the following event types, in the order they appear:
     {"type":"system","subtype":"hook_started","hook_id":"...","hook_name":"SessionStart:startup","hook_event":"SessionStart","uuid":"...","session_id":"..."}
 
 **`hook_response`** — emitted when a SessionStart hook responds (only with
-`--verbose`). Body contains large hook payloads (superpowers skill content,
-etc.). Not present without `--verbose`.
+`--verbose`). Body contains large hook payloads (skill bodies, additional
+context blocks, etc.). Not present without `--verbose`.
 
 **`init`** — session metadata, emitted once after hooks complete:
 

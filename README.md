@@ -129,7 +129,7 @@ await Monitor(watch_command);  // spawns `claw-drive watch <id>` and streams not
 //   kind === "session_stopped"        → wrap up
 ```
 
-`claw-drive watch` filters `events.jsonl` to only events a human/A needs to act on (see `docs/superpowers/specs/...` §4.8 for the exact predicate). It exits cleanly on `session_stopped` or SIGINT.
+`claw-drive watch` filters `events.jsonl` to only events a human/A needs to act on — the five `kind` values listed in the comment block above. It exits cleanly on `session_stopped` or SIGINT.
 
 ## Policy
 

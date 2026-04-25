@@ -27,7 +27,7 @@ This is the v0.1.0 acceptance gate. Run these steps manually before tagging.
    ```
 
 3. In Session A, ask:
-   > Use claw-drive to start a session in `~/Workspace/cloverleaf` with a dogfood policy. Drive it through the CLV-007 scenario from `docs/superpowers/plans/2026-04-21-v0.4.0-dogfood-handoff.md`. Surface any escalated approvals to me.
+   > Use claw-drive to start a session in `~/Workspace/cloverleaf` with a dogfood policy. Drive it through the CLV-007 scenario from your cloverleaf handoff plan. Surface any escalated approvals to me.
 
 4. Session A will:
    - Call `start_session` with cwd + policy.
