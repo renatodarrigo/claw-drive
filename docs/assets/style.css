@@ -189,6 +189,7 @@ blockquote.callout { font-style: normal; }
 .diagram-svg .ar { stroke: currentColor; stroke-width: 1; fill: none; }
 
 .tagline, .subtagline, .subtitle { text-wrap: balance; }
+.nowrap { white-space: nowrap; }
 
 .pillars {
   display: grid;
