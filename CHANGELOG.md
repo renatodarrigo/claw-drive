@@ -1,5 +1,51 @@
 # Changelog
 
+## [0.5.3] — 2026-04-25
+
+### Added
+
+- **`claw-drive policy-test '<command>' [flags]`** — new diagnostic CLI subcommand. Tests a tool call against a policy and prints which list fired, which rule matched, the regex pattern, severity, and the resolved decision + default action. Three output formats:
+  - **Default (human)** — single multi-line report. Example:
+    ```
+    $ claw-drive policy-test 'kill -9 1'
+    Decision:       escalate
+    Default action: defer
+    List:           auto_defer
+    Matched rule:   "kill -9 of init/everything/process-group (PID 1, -1, or 0)"
+    Pattern:        \bkill\s+-9\b.*?\s(-1|0|1)(\s|$|[;&|])
+    Severity:       high
+    Tool:           Bash
+    Command:        kill -9 1
+    Policy:         <repo>/templates/claw-drive-policy.json (starter)
+    ```
+  - **`--explain`** — walks every rule in evaluation order with `✓` (matched) / `✗` (skipped) glyphs. TTY-aware ANSI color (matched in green, unmatched dimmed). Final summary line shows the resolved decision and how it was reached (matched rule vs `escalate_default` fall-through).
+  - **`--json`** — single-line JSON output for piping to `jq` and CI tooling. Schema mirrors `MatchDecision` from `src/lib/policy.ts` plus an `input` echo, a `policy_source` block, and a `list` field naming the rule list that fired.
+- **Multi-tool support from day one.** Bash uses the positional shorthand (`policy-test 'kill -9 1'`), non-Bash tools take `--tool TOOL --arg KEY=VALUE` (repeatable):
+  ```
+  claw-drive policy-test --tool Read --arg file_path=/etc/passwd
+  claw-drive policy-test --tool Edit --arg file_path=/tmp/foo.ts --arg old_string=secret
+  claw-drive policy-test --tool Grep --arg pattern='api_key'
+  claw-drive policy-test --tool Agent --arg subagent_type=Explore
+  ```
+  Positional + non-Bash `--tool` is rejected with a helpful error; positional + redundant `--arg command=...` likewise.
+- **Policy source flag `--policy SPEC`.** SPEC is one of:
+  - `starter` (default — `templates/claw-drive-policy.json`)
+  - `permissive` (`templates/claw-drive-policy-permissive.json`)
+  - `bypass` (the literal `"bypass"` policy — every call returns `approve_silent`)
+  - `<path>` — any custom policy JSON file (validated via `validatePolicy` before running)
+- **CI-gating flag `--exit-on DECISION`** where DECISION is `reject|defer|approve|escalate`. Returns exit code 1 instead of 0 if the resolved decision matches; default is always 0. Useful for pre-commit hooks that fail if any command in a script would `auto_reject` against the project's policy.
+- **TTY-aware color** with `--no-color` and `NO_COLOR` env-var opt-outs (the latter is the de-facto standard).
+- **50 new unit tests** in `tests/unit/policy-test-cli.test.ts` covering argv parsing (20 cases), policy source resolution (8 cases), human/explain/JSON rendering (12 cases), and the orchestrator (10 cases — exit codes, stderr behavior, NO_COLOR, JSON shape, --help). Total: 313 (was 263; +50).
+
+### Notes
+
+- No code changes to `src/lib/policy.ts` (the policy engine is reused as-is via `matchPolicy` and `validatePolicy`).
+- No changes to either policy template, the MCP-tool surface, the socket protocol, the event schema, or any existing CLI subcommand.
+- Backwards-compatible with v0.5.x running sessions. Plugin manifest + marketplace catalog version bumped in lockstep with the CLI.
+- The diagnostic uses its own `ruleMatchesCall` to walk every rule in `--explain` mode (the engine's `matchPolicy` short-circuits on first match). Both implementations are in-source and trivially small; the rule-matching semantics (regex on `bash_command_matches` for Bash, `arg_matches` for non-Bash, optional `/regex/` syntax for tool name) are identical to the engine's.
+- Path resolution for the starter / permissive templates uses the same `import.meta.url` → `../../../templates/...` convention as `getVersion()` from v0.5.1, verified across all three install modes (symlink, copy, remote-tarball).
+- Out of v0.5.3 scope (filed for future): "diagnose this whole policy file" mode (dump every rule's regex test against a corpus), coverage analysis (which rules in this template never fire on a sample command set), regex linter / fuzzer, and an MCP-tool exposure of the same logic. CLI is sufficient for the observed pain (template author at terminal, dogfooder debugging an escalation).
+
 ## [0.5.2] — 2026-04-25
 
 ### Added
