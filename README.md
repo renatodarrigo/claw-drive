@@ -248,8 +248,6 @@ This was a deliberate change from `tail --follow`, which does replay from 0. `wa
 
 Under heavy concurrency (e.g., B with many subagents), a single `poll_session` call can return hundreds of events. The MCP response has a token limit. Use `claw-drive watch` (filtered + streaming) for active driving; reserve `poll_session` for one-shot catch-up between clear checkpoints.
 
-A future pagination overhaul is tracked for v0.3.
-
 ## Policy templates
 
 Two policy templates ship in `templates/`:
@@ -259,8 +257,8 @@ Two policy templates ship in `templates/`:
 
 ## Testing
 
-- `npm run test:unit` — 109 unit tests, no real claude invocation
-- `npm run test:integration` — 7 integration tests spawning real claude (cost real tokens)
+- `npm run test:unit` — 207 unit tests, no real claude invocation
+- `npm run test:integration` — 8 integration tests spawning real claude (cost real tokens)
 - `bash scripts/self-dogfood.sh` — end-to-end acceptance smoke
 
 ## License

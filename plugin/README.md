@@ -16,20 +16,14 @@ curl -fsSL https://raw.githubusercontent.com/renatodarrigo/claw-drive/main/insta
 | `/claw-drive-start` | Spawn a driven session and start the Monitor flow |
 | `/claw-drive-resolve` | Resolve a paused tool call (approve / reject / defer) |
 
-## Install (local plugin)
-
-For now, the plugin ships in the same repo as the CLI. Install it as a local plugin:
-
-```bash
-# In Claude Code:
-/plugin install local /path/to/claw-drive/plugin
-```
-
-Once a public marketplace listing is in place, the install will become:
+## Install
 
 ```
+# In any Claude Code session:
 /plugin install renatodarrigo/claw-drive
 ```
+
+After install, run `/claw-drive-init` in the project you want to wire claw-drive into.
 
 ## What it does NOT do
 
