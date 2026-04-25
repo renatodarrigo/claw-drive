@@ -37,7 +37,7 @@
 
     <h2>How it works</h2>
     <div class="diagram-wrap">
-      <svg viewBox="0 0 540 240" xmlns="http://www.w3.org/2000/svg" role="img"
+      <svg viewBox="0 0 640 240" xmlns="http://www.w3.org/2000/svg" role="img"
            aria-label="claw-drive architecture: Session A drives a runner that spawns Session B; B's tool calls go through a policy gate"
            class="diagram-svg">
         <defs>
@@ -49,23 +49,23 @@
           <rect x="20"  y="20"  width="110" height="60" rx="4"/>
           <rect x="290" y="20"  width="110" height="60" rx="4"/>
           <rect x="290" y="160" width="110" height="60" rx="4"/>
-          <rect x="415" y="160" width="110" height="60" rx="4"/>
+          <rect x="510" y="160" width="110" height="60" rx="4"/>
         </g>
         <text class="lbl"   x="75"  y="46" text-anchor="middle">Session A</text>
         <text class="muted" x="75"  y="62" text-anchor="middle">(driver)</text>
         <text class="lbl"   x="345" y="55" text-anchor="middle">runner</text>
         <text class="lbl"   x="345" y="195" text-anchor="middle">Session B</text>
-        <text class="lbl"   x="470" y="195" text-anchor="middle">policy gate</text>
+        <text class="lbl"   x="565" y="195" text-anchor="middle">policy gate</text>
         <line class="ar" x1="130" y1="42" x2="288" y2="42" marker-end="url(#arr)"/>
         <text class="muted" x="209" y="36" text-anchor="middle">start_session</text>
         <line class="ar" x1="288" y1="58" x2="132" y2="58" marker-end="url(#arr)"/>
         <text class="muted" x="209" y="74" text-anchor="middle">events.jsonl</text>
         <line class="ar" x1="345" y1="80" x2="345" y2="158" marker-end="url(#arr)"/>
         <text class="muted" x="352" y="124">spawn</text>
-        <line class="ar" x1="400" y1="182" x2="413" y2="182" marker-end="url(#arr)"/>
-        <text class="muted" x="407" y="174" text-anchor="middle">PreToolUse</text>
-        <line class="ar" x1="413" y1="198" x2="402" y2="198" marker-end="url(#arr)"/>
-        <text class="muted" x="407" y="216" text-anchor="middle">decision</text>
+        <line class="ar" x1="400" y1="182" x2="508" y2="182" marker-end="url(#arr)"/>
+        <text class="muted" x="454" y="174" text-anchor="middle">PreToolUse</text>
+        <line class="ar" x1="508" y1="198" x2="402" y2="198" marker-end="url(#arr)"/>
+        <text class="muted" x="454" y="216" text-anchor="middle">decision</text>
       </svg>
     </div>
 

@@ -177,7 +177,7 @@ blockquote.callout { font-style: normal; }
 .diagram-svg {
   display: block;
   margin: 0 auto;
-  width: 540px;
+  width: 640px;
   height: auto;
   max-width: none;
   color: var(--text);
