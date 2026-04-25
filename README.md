@@ -261,6 +261,10 @@ Two policy templates ship in `templates/`:
 - `npm run test:integration` — 8 integration tests spawning real claude (cost real tokens)
 - `bash scripts/self-dogfood.sh` — end-to-end acceptance smoke
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## License
 
 MIT
