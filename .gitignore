@@ -3,6 +3,12 @@ dist/
 *.log
 .DS_Store
 .env
-.env.local
+.env.*
+!.env.example
 coverage/
 .superpowers/
+.idea/
+.vscode/
+*.swp
+tmp/
+*.tmp

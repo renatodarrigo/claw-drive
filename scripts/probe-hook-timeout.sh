@@ -17,7 +17,7 @@
 
 set -uo pipefail
 
-CLAUDE="${CLAUDE:-~/.local/bin/claude}"
+CLAUDE="${CLAUDE:-claude}"
 PROBE_DIR="$HOME/tmp/claw-drive-hook-probe"
 SKIP_SLOW="${1:-}"
 

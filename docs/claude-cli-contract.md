@@ -340,7 +340,7 @@ The exact JSON piped to a PreToolUse hook on stdin (captured from Probe A):
 ```json
 {
   "session_id": "70f95d72-cb8d-42af-b0d0-0ec3e5051357",
-  "transcript_path": "~/.claude/projects/-home-ren-tmp-claw-drive-hook-probe/70f95d72-cb8d-42af-b0d0-0ec3e5051357.jsonl",
+  "transcript_path": "~/.claude/projects/-tmp-claw-drive-hook-probe/70f95d72-cb8d-42af-b0d0-0ec3e5051357.jsonl",
   "cwd": "/tmp/claw-drive-hook-probe",
   "permission_mode": "default",
   "hook_event_name": "PreToolUse",
