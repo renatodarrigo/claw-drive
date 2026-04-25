@@ -1,6 +1,6 @@
 # claw-drive
 
-Drive-as-user MCP server + CLI for Claude Code. Lets one Claude Code session drive a second fresh Claude Code session end-to-end for dogfooding — multi-turn conversation, async event polling, policy-gated permissions with human-in-the-loop escalation, restart-resilient across caller restarts.
+Drive-as-user MCP server + CLI for Claude Code. Lets one Claude Code session drive a second fresh Claude Code session end-to-end — multi-turn conversation, async event polling, policy-gated permissions with human-in-the-loop escalation, restart-resilient across caller restarts.
 
 **Website:** https://renatodarrigo.github.io/claw-drive/ — install, policies, driving patterns, reference.
 
@@ -238,7 +238,7 @@ If you see `error` events with `"unparseable stream-json line"`, claude's output
 
 The v0.2 start-time default. If an escalation sits unresolved for this long, the runner fires the rule's `default_action` (`approve` for plain escalations, `reject` for `auto_reject` matches, `defer` for `auto_defer` matches) and emits `tool_decision_resolved(resolved_by:"timeout")`. You can override per-session via `start_session`'s `decision_timeout_seconds` arg, or per-policy via the policy object's field.
 
-The v0.1 default was 300 s. It was a footgun for interactive dogfoods — if the driver's monitor had a transient gap, sensitive calls auto-approved silently. 1 h gives humans enough slack.
+The v0.1 default was 300 s. It was a footgun for long-running interactive sessions — if the driver's monitor had a transient gap, sensitive calls auto-approved silently. 1 h gives humans enough slack.
 
 ### `claw-drive watch` defaults to current seq
 
@@ -255,7 +255,7 @@ Under heavy concurrency (e.g., B with many subagents), a single `poll_session` c
 Two policy templates ship in `templates/`:
 
 - **`claw-drive-policy.json`** — conservative starter. Default for `install.sh` and when no `--policy` is passed to `start_session`. Safe for unknown projects.
-- **`claw-drive-policy-permissive.json`** — starter plus common dev-CLI auto-approves (`rg`, `sed`, `awk`, `jq`, `diff`, `mkdir -p`, `touch`, `cp` (non-recursive), `mv`, safe `git` ops like `fetch` and `pull --ff-only`, path/env introspection). Reduces escalation volume in dev-heavy dogfood sessions. Destructive commands (`rm -rf`, `git push`, `git reset --hard`, etc.) still auto-reject. Opt in via `--policy templates/claw-drive-policy-permissive.json` at install or by passing the inline policy to `start_session`.
+- **`claw-drive-policy-permissive.json`** — starter plus common dev-CLI auto-approves (`rg`, `sed`, `awk`, `jq`, `diff`, `mkdir -p`, `touch`, `cp` (non-recursive), `mv`, safe `git` ops like `fetch` and `pull --ff-only`, path/env introspection). Reduces escalation volume in dev-heavy sessions. Destructive commands (`rm -rf`, `git push`, `git reset --hard`, etc.) still auto-reject. Opt in via `--policy templates/claw-drive-policy-permissive.json` at install or by passing the inline policy to `start_session`.
 
 ## Testing
 
