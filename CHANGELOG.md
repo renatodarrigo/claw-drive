@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.5.1] — 2026-04-25
+
+### Added
+
+- **`claw-drive --version` / `-v` / `version` (subcommand form)** — prints the contents of the `VERSION` file at repo root and exits 0. Usage:
+  ```
+  $ claw-drive --version
+  0.5.1
+  ```
+  Implemented in `src/cli/cli.ts` via `getVersion()` (exported, unit-tested in `tests/unit/version.test.ts`). Reads `VERSION` at runtime relative to `dist/cli/cli.js`, so the print matches `cat VERSION` byte-for-byte across both clone-mode and copy-mode installs. Help text in `printUsage()` now lists the flag alongside `--help`.
+
+### Fixed
+
+- **`/claw-drive-init` skill no longer prints "MISSING" on a working install.** The plugin's CLI-presence probe used `claw-drive --version` to verify the binary, but `--version` was unrecognised in v0.4.0/v0.5.0 (exit 2 with `unknown command: --version`), so the skill misreported the CLI as absent even when it was installed and working. Surfaced during the first dogfood install via the public marketplace catalog (2026-04-25). Probe replaced with `claw-drive sessions >/dev/null 2>&1`, which exits 0 on every supported CLI version including the older releases that don't have `--version`. The new `--version` flag in this release also makes the original-style probe work, but the `sessions` probe is preferred for forward-compatibility.
+
+### Notes
+
+- No MCP-tool, socket-protocol, event-schema, or template changes. Backwards-compatible with v0.5.x running sessions.
+- 209 unit tests passing (was 207; +2 for `getVersion`). Plugin manifest + marketplace catalog version bumped in lockstep.
+
 ## [0.5.0] — 2026-04-24
 
 ### Added

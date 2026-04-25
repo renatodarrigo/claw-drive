@@ -11,9 +11,9 @@ The user has invoked this skill to register claw-drive in the current project. T
 
 1. **Verify the CLI is installed.** Run:
    ```bash
-   command -v claw-drive >/dev/null 2>&1 && claw-drive --version 2>/dev/null || echo "MISSING"
+   command -v claw-drive >/dev/null 2>&1 && claw-drive sessions >/dev/null 2>&1 && echo OK || echo MISSING
    ```
-   If output is `MISSING` or the command fails, stop and tell the user:
+   The `sessions` subcommand is used as the aliveness probe (it exits 0 on every supported CLI version, including pre-`--version` builds). If output is `MISSING` or the command fails, stop and tell the user:
    > claw-drive CLI not found on PATH. Install it first:
    >
    > ```

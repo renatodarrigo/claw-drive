@@ -1,3 +1,7 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
+
 import { cmdSessions } from "./commands/sessions.js";
 import { cmdShow } from "./commands/show.js";
 import { cmdTail } from "./commands/tail.js";
@@ -38,6 +42,10 @@ export async function runCli(argv: string[]): Promise<void> {
     printUsage();
     process.exit(cmd ? 0 : 1);
   }
+  if (cmd === "--version" || cmd === "-v" || cmd === "version") {
+    console.log(getVersion());
+    process.exit(0);
+  }
   const handler = commands[cmd];
   if (!handler) {
     console.error(`unknown command: ${cmd}`);
@@ -48,8 +56,19 @@ export async function runCli(argv: string[]): Promise<void> {
   process.exit(code);
 }
 
+export function getVersion(): string {
+  // dist/cli/cli.js → ../../VERSION (single source of truth at repo root)
+  const here = fileURLToPath(import.meta.url);
+  const versionPath = resolve(dirname(here), "..", "..", "VERSION");
+  return readFileSync(versionPath, "utf8").trim();
+}
+
 function printUsage(): void {
   console.log(`claw-drive — driver CLI
+
+Flags:
+  --version, -v                 Print the installed version and exit
+  --help, -h                    Print this help and exit
 
 Commands:
   sessions                      List all sessions (including orphaned)
