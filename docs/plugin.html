@@ -29,7 +29,10 @@
 
     <h2>Install</h2>
     <pre><code class="language-bash"># In any Claude Code session:
-/plugin install renatodarrigo/claw-drive</code></pre>
+/plugin marketplace add renatodarrigo/claw-drive
+/plugin install claw-drive@claw-drive</code></pre>
+
+    <p>The first line registers the marketplace catalog from the GitHub repo; the second installs the plugin from it. Run <code>/reload-plugins</code> after install to activate without restarting.</p>
 
     <p>The plugin is a UX layer. It assumes the <code>claw-drive</code> CLI is on your <code>PATH</code> — see <a href="install.html">Install</a>.</p>
 

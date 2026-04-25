@@ -20,8 +20,11 @@ curl -fsSL https://raw.githubusercontent.com/renatodarrigo/claw-drive/main/insta
 
 ```
 # In any Claude Code session:
-/plugin install renatodarrigo/claw-drive
+/plugin marketplace add renatodarrigo/claw-drive
+/plugin install claw-drive@claw-drive
 ```
+
+The first line registers the marketplace catalog (the `.claude-plugin/marketplace.json` at the repo root); the second installs the plugin. Run `/reload-plugins` after install to activate without restarting.
 
 After install, run `/claw-drive-init` in the project you want to wire claw-drive into.
 

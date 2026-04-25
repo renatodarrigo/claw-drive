@@ -40,10 +40,11 @@ If you live in Claude Code, install the companion plugin for slash commands (`/c
 
 ```
 # In any Claude Code session:
-/plugin install local /path/to/claw-drive/plugin
+/plugin marketplace add renatodarrigo/claw-drive
+/plugin install claw-drive@claw-drive
 ```
 
-After install, run `/claw-drive-init` in your project to wire claw-drive into `.mcp.json`.
+After install, run `/reload-plugins`, then `/claw-drive-init` in your project to wire claw-drive into `.mcp.json`.
 
 ### From source
 
