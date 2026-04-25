@@ -25,70 +25,24 @@
   </header>
   <main>
     <h1>Contributing</h1>
-    <p class="subtitle">claw-drive is single-user, local, and security-sensitive. Contributions follow the same shape.</p>
+    <p class="subtitle">PRs welcome.</p>
 
-    <h2>What this project values</h2>
-    <ul>
-      <li><strong>The human-in-the-loop guarantee.</strong> No tool call B makes can land without going through the policy gate. Anything that weakens this is the highest-priority bug class.</li>
-      <li><strong>Single-writer-per-session, file-based state.</strong> The runner is the only writer to <code>~/.claw-drive/sessions/&lt;id&gt;/</code>. Race-free updates rely on this; don't break it.</li>
-      <li><strong>The Bash PreToolUse approver is the security primitive.</strong> It runs in B's own process group, sees every tool call before it executes, and blocks until the runner answers. Replacing it with a pure-JS implementation is out of scope.</li>
-      <li><strong>Tests pinned per behaviour.</strong> Every non-trivial change ships with a test that fails against the bug and passes after the fix.</li>
-    </ul>
-
-    <h2 id="in-scope">In scope</h2>
-    <ul>
-      <li>New <code>auto_approve</code> / <code>auto_reject</code> / <code>auto_defer</code> patterns with positive matches AND false-positive negatives.</li>
-      <li>Bug fixes for races, parser edge cases, hook delivery, runner-state corruption.</li>
-      <li>Improvements to error messages, audit-event payloads, and observability (structured logs, event-stream filters).</li>
-      <li>Additive changes to the plugin: new skills, better skill prompts, clearer arg validation.</li>
-      <li>Documentation on the website, the README, the design spec.</li>
-      <li>Test coverage for any code path the existing 207-unit + 8-integration suite doesn't reach.</li>
-    </ul>
-
-    <h2 id="out-of-scope">Out of scope</h2>
-    <ul>
-      <li><strong>Multi-tenant or network-exposed flavors.</strong> claw-drive is single-user-single-host by design. PRs that add auth, remote runners, or shared state will not be accepted.</li>
-      <li><strong>Anything that lets B make a tool call without going through the policy gate.</strong> Including "performance" optimisations that bypass the approver.</li>
-      <li><strong>Replacing the Bash approver with a pure-JS implementation.</strong> The Bash approver runs in B's process group; that's the property the security model depends on.</li>
-      <li><strong>New MCP tools, new event kinds, or breaking schema changes</strong> without a design discussion first. Open an issue describing the surface change before coding.</li>
-      <li><strong>New runtime dependencies.</strong> The Bash approver requires only <code>jq</code> and <code>nc</code>. The Node side ships with one MCP-SDK dep. New deps need justification.</li>
-    </ul>
-
-    <h2>Before opening a PR</h2>
-    <ol>
-      <li>Read <code>docs/superpowers/specs/2026-04-21-claw-drive-design.md</code> §invariants. If your change touches the runner, the policy evaluator, or the event log, that section is the source of truth.</li>
-      <li>Run the test suite:
-        <pre><code class="language-bash">npm run test:unit          # 207 tests, no real claude, ~3s
+    <h2>Tests</h2>
+    <p>Both suites must pass on <code>main</code> before you start. If they don't, file an issue first.</p>
+    <pre><code class="language-bash">npm run test:unit          # 207 tests, no real claude, ~3s
 npm run test:integration   # 8 tests, spawns real claude (costs tokens)</code></pre>
-        Both must pass on <code>main</code> before you start. If they don't, file an issue first.</li>
-      <li>For non-trivial changes (new MCP tool, new event kind, new policy field, new install path, default-policy edit), open an issue describing the design before writing code. Drive-by behaviour changes that ship without discussion get bounced back.</li>
-    </ol>
 
     <h2>PR shape</h2>
     <ul>
-      <li><strong>Small and focused.</strong> One concern per PR. Five-line PRs are normal.</li>
-      <li><strong>Branch from <code>main</code>.</strong> Direct-to-main is the maintainer pattern; contributors use feature branches.</li>
-      <li><strong>Include a regression test.</strong> For bug fixes: a test that fails on the parent commit and passes on yours. For new patterns: a positive match AND at least one false-positive negative.</li>
-      <li><strong>Conventional-ish commit prefixes</strong> match recent history: <code>feat:</code>, <code>fix:</code>, <code>docs:</code>, <code>chore:</code>, <code>merge:</code>. Subject under 70 chars, body explains the <em>why</em>.</li>
-      <li><strong>Update <code>CHANGELOG.md</code></strong> in the same commit if the change is user-visible. Match the existing release-note shape.</li>
+      <li>Small and focused. One concern per PR.</li>
+      <li>Branch from <code>main</code>.</li>
+      <li>Include a regression test for bug fixes. For new policy patterns: a positive match plus at least one false-positive negative.</li>
+      <li>Conventional-ish commit prefixes match recent history: <code>feat:</code>, <code>fix:</code>, <code>docs:</code>, <code>chore:</code>, <code>merge:</code>.</li>
+      <li>Update <code>CHANGELOG.md</code> if the change is user-visible.</li>
     </ul>
 
-    <h2 id="security">Reporting security issues</h2>
-    <p>The following bug classes get a private channel — do <strong>not</strong> open a public GitHub issue:</p>
-    <ul>
-      <li>Policy-evaluation bypass (B makes a tool call that should have been rejected/deferred and isn't).</li>
-      <li>Hook bypass (B makes a tool call without the PreToolUse hook firing).</li>
-      <li>Sandbox escape (B reads or writes outside its <code>cwd</code> in ways the policy didn't authorise).</li>
-      <li>Approver race or state-corruption that lets a paused call resolve incorrectly.</li>
-      <li>Any other failure of the human-in-the-loop guarantee.</li>
-    </ul>
-
-    <p>Email <a href="mailto:renato.darrigo@gmail.com">renato.darrigo@gmail.com</a> with reproducer and impact analysis. Public disclosure follows the fix.</p>
-
-    <p>All other bugs: open a GitHub issue.</p>
-
-    <h2>Tone</h2>
-    <p>Be precise, be patient, be kind. PRs that miss the rules above get closed politely with a pointer back here.</p>
+    <h2>Reporting bugs</h2>
+    <p>Open a <a href="https://github.com/renatodarrigo/claw-drive/issues">GitHub issue</a>. Include a reproducer if you can.</p>
   </main>
   <footer>
     <p class="muted">claw-drive v0.5.0 · MIT · <a href="https://github.com/renatodarrigo/claw-drive">github.com/renatodarrigo/claw-drive</a> · © <span data-year></span></p>
