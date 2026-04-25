@@ -35,4 +35,4 @@ After install, run `/claw-drive-init` in the project you want to wire claw-drive
 
 ## Versioning
 
-Plugin version tracks the CLI version. v0.5.1 plugin works with v0.5.x CLI.
+Plugin version tracks the CLI version. v0.5.2 plugin works with v0.5.x CLI.

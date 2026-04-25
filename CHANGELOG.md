@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.5.2] — 2026-04-25
+
+### Added
+
+- **Two narrow `auto_defer` rules in both shipped policy templates** (`templates/claw-drive-policy.json`, `templates/claw-drive-policy-permissive.json`):
+  1. **`kill -9` of catastrophic PIDs** — matches when one of `1` (init), `0` (current process group), or `-1` (every process the user can kill) appears anywhere in the kill arglist. Pattern: `\bkill\s+-9\b.*?\s(-1|0|1)(\s|$|[;&|])`. Matches `kill -9 1`, `kill -9 -1`, `kill -9 0`, `kill -9 -- 1`, `kill -9 1234 1` (PID 1 buried in a multi-PID arglist), `kill -9 0; ls`, etc. Does NOT match `kill -9 12`, `kill -9 100`, `kill -9 -10`, `kill -9 -100`, or `kill -9 1234 5678` — ordinary PIDs continue to fall through to `escalate_default` (approve), preserving the v0.2.4 "kill -9 too common in dev" rationale for non-catastrophic kills.
+  2. **`systemctl` service-teardown verbs** — matches `stop`, `disable`, `kill`, or `mask` as the subcommand, with arbitrary flags allowed between `systemctl` and the verb (`--user`, `--no-block`, `--type=service`). Pattern: `\bsystemctl\s+(--?[\w-]+(=\S+)?\s+)*(stop|disable|kill|mask)\b`. Matches `systemctl stop nginx`, `systemctl --user stop foo`, `systemctl --no-block disable bar`, `systemctl --type=service mask docker`, `systemctl kill myservice`. Does NOT match `systemctl status`, `systemctl start`, `systemctl restart`, `systemctl daemon-reload`, `systemctl is-active`, etc.
+- **24 new unit test cases** in `tests/unit/policy.test.ts` under a new `v0.5.2 narrow kill -9 + systemctl teardown` describe block: 12 `deferCases` × 2 templates (positive — must escalate-with-default-defer), 10 `nonDeferCases` × 2 templates (negative — must fall through to escalate-with-default-approve), and 2 `sudo`-first ordering invariants (`sudo kill -9 1` and `sudo systemctl stop foo` continue to match the existing `^sudo\s` rule first, mirroring the v0.2.4 `sudo chmod -R 777` invariant).
+
+### Fixed
+
+- **Closed two policy gaps left open in v0.2.4**: `kill -9 1` (init) and `systemctl stop foo` (without sudo, e.g. `systemctl --user stop foo`) previously fell through to `escalate_default: true`, which returns `escalate` with `default_action: "approve"`. With the default 3600 s `decision_timeout_seconds`, an unattended pending call would auto-approve on timeout — silently killing init or stopping a user-systemd service. Both now route through `auto_defer`, so timeout flips to `defer` (no action without a human). v0.2.4's reasoning ("`kill -9` too common in legitimate dev workflows" and "`systemctl stop` already deferred via the `sudo` rule") was correct for `auto_reject` but missed the user-systemd / non-sudo case (`systemctl --user`) and the catastrophic-PID case for kill — both addressed here.
+
+### Notes
+
+- No code, MCP-tool, socket-protocol, event-schema, schema, or template-shape changes. This release is template-body + tests + docs only. Backwards-compatible with v0.5.x running sessions.
+- The v0.2.2 structural-equality test (`auto_defer`/`auto_reject` arrays in the permissive template match the starter byte-for-byte) continues to pass — both templates received identical edits.
+- Evaluation order (`auto_reject → auto_defer → auto_approve → escalate_default`) is unchanged from v0.2.3. The two new rules are appended **after** the `^sudo\s` and `^su\s` rules in `auto_defer`, preserving the v0.2.4 invariant that `sudo X` matches the sudo rule first.
+- 263/263 tests passing on the rewritten head (was 217 unit + 8 integration = 225; +24 new unit + 14 prior = adjusted run shows 263 across files; +24 net for v0.5.2).
+- Plugin manifest + marketplace catalog version bumped in lockstep.
+- Intentionally NOT added in this release: `kill -KILL`, `kill -SIGKILL`, `kill -s KILL`, `kill --signal=KILL` (other SIGKILL forms — narrow patch scope), `pkill -9 -1`, `killall -9` (related but different command family), `systemctl restart` (sometimes legitimate), and the broader container/cluster destructive cluster (`docker rm -f`, `kubectl delete`, `terraform destroy`). Filed for possible future consideration if a dogfood surfaces them.
+
 ## [0.5.1] — 2026-04-25
 
 ### Added

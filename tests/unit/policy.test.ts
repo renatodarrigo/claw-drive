@@ -546,3 +546,94 @@ describe("v0.2.4 widened destructive patterns", () => {
     }
   });
 });
+
+describe("v0.5.2 narrow kill -9 + systemctl teardown", () => {
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = nodePath.dirname(__filename);
+  const starter: Policy = JSON.parse(
+    fsSync.readFileSync(nodePath.resolve(__dirname, "..", "..", "templates", "claw-drive-policy.json"), "utf-8")
+  );
+  const permissive: Policy = JSON.parse(
+    fsSync.readFileSync(nodePath.resolve(__dirname, "..", "..", "templates", "claw-drive-policy-permissive.json"), "utf-8")
+  );
+  const templates: Array<[string, Policy]> = [
+    ["starter", starter],
+    ["permissive", permissive],
+  ];
+
+  // Catastrophic kill -9 PIDs: 1 (init), 0 (current process group), -1 (every
+  // process the user can kill). And systemctl service-teardown verbs.
+  const deferCases: string[] = [
+    "kill -9 1",
+    "kill -9 -1",
+    "kill -9 0",
+    "kill -9 -- 1",
+    "kill -9 1234 1",
+    "kill -9 0; ls",
+    "kill -9 -1 && echo done",
+    "systemctl stop nginx",
+    "systemctl --user stop foo",
+    "systemctl --no-block disable bar",
+    "systemctl --type=service mask docker",
+    "systemctl kill myservice",
+  ];
+
+  for (const [tplName, policy] of templates) {
+    for (const command of deferCases) {
+      it(`${tplName}: "${command}" → escalate/defer`, () => {
+        const r = matchPolicy(policy, { tool: "Bash", args: { command } });
+        expect(r.decision).toBe("escalate");
+        if (r.decision === "escalate") {
+          expect(r.default_action).toBe("defer");
+        }
+      });
+    }
+  }
+
+  // Non-catastrophic kills with ordinary PIDs, and safe systemctl verbs.
+  // These must fall through to escalate_default (approve) — preserves the
+  // v0.2.4 "kill -9 too common in dev" rationale for ordinary PIDs.
+  const nonDeferCases: string[] = [
+    "kill -9 12",
+    "kill -9 100",
+    "kill -9 -10",
+    "kill -9 -100",
+    "kill -9 1234 5678",
+    "systemctl start nginx",
+    "systemctl restart foo",
+    "systemctl daemon-reload",
+    "systemctl is-active foo",
+    "systemctl is-enabled foo",
+  ];
+
+  for (const [tplName, policy] of templates) {
+    for (const command of nonDeferCases) {
+      it(`${tplName}: "${command}" falls through to escalate_default (approve)`, () => {
+        const r = matchPolicy(policy, { tool: "Bash", args: { command } });
+        expect(r.decision).toBe("escalate");
+        if (r.decision === "escalate") {
+          expect(r.default_action).toBe("approve");
+        }
+      });
+    }
+  }
+
+  // Sudo-first ordering invariant — mirrors the existing v0.2.4 sudo-chmod test.
+  it("starter: sudo kill -9 1 → defer via sudo rule (sudo fires first)", () => {
+    const r = matchPolicy(starter, { tool: "Bash", args: { command: "sudo kill -9 1" } });
+    expect(r.decision).toBe("escalate");
+    if (r.decision === "escalate") {
+      expect(r.default_action).toBe("defer");
+      expect(r.matched_rule?.name).toMatch(/sudo/i);
+    }
+  });
+
+  it("starter: sudo systemctl stop foo → defer via sudo rule (sudo fires first)", () => {
+    const r = matchPolicy(starter, { tool: "Bash", args: { command: "sudo systemctl stop foo" } });
+    expect(r.decision).toBe("escalate");
+    if (r.decision === "escalate") {
+      expect(r.default_action).toBe("defer");
+      expect(r.matched_rule?.name).toMatch(/sudo/i);
+    }
+  });
+});

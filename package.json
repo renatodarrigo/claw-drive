@@ -1,6 +1,6 @@
 {
   "name": "claw-drive",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Drive-as-user MCP server + CLI for Claude Code",
   "type": "module",
   "main": "dist/index.js",
