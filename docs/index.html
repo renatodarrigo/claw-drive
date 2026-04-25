@@ -36,16 +36,38 @@
     </p>
 
     <h2>How it works</h2>
-    <pre class="diagram"><code>┌──────────┐   start_session    ┌─────────┐
-│ Session A│ ─────────────────▶ │ runner  │
-│ (driver) │ ◀── events.jsonl ─ │         │
-└──────────┘                    └────┬────┘
-                                     │ spawn
-                                     ▼
-                                ┌─────────┐   PreToolUse   ┌────────┐
-                                │ Session │ ─────────────▶ │ policy │
-                                │    B    │ ◀─ decision ── │  gate  │
-                                └─────────┘                └────────┘</code></pre>
+    <div class="diagram-wrap">
+      <svg viewBox="0 0 540 240" xmlns="http://www.w3.org/2000/svg" role="img"
+           aria-label="claw-drive architecture: Session A drives a runner that spawns Session B; B's tool calls go through a policy gate"
+           class="diagram-svg">
+        <defs>
+          <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+          </marker>
+        </defs>
+        <g class="boxes">
+          <rect x="20"  y="20"  width="110" height="60" rx="4"/>
+          <rect x="290" y="20"  width="110" height="60" rx="4"/>
+          <rect x="290" y="160" width="110" height="60" rx="4"/>
+          <rect x="415" y="160" width="110" height="60" rx="4"/>
+        </g>
+        <text class="lbl"   x="75"  y="46" text-anchor="middle">Session A</text>
+        <text class="muted" x="75"  y="62" text-anchor="middle">(driver)</text>
+        <text class="lbl"   x="345" y="55" text-anchor="middle">runner</text>
+        <text class="lbl"   x="345" y="195" text-anchor="middle">Session B</text>
+        <text class="lbl"   x="470" y="195" text-anchor="middle">policy gate</text>
+        <line class="ar" x1="130" y1="42" x2="288" y2="42" marker-end="url(#arr)"/>
+        <text class="muted" x="209" y="36" text-anchor="middle">start_session</text>
+        <line class="ar" x1="288" y1="58" x2="132" y2="58" marker-end="url(#arr)"/>
+        <text class="muted" x="209" y="74" text-anchor="middle">events.jsonl</text>
+        <line class="ar" x1="345" y1="80" x2="345" y2="158" marker-end="url(#arr)"/>
+        <text class="muted" x="352" y="124">spawn</text>
+        <line class="ar" x1="400" y1="182" x2="413" y2="182" marker-end="url(#arr)"/>
+        <text class="muted" x="407" y="174" text-anchor="middle">PreToolUse</text>
+        <line class="ar" x1="413" y1="198" x2="402" y2="198" marker-end="url(#arr)"/>
+        <text class="muted" x="407" y="216" text-anchor="middle">decision</text>
+      </svg>
+    </div>
 
     <p>Session A hosts claw-drive as an MCP server and spawns Session B in another directory. B is a real <code>claude -p</code> subprocess — it runs tools, honours hooks, and can be interrupted. Every tool call B makes is gated by a policy that can approve, reject, defer to the human, or escalate to A.</p>
 
