@@ -15,8 +15,6 @@ Drive-as-user MCP server + CLI for Claude Code. Lets one Claude Code session dri
 - Every tool call B makes is gated through a PreToolUse hook that talks to claw-drive's runner. Policy rules auto-approve, auto-reject, or escalate to you.
 - Events stream to `~/.claw-drive/sessions/<id>/events.jsonl` — MCP `poll_*` tools and `claw-drive tail` both read it.
 
-See `docs/superpowers/specs/2026-04-21-claw-drive-design.md` for the full design.
-
 ## Install
 
 ```bash
@@ -192,8 +190,6 @@ B's echo fires the hook → policy defers → monitor alerts A → human answers
 | `update_policy` | Replace a session's policy |
 | `interrupt_turn` | SIGINT B to cancel the current turn |
 | `provide_tool_output` | Inject human-run command output back into B's conversation; auto-resolves pending defer if needed |
-
-Full signatures in `docs/superpowers/specs/2026-04-21-claw-drive-design.md` §5.
 
 ## CLI
 

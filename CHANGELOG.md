@@ -182,8 +182,6 @@ Initial release.
 
 ### Architecture
 
-See `docs/superpowers/specs/2026-04-21-claw-drive-design.md`.
-
 Key design choices:
 - Per-session detached runner owns one `claude -p` subprocess.
 - MCP server and CLI are symmetric thin clients over the runner's Unix socket.
