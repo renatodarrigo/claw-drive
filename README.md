@@ -4,7 +4,7 @@ Drive-as-user MCP server + CLI for Claude Code. Lets one Claude Code session dri
 
 **Website:** https://renatodarrigo.github.io/claw-drive/ — install, policies, driving patterns, reference.
 
-<a href="https://ko-fi.com/renatodarrigo"><img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support on Ko-fi"></a>
+<a href="https://ko-fi.com/renatodarrigo" target="_blank" rel="noopener noreferrer"><img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support on Ko-fi"></a>
 
 > Single-user, single-host, local only. See `CHANGELOG.md` for release history.
 
