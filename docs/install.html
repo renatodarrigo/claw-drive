@@ -23,7 +23,7 @@
   </header>
   <main>
     <h1>Install</h1>
-    <p class="subtitle">A clone, a script, two Bash deps. Under a minute.</p>
+    <p class="subtitle">One curl, two Bash deps. Under a minute.</p>
 
     <h2>Prerequisites</h2>
     <ul>
@@ -40,18 +40,26 @@ sudo apt install jq netcat-openbsd
 brew install jq nmap</code></pre>
 
     <h2>Install claw-drive</h2>
+    <pre><code class="language-bash">curl -fsSL https://raw.githubusercontent.com/renatodarrigo/claw-drive/main/install.sh | bash</code></pre>
+
+    <p>The bootstrap fetches the latest <code>main</code> tarball into <code>~/.local/share/claw-drive/</code>, builds it, and copies <code>claw-drive</code> + <code>claw-drive-approver</code> into <code>~/.local/bin/</code>. If <code>~/.local/bin</code> isn't on your <code>PATH</code>, the installer prints the one-liner to add it.</p>
+
+    <p>To pass flags through the pipe, separate them from <code>bash</code> with <code>-s --</code>:</p>
+    <pre><code class="language-bash">curl -fsSL https://raw.githubusercontent.com/renatodarrigo/claw-drive/main/install.sh | bash -s -- \
+  --project ~/code/your-project \
+  --policy  ~/code/your-project/.claw-drive/policy.json</code></pre>
+
+    <h3>From source</h3>
+    <p>For contributors, or if you want symlink-mode (changes in your working tree apply to the installed bins immediately):</p>
     <pre><code class="language-bash">git clone https://github.com/renatodarrigo/claw-drive
 cd claw-drive
 ./install.sh</code></pre>
-
-    <p>The installer symlinks <code>claw-drive</code> and <code>claw-drive-approver</code> into <code>~/.local/bin/</code>, builds if needed, and sanity-runs the CLI.</p>
-    <p>If <code>~/.local/bin</code> isn't on your <code>PATH</code>, the installer prints the one-liner to add it.</p>
 
     <h2>Installer flags</h2>
     <table>
       <thead><tr><th>Flag</th><th>Effect</th></tr></thead>
       <tbody>
-        <tr><td><code>--copy</code></td><td>Copy binaries instead of symlinking. Re-run after repo updates to refresh.</td></tr>
+        <tr><td><code>--copy</code></td><td>Copy binaries instead of symlinking. Forced on remote installs (the source dir is managed, not yours).</td></tr>
         <tr><td><code>--bin-dir PATH</code></td><td>Install to a custom location (may need <code>sudo</code>).</td></tr>
         <tr><td><code>--project PATH</code></td><td>Also register claw-drive in that project's <code>.mcp.json</code>.</td></tr>
         <tr><td><code>--policy PATH</code></td><td>Drop the starter policy template into a project.</td></tr>
@@ -59,12 +67,7 @@ cd claw-drive
       </tbody>
     </table>
 
-    <p>All flags compose. Typical first-run for a project dogfood:</p>
-    <pre><code class="language-bash">./install.sh \
-  --project ~/code/your-project \
-  --policy  ~/code/your-project/.claw-drive/policy.json</code></pre>
-
-    <p>The installer is idempotent. Re-run it any time — to switch modes, change bin dir, re-register a project.</p>
+    <p>All flags work with both the curl-pipe form (after <code>bash -s --</code>) and the clone form. The installer is idempotent — re-run it any time.</p>
 
     <h2>Verify</h2>
     <pre><code class="language-bash">claw-drive --help</code></pre>
@@ -80,7 +83,7 @@ ln -s "$(pwd)/bin/claw-drive-approver" ~/.local/bin/</code></pre>
     <pre><code class="language-bash">./install.sh --uninstall</code></pre>
   </main>
   <footer>
-    <p class="muted">claw-drive v0.3.0 · MIT · <a href="https://github.com/renatodarrigo/claw-drive">github.com/renatodarrigo/claw-drive</a> · © <span data-year></span></p>
+    <p class="muted">claw-drive v0.4.0 · MIT · <a href="https://github.com/renatodarrigo/claw-drive">github.com/renatodarrigo/claw-drive</a> · © <span data-year></span></p>
   </footer>
   <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-core.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>

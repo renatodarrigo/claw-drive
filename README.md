@@ -18,39 +18,44 @@ See `docs/superpowers/specs/2026-04-21-claw-drive-design.md` for the full design
 ## Install
 
 ```bash
-git clone <your fork> claw-drive
-cd claw-drive
-./install.sh
+curl -fsSL https://raw.githubusercontent.com/renatodarrigo/claw-drive/main/install.sh | bash
 ```
 
-The installer symlinks `claw-drive` + `claw-drive-approver` into `~/.local/bin/`, builds if needed, and sanity-runs the CLI. If `~/.local/bin` isn't on your `PATH`, it prints the one-liner to add.
+The bootstrap fetches the latest `main` tarball into `~/.local/share/claw-drive/`, builds, and copies `claw-drive` + `claw-drive-approver` into `~/.local/bin/`. Pass flags by separating them from `bash` with `-s --`:
 
-Runtime deps for the Bash approver: **`jq`** and a Unix-socket-capable **`nc`** (OpenBSD `nc` or nmap `ncat`). The installer warns if either is missing — install via your package manager:
+```bash
+curl -fsSL https://raw.githubusercontent.com/renatodarrigo/claw-drive/main/install.sh | bash -s -- \
+  --project ~/code/your-project \
+  --policy  ~/code/your-project/.claw-drive/policy.json
+```
+
+Runtime deps for the Bash approver: **`jq`** and a Unix-socket-capable **`nc`** (OpenBSD `nc` or nmap `ncat`). The installer warns if either is missing:
 
 - Debian/Ubuntu: `sudo apt install jq netcat-openbsd`
 - macOS: `brew install jq nmap`
 
+### From source
+
+```bash
+git clone https://github.com/renatodarrigo/claw-drive
+cd claw-drive
+./install.sh
+```
+
+Clone-based installs default to **symlink mode** — changes in your working tree apply to the installed bins immediately. Pass `--copy` for a snapshot install instead.
+
 ### Install flags
 
 ```bash
-./install.sh --copy                              # Copy binaries instead of symlinking (snapshot install;
-                                                 # re-run after repo updates to refresh the copy)
+./install.sh --copy                              # Copy binaries instead of symlinking
 ./install.sh --bin-dir /usr/local/bin            # Custom install location (may need sudo)
-./install.sh --project ~/Workspace/cloverleaf    # Also register claw-drive in that project's .mcp.json
-./install.sh --policy ~/Workspace/cloverleaf/.cloverleaf/claw-drive-policy.json
+./install.sh --project ~/code/your-project       # Also register claw-drive in that project's .mcp.json
+./install.sh --policy ~/code/your-project/.claw-drive/policy.json
                                                  # Also drop the starter policy template there
 ./install.sh --uninstall                         # Remove bins (and the .mcp.json entry with --project)
 ```
 
-All flags compose. Typical first-run for a cloverleaf dogfood:
-
-```bash
-./install.sh \
-  --project ~/Workspace/cloverleaf \
-  --policy  ~/Workspace/cloverleaf/.cloverleaf/claw-drive-policy.json
-```
-
-Installer is idempotent — re-run it any time (to switch modes, change bin dir, re-register a project, etc.).
+All flags work with both the curl-pipe (after `bash -s --`) and clone-based forms.
 
 ### Manual install (without the script)
 

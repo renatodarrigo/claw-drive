@@ -16,11 +16,56 @@
 #   ./install.sh --uninstall                  Remove symlinks/copies (with --project, also unregisters)
 #   ./install.sh --help                       Show this help
 #
+# Remote install (no clone required):
+#   curl -fsSL https://raw.githubusercontent.com/renatodarrigo/claw-drive/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/renatodarrigo/claw-drive/main/install.sh | bash -s -- --bin-dir /opt/bin
+#
 # Modes:
 #   SYMLINK (default): changes in the repo apply to the installed bins immediately.
 #   COPY (--copy):     installed bins are a snapshot; re-run install after repo updates.
+#                      Forced when run via remote bootstrap (the source dir is managed,
+#                      not your working clone).
 
 set -euo pipefail
+
+# ---- remote bootstrap ----
+# When piped through bash from curl, BASH_SOURCE[0] is empty or points at /dev/stdin
+# and there's no package.json adjacent. In that case fetch the repo, extract to
+# ~/.local/share/claw-drive (or $CLAW_DRIVE_SRC_DIR), and re-exec install.sh from there.
+__claw_script_path="${BASH_SOURCE[0]:-}"
+__claw_script_dir=""
+[[ -n "$__claw_script_path" ]] && __claw_script_dir="$(cd "$(dirname "$__claw_script_path")" 2>/dev/null && pwd || echo "")"
+if [[ -z "$__claw_script_dir" ]] || [[ ! -f "$__claw_script_dir/package.json" ]]; then
+  CLAW_DRIVE_REMOTE_TARBALL="${CLAW_DRIVE_REMOTE_TARBALL:-https://github.com/renatodarrigo/claw-drive/archive/refs/heads/main.tar.gz}"
+  CLAW_DRIVE_SRC_DIR="${CLAW_DRIVE_SRC_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/claw-drive}"
+
+  printf '\033[34m→\033[0m claw-drive: bootstrapping from %s\n' "$CLAW_DRIVE_REMOTE_TARBALL"
+  printf '\033[34m→\033[0m source dir:  %s\n' "$CLAW_DRIVE_SRC_DIR"
+
+  command -v curl >/dev/null 2>&1 || { echo "error: curl required for remote install" >&2; exit 1; }
+  command -v tar  >/dev/null 2>&1 || { echo "error: tar required for remote install"  >&2; exit 1; }
+
+  __claw_tmp="$(mktemp -d)"
+  trap 'rm -rf "$__claw_tmp"' EXIT
+
+  if ! curl -fsSL "$CLAW_DRIVE_REMOTE_TARBALL" | tar -xz -C "$__claw_tmp"; then
+    echo "error: failed to fetch or extract $CLAW_DRIVE_REMOTE_TARBALL" >&2
+    exit 1
+  fi
+  __claw_extracted="$(find "$__claw_tmp" -mindepth 1 -maxdepth 1 -type d | head -1)"
+  [[ -d "$__claw_extracted" ]] || { echo "error: empty tarball" >&2; exit 1; }
+
+  mkdir -p "$(dirname "$CLAW_DRIVE_SRC_DIR")"
+  rm -rf "$CLAW_DRIVE_SRC_DIR"
+  mv "$__claw_extracted" "$CLAW_DRIVE_SRC_DIR"
+  trap - EXIT
+  rm -rf "$__claw_tmp"
+
+  printf '\033[32m✓\033[0m fetched into %s\n' "$CLAW_DRIVE_SRC_DIR"
+  printf '\033[34m→\033[0m re-running installer in copy mode\n\n'
+  exec bash "$CLAW_DRIVE_SRC_DIR/install.sh" --copy "$@"
+fi
+unset __claw_script_path __claw_script_dir
 
 # ---- colors ----
 if [[ -t 1 ]]; then

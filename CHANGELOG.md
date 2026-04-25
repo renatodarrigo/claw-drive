@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.4.0] — 2026-04-24
+
+### Added
+
+- **Remote install via `curl … | bash`.** `install.sh` now self-detects clone-mode vs remote-mode at the top of the script. When piped from stdin (no adjacent `package.json`), it fetches the latest tarball from `https://github.com/renatodarrigo/claw-drive/archive/refs/heads/main.tar.gz`, extracts to `${XDG_DATA_HOME:-~/.local/share}/claw-drive`, and re-execs itself in copy mode. One-liner: `curl -fsSL https://raw.githubusercontent.com/renatodarrigo/claw-drive/main/install.sh | bash`.
+- **`CLAW_DRIVE_REMOTE_TARBALL` and `CLAW_DRIVE_SRC_DIR` env-var overrides** on the bootstrap path. Useful for testing against a local tarball or installing from a fork.
+
+### Changed
+
+- Remote installs are forced into copy mode (the source dir is managed, not the user's clone). Symlink mode remains the default for clone-based installs.
+- Website (`docs/`) install page leads with the curl-pipe one-liner; clone-based install moves to a "From source" section.
+
+### Notes
+
+- No code, MCP-tool, socket-protocol, event-schema, schema, or template changes. This release is install-flow + docs only. Backwards-compatible with v0.3.x running sessions.
+- Plugin install (Claude Code `/plugin install`) is tracked for a follow-up release.
+
 ## [0.3.0] — 2026-04-24
 
 ### Added
