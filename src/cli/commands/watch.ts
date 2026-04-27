@@ -26,6 +26,47 @@ export function shouldEmit(ev: Event): boolean {
 }
 
 /**
+ * The complete set of event kinds `shouldEmit` could plausibly pass through.
+ * Used by `--only` to validate the user's kind list — kinds outside this set
+ * would be silently dropped by `shouldEmit` regardless, so accepting them
+ * would be misleading.
+ */
+export const VALID_WATCH_KINDS: ReadonlySet<string> = new Set([
+  "tool_decision_required",
+  "tool_decision_resolved",
+  "tool_output_provided",
+  "turn_completed",
+  "turn_failed",
+  "error",
+  "session_stopped",
+  "tool_call_result",
+]);
+
+/**
+ * The `--decision-only` preset: the six kinds that genuinely require human
+ * attention. Drops `turn_completed` (progress) and `tool_output_provided`
+ * (confirmation that human-supplied output was relayed).
+ */
+export const DECISION_ONLY_KINDS: ReadonlySet<string> = new Set([
+  "tool_decision_required",
+  "tool_decision_resolved",
+  "turn_failed",
+  "error",
+  "session_stopped",
+  "tool_call_result",
+]);
+
+/**
+ * Optional second-layer filter applied AFTER shouldEmit. `null` means no
+ * narrowing (the existing default behavior). A non-null Set restricts
+ * emission to its members.
+ */
+export function userFilter(ev: Event, allowed: Set<string> | null): boolean {
+  if (allowed === null) return true;
+  return allowed.has(ev.kind);
+}
+
+/**
  * Given the full event history, return the subset a NEW watch subscriber
  * needs to see to understand the current state of the session:
  *   - every `tool_decision_required` that still lacks a matching
@@ -61,22 +102,91 @@ export function catchUpPending(events: Event[]): Event[] {
   return out;
 }
 
-export async function cmdWatch(argv: string[]): Promise<number> {
+export type ParsedWatchArgs =
+  | {
+      ok: true;
+      sessionId: string;
+      since: number | "current";
+      allowed: Set<string> | null;
+    }
+  | { ok: false; error: string };
+
+/**
+ * Pure argv parser for `claw-drive watch`. Extracted from `cmdWatch` so tests
+ * can exercise flag combinations without spawning a subprocess.
+ */
+export function parseWatchArgs(argv: string[]): ParsedWatchArgs {
   const id = argv[0];
   if (!id || !isValidSessionId(id)) {
+    return { ok: false, error: "session id missing or malformed" };
+  }
+  let since: number | "current" = "current";
+  let allowed: Set<string> | null = null;
+  let decisionOnlySet = false;
+  let onlySet = false;
+
+  for (let i = 1; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--since") {
+      const v = argv[++i];
+      if (v === undefined) return { ok: false, error: "--since requires a value" };
+      since = Number(v);
+    } else if (a === "--replay") {
+      since = 0;
+    } else if (a === "--decision-only") {
+      if (onlySet) {
+        return { ok: false, error: "--only and --decision-only are mutually exclusive" };
+      }
+      decisionOnlySet = true;
+      allowed = new Set(DECISION_ONLY_KINDS);
+    } else if (a === "--only") {
+      if (decisionOnlySet) {
+        return { ok: false, error: "--only and --decision-only are mutually exclusive" };
+      }
+      onlySet = true;
+      const csv = argv[++i];
+      if (csv === undefined) {
+        return { ok: false, error: "--only requires a comma-separated list of kinds" };
+      }
+      const kinds = csv.split(",").map((s) => s.trim()).filter(Boolean);
+      if (kinds.length === 0) {
+        return { ok: false, error: "--only requires at least one kind" };
+      }
+      const valid = [...VALID_WATCH_KINDS].join(", ");
+      for (const k of kinds) {
+        if (!VALID_WATCH_KINDS.has(k)) {
+          return {
+            ok: false,
+            error: `unknown kind '${k}'. valid kinds: ${valid}`,
+          };
+        }
+      }
+      allowed = new Set(kinds);
+    } else {
+      return { ok: false, error: `unknown flag: ${a}` };
+    }
+  }
+
+  return { ok: true, sessionId: id, since, allowed };
+}
+
+export async function cmdWatch(argv: string[]): Promise<number> {
+  const parsed = parseWatchArgs(argv);
+  if (!parsed.ok) {
     console.error(
-      "usage: claw-drive watch <session_id> [--since N] [--replay]\n" +
-        "  default: start streaming from the current end of the event log (not replay-from-0)\n" +
+      parsed.error +
+        "\nusage: claw-drive watch <session_id> [--since N | --replay] [--only KIND[,KIND]... | --decision-only]\n" +
+        "  default: stream NEW events only (no replay)\n" +
         "  --since N: start from seq N (0 = full replay)\n" +
-        "  --replay: shorthand for --since 0"
+        "  --replay: shorthand for --since 0\n" +
+        "  --only KIND[,KIND]...: narrow to a subset of kinds (must be valid watch kinds)\n" +
+        "  --decision-only: shorthand for --only on the six human-attention kinds\n" +
+        `  valid kinds: ${[...VALID_WATCH_KINDS].join(", ")}`
     );
     return 2;
   }
-  let since: number | "current" = "current";
-  for (let i = 1; i < argv.length; i++) {
-    if (argv[i] === "--since") since = Number(argv[++i] ?? 0);
-    else if (argv[i] === "--replay") since = 0;
-  }
+  const { sessionId: id, allowed } = parsed;
+  let since = parsed.since;
 
   // Default: stream NEW events only, BUT catch up on unresolved gates +
   // session_stopped first. This plugs a race where events emitted between
@@ -87,7 +197,9 @@ export async function cmdWatch(argv: string[]): Promise<number> {
     const all = await readEventsSince(eventsPath(id), 0);
     const catchup = catchUpPending(all.events);
     for (const e of catchup) {
-      process.stdout.write(JSON.stringify(e) + "\n");
+      if (userFilter(e, allowed)) {
+        process.stdout.write(JSON.stringify(e) + "\n");
+      }
       if (e.kind === "session_stopped") stopped = true;
     }
     since = all.nextSince;
@@ -97,7 +209,7 @@ export async function cmdWatch(argv: string[]): Promise<number> {
   const emit = async () => {
     const { events, nextSince } = await readEventsSince(eventsPath(id), cursor);
     for (const e of events) {
-      if (shouldEmit(e)) {
+      if (shouldEmit(e) && userFilter(e, allowed)) {
         process.stdout.write(JSON.stringify(e) + "\n");
       }
       if (e.kind === "session_stopped") stopped = true;

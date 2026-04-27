@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { shouldEmit, catchUpPending } from "../../src/cli/commands/watch.js";
+import {
+  shouldEmit,
+  catchUpPending,
+  userFilter,
+  DECISION_ONLY_KINDS,
+  VALID_WATCH_KINDS,
+} from "../../src/cli/commands/watch.js";
 import type { Event } from "../../src/lib/events.js";
 
 function ev(partial: Partial<Event>): Event {
@@ -101,5 +107,85 @@ describe("catchUpPending", () => {
     // deliberately and expect the same order back.
     const out = catchUpPending(events);
     expect(out.map((e) => (e as any).call_id)).toEqual(["a", "b"]);
+  });
+});
+
+describe("userFilter", () => {
+  it("null allowed → passes everything", () => {
+    for (const kind of [...VALID_WATCH_KINDS]) {
+      expect(userFilter(ev({ kind } as any), null)).toBe(true);
+    }
+  });
+
+  it("empty allowed set → passes nothing", () => {
+    const empty = new Set<string>();
+    for (const kind of [...VALID_WATCH_KINDS]) {
+      expect(userFilter(ev({ kind } as any), empty)).toBe(false);
+    }
+  });
+
+  it("kind in allowed set → passes", () => {
+    const allowed = new Set(["tool_decision_required", "turn_failed"]);
+    expect(userFilter(ev({ kind: "tool_decision_required" } as any), allowed)).toBe(true);
+    expect(userFilter(ev({ kind: "turn_failed" } as any), allowed)).toBe(true);
+  });
+
+  it("kind not in allowed set → drops", () => {
+    const allowed = new Set(["tool_decision_required"]);
+    expect(userFilter(ev({ kind: "turn_completed" } as any), allowed)).toBe(false);
+    expect(userFilter(ev({ kind: "tool_output_provided" } as any), allowed)).toBe(false);
+    expect(userFilter(ev({ kind: "session_stopped" } as any), allowed)).toBe(false);
+  });
+});
+
+describe("DECISION_ONLY_KINDS preset", () => {
+  it("includes the six human-attention kinds", () => {
+    expect(DECISION_ONLY_KINDS.has("tool_decision_required")).toBe(true);
+    expect(DECISION_ONLY_KINDS.has("tool_decision_resolved")).toBe(true);
+    expect(DECISION_ONLY_KINDS.has("turn_failed")).toBe(true);
+    expect(DECISION_ONLY_KINDS.has("error")).toBe(true);
+    expect(DECISION_ONLY_KINDS.has("session_stopped")).toBe(true);
+    expect(DECISION_ONLY_KINDS.has("tool_call_result")).toBe(true);
+  });
+
+  it("excludes the two info-only kinds", () => {
+    expect(DECISION_ONLY_KINDS.has("turn_completed")).toBe(false);
+    expect(DECISION_ONLY_KINDS.has("tool_output_provided")).toBe(false);
+  });
+
+  it("has exactly 6 entries", () => {
+    expect(DECISION_ONLY_KINDS.size).toBe(6);
+  });
+});
+
+describe("VALID_WATCH_KINDS", () => {
+  it("contains all 8 kinds shouldEmit can pass", () => {
+    expect(VALID_WATCH_KINDS.has("tool_decision_required")).toBe(true);
+    expect(VALID_WATCH_KINDS.has("tool_decision_resolved")).toBe(true);
+    expect(VALID_WATCH_KINDS.has("tool_output_provided")).toBe(true);
+    expect(VALID_WATCH_KINDS.has("turn_completed")).toBe(true);
+    expect(VALID_WATCH_KINDS.has("turn_failed")).toBe(true);
+    expect(VALID_WATCH_KINDS.has("error")).toBe(true);
+    expect(VALID_WATCH_KINDS.has("session_stopped")).toBe(true);
+    expect(VALID_WATCH_KINDS.has("tool_call_result")).toBe(true);
+  });
+
+  it("does not contain non-actionable kinds", () => {
+    expect(VALID_WATCH_KINDS.has("session_started")).toBe(false);
+    expect(VALID_WATCH_KINDS.has("turn_started")).toBe(false);
+    expect(VALID_WATCH_KINDS.has("assistant_text")).toBe(false);
+    expect(VALID_WATCH_KINDS.has("thinking")).toBe(false);
+    expect(VALID_WATCH_KINDS.has("tool_call_requested")).toBe(false);
+    expect(VALID_WATCH_KINDS.has("tool_call_started")).toBe(false);
+  });
+
+  it("has exactly 8 entries", () => {
+    expect(VALID_WATCH_KINDS.size).toBe(8);
+  });
+
+  it("DECISION_ONLY_KINDS is a subset of VALID_WATCH_KINDS", () => {
+    for (const k of [...DECISION_ONLY_KINDS]) {
+      expect(VALID_WATCH_KINDS.has(k)).toBe(true);
+    }
   });
 });
