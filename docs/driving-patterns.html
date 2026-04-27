@@ -51,14 +51,30 @@ await Monitor(watch_command);
       <thead><tr><th>Notification <code>kind</code></th><th>A's response</th></tr></thead>
       <tbody>
         <tr><td><code>tool_decision_required</code></td><td>Surface to human. Resolve with <code>resolve_tool_call</code> or (for defer) <code>provide_tool_output</code>.</td></tr>
+        <tr><td><code>tool_decision_resolved</code></td><td>Only when <code>resolved_by</code> is <code>timeout</code> — a pending decision auto-fired. Surface the consequence.</td></tr>
         <tr><td><code>tool_output_provided</code></td><td>Defer follow-through completed — confirm B received the output and moved on.</td></tr>
         <tr><td><code>turn_completed</code></td><td>Decide whether to send the next turn or wrap up.</td></tr>
         <tr><td><code>turn_failed</code></td><td>Surface the failure details.</td></tr>
+        <tr><td><code>error</code></td><td>Runner-side error. Surface and decide whether to abort.</td></tr>
+        <tr><td><code>tool_call_result</code> (with <code>is_error</code>)</td><td>A tool call B issued errored. Surface the error.</td></tr>
         <tr><td><code>session_stopped</code></td><td>Wrap up.</td></tr>
       </tbody>
     </table>
 
-    <p><code>watch</code> filters <code>events.jsonl</code> to only events a human or driver needs to react to. It exits cleanly on <code>session_stopped</code> or SIGINT.</p>
+    <p><code>watch</code> filters <code>events.jsonl</code> to only the eight kinds above — Session B's assistant prose, intermediate tool-call lifecycle events, and successful results stay out of A's stream.</p>
+
+    <h3 id="watch-filter">Narrowing further: <code>--only</code> and <code>--decision-only</code></h3>
+    <p>Two of the eight kinds — <code>turn_completed</code> (progress) and <code>tool_output_provided</code> (confirmation that human-supplied output was relayed) — are noise from a human-driver perspective: the human chooses when to send the next turn, and they just provided the output themselves. Two flags on <code>watch</code> drop them:</p>
+
+    <pre><code class="language-bash"># Drop the two info-only kinds — keep only the six human-attention kinds.
+claw-drive watch &lt;id&gt; --decision-only
+
+# Or specify exactly which kinds to keep.
+claw-drive watch &lt;id&gt; --only tool_decision_required,turn_failed,session_stopped</code></pre>
+
+    <p>Both compose with the eight-kind ceiling — <code>--only</code> can never widen the stream past what <code>watch</code> already passes. Mutually exclusive; unknown kinds in <code>--only</code> exit with an error listing the valid ones.</p>
+
+    <p>The <code>/claw-drive-start</code> plugin skill defaults to <code>--decision-only</code> (the human-driver case). Drivers consuming <code>watch_command</code> directly without the skill get the wider eight-kind stream by default, so orchestration logic that branches on <code>turn_completed</code> keeps working.</p>
 
     <h2 id="defer-round-trip">Defer round-trip</h2>
     <p>Some commands can't run inside B — <code>sudo</code>, interactive logins, anything that needs auth, a TTY, or a secret. For these, use <code>auto_defer</code>:</p>

@@ -50,17 +50,18 @@
     <h3 id="start"><code>/claw-drive-start</code></h3>
     <p>Spawns Session B and starts the Monitor flow.</p>
 
-    <pre><code class="language-bash">/claw-drive-start &lt;cwd&gt; [--brief &lt;file&gt;] [--policy &lt;file&gt;]</code></pre>
+    <pre><code class="language-bash">/claw-drive-start &lt;cwd&gt; [--brief &lt;file&gt;] [--policy &lt;file&gt;] [--verbose]</code></pre>
 
     <ul>
       <li><code>&lt;cwd&gt;</code> — absolute or <code>~</code>-relative path to a project. Must exist and not equal the parent session's cwd.</li>
       <li><code>--brief &lt;file&gt;</code> — scenario brief. If omitted, the skill asks for one inline.</li>
       <li><code>--policy &lt;file&gt;</code> — policy JSON. If omitted, claw-drive uses the conservative starter.</li>
+      <li><code>--verbose</code> — receive the wider Monitor stream that also includes <code>turn_completed</code> and <code>tool_output_provided</code>. Without this flag, the skill appends <code>--decision-only</code> to the watch_command so Monitor only surfaces the six human-attention kinds (decision-required, timeout-resolved, turn_failed, error, session_stopped, error tool_call_result).</li>
     </ul>
 
-    <p>The skill calls <code>start_session</code> via MCP, sends the brief as the first user turn, and starts the Monitor on the returned <code>watch_command</code>. Notifications surface as they arrive: <code>tool_decision_required</code> events become approval prompts, <code>turn_completed</code> events let you decide on the next turn.</p>
+    <p>The skill calls <code>start_session</code> via MCP, sends the brief as the first user turn, and starts the Monitor on the (possibly modified) <code>watch_command</code>. By default, only decision-required notifications and failures appear in your driver session — <code>tool_decision_required</code> events become approval prompts, the rest exists to surface trouble. Pass <code>--verbose</code> if you orchestrate based on <code>turn_completed</code>.</p>
 
-    <p>See <a href="driving-patterns.html#monitor-watch">Driving patterns → Monitor + watch</a> for the full event flow.</p>
+    <p>See <a href="driving-patterns.html#monitor-watch">Driving patterns → Monitor + watch</a> for the full event flow and filter options.</p>
 
     <h3 id="resolve"><code>/claw-drive-resolve</code></h3>
     <p>Resolves a paused tool call.</p>

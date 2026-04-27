@@ -97,6 +97,30 @@
 
     <p>Bash remembering derives from a prefix of the command, same as before.</p>
 
+    <h2 id="testing">Testing a policy</h2>
+    <p>Use <code>claw-drive policy-test '&lt;command&gt;'</code> to see which list fires and what the resolved decision is — no session spin-up required:</p>
+
+    <pre><code class="language-bash">$ claw-drive policy-test 'kill -9 1'
+Decision:       escalate
+Default action: defer
+List:           auto_defer
+Matched rule:   "kill -9 of init/everything/process-group (PID 1, -1, or 0)"
+Pattern:        \bkill\s+-9\b.*?\s(-1|0|1)(\s|$|[;&amp;|])
+Severity:       high
+Tool:           Bash
+Command:        kill -9 1
+Policy:         &lt;repo&gt;/templates/claw-drive-policy.json (starter)</code></pre>
+
+    <p>Three output formats: human (default), <code>--explain</code> (walks every rule with <code>✓</code>/<code>✗</code> marks), <code>--json</code> (single-line for piping to <code>jq</code> and CI tooling).</p>
+
+    <p>Bash uses positional shorthand; non-Bash tools take <code>--tool TOOL --arg KEY=VALUE</code> (repeatable):</p>
+
+    <pre><code class="language-bash">claw-drive policy-test --tool Read --arg file_path=/etc/passwd
+claw-drive policy-test --tool Edit --arg file_path=/tmp/foo.ts --arg old_string=secret
+claw-drive policy-test --tool Grep --arg pattern='api_key'</code></pre>
+
+    <p><code>--policy SPEC</code> selects which policy to test against. <code>SPEC</code> is one of <code>starter</code> (default), <code>permissive</code>, <code>bypass</code>, or a <code>&lt;path&gt;</code> to a custom policy JSON. <code>--exit-on reject|defer|approve|escalate</code> turns the diagnostic into a CI gate — exits 1 on match, 0 otherwise.</p>
+
     <h2>Timeouts</h2>
     <p>The default <code>decision_timeout_seconds</code> is <strong>3600</strong> (1 hour). If an escalation sits unresolved that long, the runner fires the rule's <code>default_action</code>:</p>
     <ul>

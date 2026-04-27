@@ -60,8 +60,9 @@
         <tr><td><code>stop &lt;session&gt;</code></td><td>Reap B.</td></tr>
         <tr><td><code>interrupt &lt;session&gt; &lt;turn&gt;</code></td><td>SIGINT B.</td></tr>
         <tr><td><code>policy &lt;session&gt; [--set FILE] [--show]</code></td><td>View or replace a session's policy.</td></tr>
+        <tr><td><code>policy-test '&lt;command&gt;' [flags]</code></td><td>Diagnose a tool call against a policy. See <a href="policies.html#testing">Policies → Testing a policy</a>.</td></tr>
         <tr><td><code>prune [--older-than 24h]</code></td><td>Remove dead sessions older than cutoff.</td></tr>
-        <tr><td><code>watch &lt;session&gt;</code></td><td>Stream noteworthy events as JSONL. Used by Monitor flows.</td></tr>
+        <tr><td><code>watch &lt;session&gt; [--since N | --replay] [--only KIND[,KIND]... | --decision-only]</code></td><td>Stream noteworthy events as JSONL. Used by Monitor flows. <code>--decision-only</code> drops <code>turn_completed</code> and <code>tool_output_provided</code>; <code>--only</code> takes a comma-separated subset of the eight valid kinds. See <a href="driving-patterns.html#watch-filter">Driving patterns → Narrowing further</a>.</td></tr>
         <tr><td><code>provide-output &lt;call_id&gt; [flags]</code></td><td>Relay human-run output to a deferred call.</td></tr>
       </tbody>
     </table>
