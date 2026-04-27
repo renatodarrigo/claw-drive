@@ -1,6 +1,6 @@
 ---
 name: claw-drive-start
-description: Spawn a driven Claude Code session (Session B) in the given directory and start the Monitor flow against the returned watch_command. Usage — /claw-drive-start <cwd> [--brief <file>] [--policy <file>]. The cwd must exist and be a real project root. If --brief is omitted, the user will be asked for the scenario brief inline. If --policy is omitted, the conservative starter shipped with claw-drive is used.
+description: Spawn a driven Claude Code session (Session B) in the given directory and start the Monitor flow against the returned watch_command. Usage — /claw-drive-start <cwd> [--brief <file>] [--policy <file>] [--verbose]. The cwd must exist and be a real project root. If --brief is omitted, the user will be asked for the scenario brief inline. If --policy is omitted, the conservative starter shipped with claw-drive is used. By default the Monitor stream is filtered to the six human-attention event kinds (decision-required, decision-resolved, turn_failed, error, session_stopped, error tool_call_results); pass --verbose to receive the wider eight-kind stream including turn_completed and tool_output_provided.
 ---
 
 # Claw-drive — start
@@ -39,12 +39,18 @@ The user has invoked this skill to kick off a driven session. This is the standa
 
 6. **Send the brief as the first user turn.** Call `send_turn` with the brief content as the user message. Capture the `turn_id`.
 
-7. **Start the Monitor.** Call Claude Code's `Monitor` tool with the `watch_command` payload from step 5. This streams notifications (`tool_decision_required`, `tool_output_provided`, `turn_completed`, `turn_failed`, `session_stopped`) back to this session.
+7. **Start the Monitor.** Decide the watch_command:
+   - If `--verbose` was passed, use the watch_command from step 5 unchanged. Monitor will stream all eight actionable kinds (`tool_decision_required`, timeout-resolved decisions, `tool_output_provided`, `turn_completed`, `turn_failed`, `error`, `session_stopped`, error `tool_call_result`).
+   - Otherwise, append ` --decision-only` to the watch_command. Monitor will only surface the six human-attention kinds — drops `turn_completed` (progress) and `tool_output_provided` (confirmation), which are noise from a human-driver perspective.
+
+   Then call Claude Code's `Monitor` tool with the (possibly modified) watch_command.
 
 8. **Report to the user:**
    - Session ID: `<id>`
    - First turn ID: `<turn_id>`
    - Monitor active. Notifications will surface as they arrive.
+   - **(Default)** Monitor is filtered to decision-required events. Re-run with `--verbose` to include `turn_completed` and `tool_output_provided`.
+   - **(If `--verbose`)** Monitor is unfiltered (all eight actionable kinds). Omit `--verbose` next time for the decision-only stream.
    - To resolve a paused call: `/claw-drive-resolve <call_id> <approve|reject|defer> [--remember]`
    - To stop: tell me "stop session `<id>`" or call `claw-drive stop <id>` from a shell.
 

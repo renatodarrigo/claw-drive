@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.5.4] — 2026-04-27
+
+### Added
+
+- **`--only KIND[,KIND]...` flag on `claw-drive watch`.** Comma-separated list of event kinds to keep in the stream. Composes (AND) with the existing `shouldEmit` predicate, so `--only` is a subset filter — kinds outside the eight-kind actionable set still never pass. Unknown kind in `--only` exits 2 with an error message listing the valid kinds.
+- **`--decision-only` shorthand on `claw-drive watch`.** Equivalent to `--only tool_decision_required,tool_decision_resolved,turn_failed,error,session_stopped,tool_call_result` — the six "human attention" kinds. Drops `turn_completed` and `tool_output_provided`, which are progress / confirmation noise from a human-driver perspective. Mutually exclusive with `--only`.
+- **`--verbose` flag on `/claw-drive-start`.** When passed, the skill behaves as in v0.5.3 (Monitor receives the full eight-kind stream). When omitted (the new default), the skill rewrites the watch_command to append ` --decision-only` before handing it to Monitor — so the human driver sees only decision-required events plus failures/errors/stops, not turn completions or output-provided confirmations.
+- **31 new unit tests** across `tests/unit/watch-filter.test.ts` (extended with `userFilter`, `DECISION_ONLY_KINDS`, `VALID_WATCH_KINDS` describe blocks) and `tests/unit/watch-cli-args.test.ts` (new file covering the extracted `parseWatchArgs` pure parser). 313 → 344 tests.
+
+### Changed
+
+- **`/claw-drive-start` Monitor default is now `--decision-only`.** Existing users who rely on seeing `turn_completed` for orchestration logic should pass `--verbose` to opt into the prior behavior. Drivers consuming the watch_command directly (without going through `/claw-drive-start`) see no change — `claw-drive watch <id>` with no flags emits all eight actionable kinds, same as before.
+- **`cmdWatch` argv parsing extracted into a pure exported `parseWatchArgs` function.** Existing flags (`--since`, `--replay`) are unchanged; the refactor exists so the new flags can be unit-tested without spawning subprocesses.
+
+### Notes
+
+- No code changes to `src/lib/policy.ts`, `src/lib/events.ts`, `src/lib/state.ts`, or any MCP-tool surface.
+- No socket-protocol, event-schema, or template change.
+- Backwards-compatible with v0.5.x running sessions. The watch_command string returned by `start_session` is unchanged; the skill modifies it on the consumer side.
+- `catchUpPending` is unaffected internally (it still emits unresolved decisions + session_stopped); its output is now passed through `userFilter` so that an explicit `--only` excluding one of those kinds is honored consistently with the streamed loop.
+- Plugin manifest + marketplace catalog version bumped in lockstep.
+- Out of scope, filed for future: changing `start_session`'s MCP signature to accept a `monitor_filter` parameter, an MCP-tool exposure of the filter logic, kind-level filtering for non-actionable kinds like `assistant_text`.
+
 ## [0.5.3] — 2026-04-25
 
 ### Added

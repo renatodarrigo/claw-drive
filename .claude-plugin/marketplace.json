@@ -6,14 +6,14 @@
   },
   "metadata": {
     "description": "Slash commands for driving Claude Code from Claude Code.",
-    "version": "0.5.3"
+    "version": "0.5.4"
   },
   "plugins": [
     {
       "name": "claw-drive",
       "source": "./plugin",
       "description": "Slash commands for driving Claude Code from Claude Code: /claw-drive-init, /claw-drive-start, /claw-drive-resolve. Pairs with the claw-drive CLI; install via curl -fsSL https://raw.githubusercontent.com/renatodarrigo/claw-drive/main/install.sh | bash.",
-      "version": "0.5.3",
+      "version": "0.5.4",
       "author": {
         "name": "Renato D'Arrigo",
         "email": "renato.darrigo@gmail.com"
