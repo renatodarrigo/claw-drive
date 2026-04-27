@@ -122,14 +122,33 @@ const { session_id, watch_command } = await claw-drive.start_session({
 await Monitor(watch_command);  // spawns `claw-drive watch <id>` and streams notifications
 
 // A now waits for notifications. For each:
-//   kind === "tool_decision_required" → surface to human, resolve_tool_call or provide_tool_output
-//   kind === "tool_output_provided"   → confirm defer follow-through completed
-//   kind === "turn_completed"         → decide whether to send next turn or wrap up
-//   kind === "turn_failed"            → surface the failure details
-//   kind === "session_stopped"        → wrap up
+//   kind === "tool_decision_required"        → surface to human, resolve_tool_call or provide_tool_output
+//   kind === "tool_decision_resolved"        → only when resolved_by === "timeout" — surface the consequence
+//   kind === "tool_output_provided"          → confirm defer follow-through completed
+//   kind === "turn_completed"                → decide whether to send next turn or wrap up
+//   kind === "turn_failed"                   → surface the failure details
+//   kind === "error"                         → runner-side error; decide whether to abort
+//   kind === "tool_call_result" (is_error)   → a tool call B issued errored; surface
+//   kind === "session_stopped"               → wrap up
 ```
 
-`claw-drive watch` filters `events.jsonl` to only events a human/A needs to act on — the five `kind` values listed in the comment block above. It exits cleanly on `session_stopped` or SIGINT.
+`claw-drive watch` filters `events.jsonl` to those eight `kind` values — Session B's assistant prose, intermediate tool-call lifecycle events, and successful results stay out of A's stream. It exits cleanly on `session_stopped` or SIGINT.
+
+### Narrowing further: `--only` / `--decision-only`
+
+Two of the eight kinds — `turn_completed` (progress) and `tool_output_provided` (confirmation that human-supplied output was relayed) — are noise from a human-driver perspective: the human chooses when to send the next turn, and they just provided the output themselves. Two flags drop them:
+
+```bash
+# Drop the two info-only kinds — keep only the six human-attention kinds.
+claw-drive watch <id> --decision-only
+
+# Or specify exactly which kinds to keep.
+claw-drive watch <id> --only tool_decision_required,turn_failed,session_stopped
+```
+
+Both compose with the eight-kind ceiling — `--only` can never widen the stream past what `watch` already passes. They are mutually exclusive; unknown kinds in `--only` exit with an error listing the valid ones.
+
+The `/claw-drive-start` plugin skill defaults to `--decision-only`. Pass `--verbose` to opt back into the wider eight-kind stream when you orchestrate based on `turn_completed`. Drivers consuming `watch_command` directly (without going through the skill) get the wider stream by default — orchestration logic that branches on `turn_completed` keeps working unchanged.
 
 ## Policy
 
@@ -200,15 +219,17 @@ B's echo fires the hook → policy defers → monitor alerts A → human answers
 | `show <session>` | State + last 20 events |
 | `tail <session> [--since N] [--follow]` | Stream events |
 | `pending [<session>]` | List awaiting-approval calls |
-| `approve <call_id> [--reason R]` | Approve a paused call |
-| `reject <call_id> [--reason R]` | Reject a paused call |
+| `approve <call_id> [--reason R] [--remember]` | Approve a paused call. `--remember` derives a rule and appends to `auto_approve`. |
+| `reject <call_id> [--reason R] [--remember]` | Reject a paused call. `--remember` appends to `auto_reject`. |
+| `defer <call_id> [--reason R] [--remember]` | Defer a paused call to the human. `--remember` appends to `auto_defer`. |
 | `send <session> "<msg>"` | Send a user turn |
 | `start --cwd PATH [--policy FILE] [--brief FILE]` | Start a session |
 | `stop <session>` | Reap B |
 | `interrupt <session> <turn>` | SIGINT B |
-| `policy <session> [--set FILE] [--show]` | View/replace policy |
+| `policy <session> [--set FILE] [--show]` | View/replace a session's policy |
+| `policy-test '<command>' [flags]` | Diagnose a tool call against a policy. Three output formats (default human, `--explain`, `--json`); multi-tool via `--tool TOOL --arg KEY=VALUE`; `--policy starter\|permissive\|bypass\|<file>`; `--exit-on reject\|defer\|approve\|escalate` for CI gating. |
 | `prune [--older-than 24h]` | Remove dead sessions older than cutoff |
-| `watch <session>` | Stream noteworthy events as JSONL (used internally by the Monitor flow) |
+| `watch <session> [--since N \| --replay] [--only KIND[,KIND]... \| --decision-only]` | Stream noteworthy events as JSONL. Used by Monitor flows. `--decision-only` drops `turn_completed` and `tool_output_provided`; `--only` takes a comma-separated subset of the eight valid kinds. |
 | `provide-output <call_id> [--stdout S] [--stderr S] [--exit N] [--extra S] [--from-file PATH]` | Relay human-run command output to a deferred call |
 
 ## Troubleshooting
@@ -256,7 +277,7 @@ Two policy templates ship in `templates/`:
 
 ## Testing
 
-- `npm run test:unit` — 207 unit tests, no real claude invocation
+- `npm run test:unit` — 336 unit tests, no real claude invocation
 - `npm run test:integration` — 8 integration tests spawning real claude (cost real tokens)
 - `bash scripts/self-dogfood.sh` — end-to-end acceptance smoke
 
