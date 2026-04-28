@@ -49,7 +49,7 @@ export const VALID_WATCH_KINDS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * The `--decision-only` preset: the six kinds that genuinely require human
+ * The `--decision-only` preset: the seven kinds that genuinely require human
  * attention. Drops `turn_completed` (progress) and `tool_output_provided`
  * (confirmation that human-supplied output was relayed).
  */
@@ -60,6 +60,7 @@ export const DECISION_ONLY_KINDS: ReadonlySet<string> = new Set([
   "error",
   "session_stopped",
   "tool_call_result",
+  "idle",
 ]);
 
 /**
@@ -380,6 +381,9 @@ export async function cmdWatch(argv: string[]): Promise<number> {
     if (userFilter(idleEvent as unknown as Event, allowed)) {
       process.stdout.write(JSON.stringify(idleEvent) + "\n");
     }
+    // Reset the silence timer even when userFilter drops the idle event;
+    // otherwise the ticker would build-and-drop an idle every tick after
+    // threshold expires.
     noteSurface(idle, Date.now());
   };
 

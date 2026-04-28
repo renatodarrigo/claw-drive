@@ -139,13 +139,14 @@ describe("userFilter", () => {
 });
 
 describe("DECISION_ONLY_KINDS preset", () => {
-  it("includes the six human-attention kinds", () => {
+  it("includes the seven human-attention kinds", () => {
     expect(DECISION_ONLY_KINDS.has("tool_decision_required")).toBe(true);
     expect(DECISION_ONLY_KINDS.has("tool_decision_resolved")).toBe(true);
     expect(DECISION_ONLY_KINDS.has("turn_failed")).toBe(true);
     expect(DECISION_ONLY_KINDS.has("error")).toBe(true);
     expect(DECISION_ONLY_KINDS.has("session_stopped")).toBe(true);
     expect(DECISION_ONLY_KINDS.has("tool_call_result")).toBe(true);
+    expect(DECISION_ONLY_KINDS.has("idle")).toBe(true);
   });
 
   it("excludes the two info-only kinds", () => {
@@ -153,8 +154,8 @@ describe("DECISION_ONLY_KINDS preset", () => {
     expect(DECISION_ONLY_KINDS.has("tool_output_provided")).toBe(false);
   });
 
-  it("has exactly 6 entries", () => {
-    expect(DECISION_ONLY_KINDS.size).toBe(6);
+  it("has exactly 7 entries", () => {
+    expect(DECISION_ONLY_KINDS.size).toBe(7);
   });
 });
 
