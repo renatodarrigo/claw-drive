@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.5.6] — 2026-04-27
+
+### Added
+
+- **Sentinel-token wrapper system.** Session B is auto-taught a small contract at session start: end your turns with a literal `[TOKEN]` on its own line if (and only if) human attention is needed. Eleven explicit tokens + a `DEBUG-*` wildcard. The wrapper is injected via `claude -p`'s `--append-system-prompt` flag — verified working on claude 2.1.121.
+- **Sentinel-aware `claw-drive watch` filter.** `turn_completed` events now surface only when the trailing `[TOKEN]` resolves to surface mode `"always"`. Other actionable kinds (`tool_decision_required`, `tool_decision_resolved` on timeout, `turn_failed`, `error`, is-error `tool_call_result`, `session_stopped`, `tool_output_provided`) bypass the token check — they're runner-emitted facts, not LLM prose. Closes the v0.5.4 framing where `--decision-only` dropped *all* `turn_completed` regardless of content; the new contract distinguishes attention-needing turns from autonomous ones.
+- **`surface_tokens` policy block.** Optional `Record<string, "always" | "silent">` on `PolicyObject`. Validated at `start_session` and `update_policy` boundaries — typo'd token names error loudly there. Wildcard support: a `"DEBUG-*"` key catches any `DEBUG-X` token.
+- **Three new flags on `claw-drive watch`:**
+  - `--surface KIND[,KIND]...` (repeatable) — override surface mode to `"always"` for the listed tokens.
+  - `--silence KIND[,KIND]...` (repeatable) — override to `"silent"`.
+  - `--no-token-filter` — disables the sentinel-aware filter entirely (raw v0.5.5-style watch behavior). Mutually exclusive with `--surface` / `--silence`.
+- **`wrapper: false` parameter on `start_session`** (MCP) — opt out of the wrapper injection. Pair with `--no-token-filter` on watch since there's no sentinel to anchor on.
+- **`/claw-drive-start` plugin skill default reverted.** The skill no longer appends `--decision-only`. The new sentinel filter is the default behavior. `--verbose` now means "bypass both wrapper injection AND sentinel filter" (full v0.5.5-style raw stream).
+- **`src/lib/tokens.ts`** — single source of truth for the wrapper text, vocabulary, default surface modes, regex, and resolver. v0.5.5's `status.ts` now imports the shared regex (was a local copy).
+
+### Changed
+
+- The `--decision-only` watch flag continues to work for explicit aggressive filtering, but it's no longer applied by `/claw-drive-start`.
+- v0.5.5's `status.ts` `last_token` field starts populating in real session output now that B emits `[TOKEN]` sentinels (the field was the consumer-side stub waiting for this release).
+
+### Notes
+
+- **Minimum claude version: 2.1.121** (where `--append-system-prompt` is documented). Older claude versions will fail loud at runner spawn — the error surfaces in `error` events with claude's own message. If you're stuck on an older version, pass `wrapper: false` to `start_session` (and `--no-token-filter` to watch) to disable the v0.5.6 contract.
+- LLM compliance with the sentinel contract is high but not 100%. Misses are silent (turn ends, no token, watch drops the event). Mitigations: `claw-drive status` from v0.5.5 is the on-demand fallback; `--no-token-filter` and `--verbose` (skill) are escape hatches.
+- Wrapper costs ~250 tokens of B's system-prompt budget per session. Negligible for long runs.
+- ~40 new unit tests in `tests/unit/tokens.test.ts`, `tests/unit/runner-args.test.ts`, `tests/unit/watch-token-filter.test.ts`, plus extensions to `policy.test.ts` and `watch-cli-args.test.ts`. 467/467 tests passing (was 391; +76 net across the four touched files plus integration test adjustment).
+- `tests/integration/watch-emits.test.ts` now passes `--no-token-filter` to the watch subprocess so the test's "B replies with hi" prompt — which doesn't include a sentinel — still sees the `turn_completed` event surface. The test verifies watch's noise filter, not the v0.5.6 sentinel filter (which is unit-tested in `watch-token-filter.test.ts`).
+
 ## [0.5.5] — 2026-04-27
 
 ### Added
