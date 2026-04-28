@@ -5,7 +5,6 @@ import {
   DEFAULT_SURFACE_MODES,
   TRAILING_TOKEN_RE,
   extractTrailingToken,
-  isDebugToken,
   resolveSurfaceMode,
 } from "../../src/lib/tokens.js";
 
@@ -15,9 +14,15 @@ describe("WRAPPER_PROMPT", () => {
     expect(WRAPPER_PROMPT.length).toBeGreaterThan(100);
   });
 
-  it("contains all 11 explicit tokens", () => {
-    const explicit = [
-      "[NEEDS-INPUT]",
+  it("contains both tokens with their semantic descriptions", () => {
+    expect(WRAPPER_PROMPT).toContain("[NEEDS-INPUT]");
+    expect(WRAPPER_PROMPT).toContain("[DONE]");
+    expect(WRAPPER_PROMPT).toMatch(/human's turn/i);
+    expect(WRAPPER_PROMPT).toMatch(/task complete/i);
+  });
+
+  it("contains no retired tokens", () => {
+    for (const retired of [
       "[NEEDS-DECISION]",
       "[NEEDS-CONFIRMATION]",
       "[NEEDS-CLARIFICATION]",
@@ -29,9 +34,9 @@ describe("WRAPPER_PROMPT", () => {
       "[INFO-CHECKPOINT]",
       "[INFO-PROGRESS]",
       "[INFO-WAITING]",
-    ];
-    for (const t of explicit) {
-      expect(WRAPPER_PROMPT).toContain(t);
+      "[DEBUG-",
+    ]) {
+      expect(WRAPPER_PROMPT).not.toContain(retired);
     }
   });
 
@@ -39,7 +44,6 @@ describe("WRAPPER_PROMPT", () => {
     expect(WRAPPER_PROMPT).toMatch(/Format rules:/i);
     expect(WRAPPER_PROMPT).toMatch(/own line/i);
     expect(WRAPPER_PROMPT).toMatch(/literal bracketed text/i);
-    expect(WRAPPER_PROMPT).toMatch(/Priority/i);
   });
 
   it("ends without leading/trailing whitespace clutter", () => {
@@ -48,74 +52,46 @@ describe("WRAPPER_PROMPT", () => {
 });
 
 describe("VOCAB", () => {
-  it("contains exactly the 13 entries (12 explicit tokens + DEBUG-* wildcard)", () => {
-    expect(VOCAB.size).toBe(13);
+  it("contains exactly the 2 entries", () => {
+    expect(VOCAB.size).toBe(2);
   });
 
-  it("includes the four NEEDS-* tokens", () => {
+  it("contains NEEDS-INPUT and DONE", () => {
     expect(VOCAB.has("NEEDS-INPUT")).toBe(true);
-    expect(VOCAB.has("NEEDS-DECISION")).toBe(true);
-    expect(VOCAB.has("NEEDS-CONFIRMATION")).toBe(true);
-    expect(VOCAB.has("NEEDS-CLARIFICATION")).toBe(true);
+    expect(VOCAB.has("DONE")).toBe(true);
   });
 
-  it("includes the four trouble tokens", () => {
-    expect(VOCAB.has("ERROR")).toBe(true);
-    expect(VOCAB.has("FAILED-NO-RETRY")).toBe(true);
-    expect(VOCAB.has("FAILED-WILL-RETRY")).toBe(true);
-    expect(VOCAB.has("PARTIAL-FAILURE")).toBe(true);
-  });
-
-  it("includes the lifecycle and quiet tokens", () => {
-    expect(VOCAB.has("INFO-FINISHED")).toBe(true);
-    expect(VOCAB.has("INFO-CHECKPOINT")).toBe(true);
-    expect(VOCAB.has("INFO-PROGRESS")).toBe(true);
-    expect(VOCAB.has("INFO-WAITING")).toBe(true);
-  });
-
-  it("includes the DEBUG-* wildcard marker", () => {
-    expect(VOCAB.has("DEBUG-*")).toBe(true);
-  });
-
-  it("does not contain unbracketed garbage", () => {
-    expect(VOCAB.has("FOO")).toBe(false);
-    expect(VOCAB.has("")).toBe(false);
+  it("does not contain retired or unbracketed tokens", () => {
+    for (const t of [
+      "INFO-FINISHED",
+      "INFO-CHECKPOINT",
+      "ERROR",
+      "FAILED-NO-RETRY",
+      "DEBUG-*",
+      "DEBUG-SQL",
+      "FOO",
+      "",
+    ]) {
+      expect(VOCAB.has(t)).toBe(false);
+    }
   });
 });
 
 describe("DEFAULT_SURFACE_MODES", () => {
-  it("9 tokens default to 'always' (the loud ones)", () => {
-    const always = [
-      "NEEDS-INPUT",
-      "NEEDS-DECISION",
-      "NEEDS-CONFIRMATION",
-      "NEEDS-CLARIFICATION",
-      "ERROR",
-      "FAILED-NO-RETRY",
-      "PARTIAL-FAILURE",
-      "INFO-FINISHED",
-      "INFO-CHECKPOINT",
-    ];
-    for (const t of always) {
-      expect(DEFAULT_SURFACE_MODES[t]).toBe("always");
-    }
+  it("has both tokens at 'always'", () => {
+    expect(DEFAULT_SURFACE_MODES["NEEDS-INPUT"]).toBe("always");
+    expect(DEFAULT_SURFACE_MODES["DONE"]).toBe("always");
   });
 
-  it("3 tokens default to 'silent'", () => {
-    expect(DEFAULT_SURFACE_MODES["FAILED-WILL-RETRY"]).toBe("silent");
-    expect(DEFAULT_SURFACE_MODES["INFO-PROGRESS"]).toBe("silent");
-    expect(DEFAULT_SURFACE_MODES["INFO-WAITING"]).toBe("silent");
-  });
-
-  it("DEBUG-* defaults to silent (wildcard)", () => {
-    expect(DEFAULT_SURFACE_MODES["DEBUG-*"]).toBe("silent");
+  it("has no other entries", () => {
+    expect(Object.keys(DEFAULT_SURFACE_MODES).sort()).toEqual(["DONE", "NEEDS-INPUT"]);
   });
 });
 
 describe("TRAILING_TOKEN_RE", () => {
   it("matches token at end after blank line", () => {
-    const m = "I'm done\n\n[INFO-FINISHED]".match(TRAILING_TOKEN_RE);
-    expect(m?.[1]).toBe("INFO-FINISHED");
+    const m = "I'm done\n\n[DONE]".match(TRAILING_TOKEN_RE);
+    expect(m?.[1]).toBe("DONE");
   });
 
   it("matches token followed by trailing newline", () => {
@@ -124,8 +100,8 @@ describe("TRAILING_TOKEN_RE", () => {
   });
 
   it("matches only-token message", () => {
-    const m = "[INFO-FINISHED]".match(TRAILING_TOKEN_RE);
-    expect(m?.[1]).toBe("INFO-FINISHED");
+    const m = "[DONE]".match(TRAILING_TOKEN_RE);
+    expect(m?.[1]).toBe("DONE");
   });
 
   it("does not match mid-message tokens", () => {
@@ -134,78 +110,44 @@ describe("TRAILING_TOKEN_RE", () => {
   });
 
   it("matches CRLF line endings", () => {
-    const m = "done.\r\n[ERROR]\r\n".match(TRAILING_TOKEN_RE);
-    expect(m?.[1]).toBe("ERROR");
+    const m = "done.\r\n[DONE]\r\n".match(TRAILING_TOKEN_RE);
+    expect(m?.[1]).toBe("DONE");
   });
 });
 
 describe("extractTrailingToken", () => {
-  it("extracts the token from end-of-message", () => {
-    expect(extractTrailingToken("done\n[INFO-FINISHED]")).toBe("INFO-FINISHED");
+  it("extracts DONE from end-of-message", () => {
+    expect(extractTrailingToken("done\n[DONE]")).toBe("DONE");
+  });
+
+  it("extracts NEEDS-INPUT from end-of-message", () => {
+    expect(extractTrailingToken("question?\n[NEEDS-INPUT]")).toBe("NEEDS-INPUT");
   });
 
   it("returns null when no trailing token", () => {
     expect(extractTrailingToken("just plain text")).toBe(null);
   });
 
-  it("matches every token in VOCAB except the wildcard", () => {
+  it("matches every token in VOCAB", () => {
     for (const t of [...VOCAB]) {
-      if (t === "DEBUG-*") continue; // wildcard isn't itself a token
       expect(extractTrailingToken(`done\n[${t}]`)).toBe(t);
     }
   });
 });
 
-describe("isDebugToken", () => {
-  it("returns true for DEBUG-* shapes", () => {
-    expect(isDebugToken("DEBUG-SQL")).toBe(true);
-    expect(isDebugToken("DEBUG-AUTH")).toBe(true);
-    expect(isDebugToken("DEBUG-RETRY-ATTEMPT")).toBe(true);
-  });
-
-  it("returns false for non-DEBUG tokens", () => {
-    expect(isDebugToken("NEEDS-INPUT")).toBe(false);
-    expect(isDebugToken("ERROR")).toBe(false);
-    expect(isDebugToken("INFO-PROGRESS")).toBe(false);
-  });
-
-  it("returns false for the bare DEBUG (no suffix) — vocabulary requires DEBUG-X form", () => {
-    expect(isDebugToken("DEBUG")).toBe(false);
-  });
-});
-
 describe("resolveSurfaceMode", () => {
-  it("CLI override > policy > default — CLI wins all", () => {
-    const mode = resolveSurfaceMode("INFO-FINISHED", { surface: ["INFO-FINISHED"], silence: [] }, { "INFO-FINISHED": "silent" });
-    expect(mode).toBe("always");
+  it("returns 'always' for NEEDS-INPUT", () => {
+    expect(resolveSurfaceMode("NEEDS-INPUT")).toBe("always");
   });
 
-  it("CLI silence overrides policy always", () => {
-    const mode = resolveSurfaceMode("ERROR", { surface: [], silence: ["ERROR"] }, { "ERROR": "always" });
-    expect(mode).toBe("silent");
+  it("returns 'always' for DONE", () => {
+    expect(resolveSurfaceMode("DONE")).toBe("always");
   });
 
-  it("policy overrides default when CLI is silent on the token", () => {
-    const mode = resolveSurfaceMode("INFO-PROGRESS", { surface: [], silence: [] }, { "INFO-PROGRESS": "always" });
-    expect(mode).toBe("always");
-  });
-
-  it("falls back to default when neither CLI nor policy specifies", () => {
-    expect(resolveSurfaceMode("NEEDS-INPUT", { surface: [], silence: [] }, {})).toBe("always");
-    expect(resolveSurfaceMode("INFO-PROGRESS", { surface: [], silence: [] }, {})).toBe("silent");
-    expect(resolveSurfaceMode("FAILED-WILL-RETRY", { surface: [], silence: [] }, {})).toBe("silent");
-  });
-
-  it("DEBUG-* tokens fall back to the wildcard default (silent)", () => {
-    expect(resolveSurfaceMode("DEBUG-SQL", { surface: [], silence: [] }, {})).toBe("silent");
-    expect(resolveSurfaceMode("DEBUG-AUTH-TRACE", { surface: [], silence: [] }, {})).toBe("silent");
-  });
-
-  it("policy can override DEBUG-* via the wildcard key", () => {
-    expect(resolveSurfaceMode("DEBUG-SQL", { surface: [], silence: [] }, { "DEBUG-*": "always" })).toBe("always");
-  });
-
-  it("unknown token falls back to silent (conservative default)", () => {
-    expect(resolveSurfaceMode("MYSTERY-TOKEN", { surface: [], silence: [] }, {})).toBe("silent");
+  it("returns 'silent' for unknown tokens (conservative default)", () => {
+    expect(resolveSurfaceMode("UNKNOWN")).toBe("silent");
+    expect(resolveSurfaceMode("INFO-FINISHED")).toBe("silent"); // retired token
+    expect(resolveSurfaceMode("DEBUG-SQL")).toBe("silent"); // retired wildcard family
+    expect(resolveSurfaceMode("")).toBe("silent");
   });
 });
