@@ -23,6 +23,7 @@ import { readEventsSince, type Event } from "../lib/events.js";
 import { writeState, readState, isPidAlive, type SessionState } from "../lib/state.js";
 import { validatePolicy, type Policy } from "../lib/policy.js";
 import { sendRequest } from "../runner/socket-server.js";
+import { buildNotificationContract } from "../lib/tokens.js";
 
 function newSessionId(): string {
   // sess_YYYYMMDDTHHMMSS_<6char>
@@ -139,15 +140,21 @@ async function handleStartSession(args: Record<string, unknown>) {
     try {
       await fs.access(readyMarkerPath(sessionId));
       const selfBinAbs = resolveSelfBinPath();
+      const watch_command = {
+        command: selfBinAbs,
+        args: ["watch", sessionId],
+        description: `notable events from claw-drive session ${sessionId}`,
+        timeout_ms: 3_600_000,
+        persistent: true,
+      };
+      const notification_contract = buildNotificationContract({
+        watchCommand: `${selfBinAbs} watch ${sessionId}`,
+        wrapperEnabled: args.wrapper !== false,
+      });
       return ok({
         session_id: sessionId,
-        watch_command: {
-          command: selfBinAbs,
-          args: ["watch", sessionId],
-          description: `notable events from claw-drive session ${sessionId}`,
-          timeout_ms: 3_600_000,
-          persistent: true,
-        },
+        watch_command,
+        notification_contract,
       });
     } catch {
       await new Promise((r) => setTimeout(r, 50));

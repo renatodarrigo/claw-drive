@@ -74,3 +74,55 @@ export function resolveSurfaceMode(token: string): "always" | "silent" {
  * (so the consumer sees the same value the watch_command was built with).
  */
 export const DEFAULT_IDLE_AFTER_SECONDS: number = 600;
+
+export interface NotificationContractVocabEntry {
+  token: string;
+  semantic: string;
+  surface: "always" | "silent";
+}
+
+export interface NotificationContract {
+  version: 1;
+  wrapper_enabled: boolean;
+  vocabulary: NotificationContractVocabEntry[];
+  watch_command: string;
+  watch_flags: Record<string, string>;
+  idle_after_seconds: number;
+}
+
+const VOCAB_SEMANTICS: Record<string, string> = {
+  "NEEDS-INPUT":
+    "The driven session needs the human to provide something to proceed — a fact, decision, confirmation, clarification, or direction after a failure it cannot recover from on its own.",
+  "DONE":
+    "Task complete. No further turns expected from the driven session.",
+};
+
+const WATCH_FLAGS_DOC: Record<string, string> = {
+  "--no-token-filter":
+    "Surface every event regardless of trailing token. For consumers that apply their own filter logic instead of relying on B's token compliance.",
+  "--decision-only":
+    "Narrow to the human-attention event kinds; drops turn_completed and tool_output_provided.",
+  "--only KIND[,KIND]...":
+    "Restrict to a subset of valid event kinds.",
+  "--idle-after SECONDS":
+    "Emit a synthetic 'idle' event after N seconds of no surfaced activity. Default 600. Pass 0 to disable.",
+};
+
+export function buildNotificationContract(args: {
+  watchCommand: string;
+  wrapperEnabled: boolean;
+  idleAfterSeconds?: number;
+}): NotificationContract {
+  return {
+    version: 1,
+    wrapper_enabled: args.wrapperEnabled,
+    vocabulary: [...VOCAB].map((token) => ({
+      token,
+      semantic: VOCAB_SEMANTICS[token],
+      surface: DEFAULT_SURFACE_MODES[token] ?? "silent",
+    })),
+    watch_command: args.watchCommand,
+    watch_flags: { ...WATCH_FLAGS_DOC },
+    idle_after_seconds: args.idleAfterSeconds ?? DEFAULT_IDLE_AFTER_SECONDS,
+  };
+}
