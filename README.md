@@ -129,59 +129,40 @@ await Monitor(watch_command);  // spawns `claw-drive watch <id>` and streams not
 //   kind === "turn_failed"                   → surface the failure details
 //   kind === "error"                         → runner-side error; decide whether to abort
 //   kind === "tool_call_result" (is_error)   → a tool call B issued errored; surface
+//   kind === "idle"                          → no surfaced event in N seconds; check on B
 //   kind === "session_stopped"               → wrap up
 ```
 
-`claw-drive watch` filters `events.jsonl` to those eight `kind` values — Session B's assistant prose, intermediate tool-call lifecycle events, and successful results stay out of A's stream. It exits cleanly on `session_stopped` or SIGINT.
+`claw-drive watch` filters `events.jsonl` to those nine `kind` values — Session B's assistant prose, intermediate tool-call lifecycle events, and successful results stay out of A's stream. It exits cleanly on `session_stopped` or SIGINT.
 
 ### Sentinel tokens (the default)
 
-Session B is auto-taught a small contract at session start: end your turns with a literal `[TOKEN]` on its own line if (and only if) human attention is needed. `claw-drive watch` parses each `turn_completed`'s last `assistant_text` for the trailing token and surfaces the event only when the token's configured *surface mode* is `always`. No token, or a token configured `silent` → `turn_completed` is dropped (Session A doesn't get pinged).
+Session B is auto-taught a tiny contract at session start: end your turns with a literal `[TOKEN]` on its own line if (and only if) human attention is needed. `claw-drive watch` parses each `turn_completed`'s last `assistant_text` for the trailing token and surfaces the event only when one is present. No token = silent / autonomous — Session A is not pulled in.
 
-The 11 tokens in the shipped vocabulary, with their default surface modes:
+The shipped vocabulary is two tokens:
 
-| Token | Default | Meaning |
-|---|---|---|
-| `[NEEDS-INPUT]` | always | B needs input to proceed (a question, a missing fact). |
-| `[NEEDS-DECISION]` | always | B wants the human to pick from options. |
-| `[NEEDS-CONFIRMATION]` | always | About to do something risky; want explicit go-ahead. |
-| `[NEEDS-CLARIFICATION]` | always | Brief is ambiguous; want it disambiguated. |
-| `[ERROR]` | always | Unrecoverable. Human action needed. |
-| `[FAILED-NO-RETRY]` | always | Retries exhausted. Human takes over. |
-| `[FAILED-WILL-RETRY]` | **silent** | Failure but B has retries remaining. Override to `always` if watching a flaky run. |
-| `[PARTIAL-FAILURE]` | always | Mixed results; human decides next. |
-| `[INFO-FINISHED]` | always | Task complete. Terminal. |
-| `[INFO-CHECKPOINT]` | always | Milestone hit; B is continuing. |
-| `[INFO-PROGRESS]` | silent | Quiet progress beat. |
-| `[INFO-WAITING]` | silent | Paused on an external thing (long build, async API). |
-| `[DEBUG-*]` | silent | Wildcard for development logs. |
+| Token | Meaning |
+|---|---|
+| `[NEEDS-INPUT]` | The human's turn — covers asking, deciding, confirming, clarifying, or recovering from a failure. Anything that requires the human before B can proceed. |
+| `[DONE]` | Task complete. Terminal. |
 
-Override per-policy via `surface_tokens` in the policy JSON:
+Both default to surface mode `always`; there is nothing to override.
 
-```json
-"surface_tokens": {
-  "FAILED-WILL-RETRY": "always",
-  "INFO-CHECKPOINT": "silent"
-}
-```
+`start_session` returns a `notification_contract` field describing the live vocabulary (token names, semantics, surface modes), the `watch_command` payload, the available watch flags, the idle-after default, and whether the wrapper was injected. Drivers that want to stay forward-compatible should read `notification_contract` at spawn time rather than hardcoding the token list.
 
-Or per-watch-invocation via `--surface KIND[,KIND]...` and `--silence KIND[,KIND]...`:
+### Idle events
 
-```bash
-claw-drive watch <id> --surface FAILED-WILL-RETRY,INFO-PROGRESS --silence INFO-CHECKPOINT
-```
-
-CLI overrides win over policy, which wins over built-in defaults.
+If a session is quiet for a while, `claw-drive watch` synthesises an `idle` event so the driver knows nothing is in flight. Default threshold: **600s**. Override via `--idle-after SECONDS` (pass `0` to disable). The timer resets on every surfaced event and cancels on `session_stopped`.
 
 ### Narrowing further: `--only` / `--decision-only`
 
-Even tighter: `--only KIND[,KIND]...` restricts the kind universe to a subset (mutually exclusive with `--decision-only`, which is shorthand for the six human-attention kinds). These compose with the sentinel filter — they restrict *which kinds* watch even considers, while the sentinel filter restricts *which `turn_completed`s* surface among them.
+`--only KIND[,KIND]...` restricts the kind universe to a subset (mutually exclusive with `--decision-only`, which is shorthand for the human-attention kinds, including `idle`). These compose with the sentinel filter — they restrict *which kinds* watch even considers, while the sentinel filter restricts *which `turn_completed`s* surface among them.
 
-To bypass the sentinel filter entirely (raw v0.5.5-style behavior), pass `--no-token-filter`. Mutually exclusive with `--surface` and `--silence`.
+To bypass the sentinel filter entirely (raw streaming behavior), pass `--no-token-filter`.
 
 To bypass the wrapper injection on the runner side, pass `wrapper: false` to `start_session`. That way B never sees the contract; pair with `--no-token-filter` on watch since there's no sentinel to anchor on.
 
-The `/claw-drive-start` plugin skill defaults to the sentinel-aware behavior. Pass `--verbose` to bypass both layers (no wrapper, no token filter — full v0.5.5-style stream).
+The `/claw-drive-start` plugin skill defaults to the sentinel-aware behavior. Pass `--verbose` to bypass both layers (no wrapper, no token filter — full raw stream).
 
 ## Policy
 
@@ -202,21 +183,6 @@ A policy is either `"bypass"` (no gating) or an object. Rules in order: `auto_ap
 ```
 
 On timeout: the `default_action` for escalated calls is `approve` (when `escalate_default: true`) or `reject` (when `escalate_default: false`). The approver script self-times-out 5s before claude's 600s hook ceiling and fails secure (exit 2 / deny).
-
-### Configuring sentinel surface modes
-
-`surface_tokens` is an optional policy block that overrides the built-in surface defaults per token. Keys are token names from the vocabulary above; values are `"always"` or `"silent"`. Missing tokens fall back to defaults. Validated at `start_session` and `update_policy` boundaries — typo'd token names error loudly there, not silently later.
-
-```json
-{
-  "auto_approve": [ /* ... */ ],
-  "surface_tokens": {
-    "FAILED-WILL-RETRY": "always",
-    "INFO-CHECKPOINT": "silent",
-    "DEBUG-*": "always"
-  }
-}
-```
 
 ### Deferring commands the human must run
 
@@ -248,7 +214,7 @@ B's echo fires the hook → policy defers → monitor alerts A → human answers
 
 | Tool | Purpose |
 |---|---|
-| `start_session` | Start a driven session; returns `{session_id, watch_command}` (the latter is a ready-made Monitor payload). Optional `wrapper: false` opts out of injecting the v0.5.6 sentinel-token contract into B's system prompt. |
+| `start_session` | Start a driven session; returns `{session_id, watch_command, notification_contract}`. `watch_command` is a ready-made Monitor payload; `notification_contract` describes the session's sentinel vocabulary, watch flags, and idle threshold so drivers can stay forward-compatible. Optional `wrapper: false` opts out of injecting the sentinel-token contract into B's system prompt. |
 | `stop_session` | Reap B; keep session dir for inspection |
 | `send_turn` | Non-blocking; returns `turn_id` |
 | `poll_turn` | Fetch events + status for a turn (optional long-poll) |
@@ -277,7 +243,7 @@ B's echo fires the hook → policy defers → monitor alerts A → human answers
 | `policy <session> [--set FILE] [--show]` | View/replace a session's policy |
 | `policy-test '<command>' [flags]` | Diagnose a tool call against a policy. Three output formats (default human, `--explain`, `--json`); multi-tool via `--tool TOOL --arg KEY=VALUE`; `--policy starter\|permissive\|bypass\|<file>`; `--exit-on reject\|defer\|approve\|escalate` for CI gating. |
 | `prune [--older-than 24h]` | Remove dead sessions older than cutoff |
-| `watch <session> [--since N \| --replay] [--only KIND[,KIND]... \| --decision-only] [--surface TOKEN[,TOKEN]...] [--silence TOKEN[,TOKEN]...] [--no-token-filter]` | Stream noteworthy events as JSONL. Used by Monitor flows. Sentinel filter is on by default (`turn_completed` surfaces only when the trailing `[TOKEN]` resolves to surface mode `always`). `--surface` / `--silence` override the surface mode per-token; `--no-token-filter` disables the sentinel filter entirely. `--decision-only` and `--only` are kind-level subset filters that compose with the sentinel filter. |
+| `watch <session> [--since N \| --replay] [--only KIND[,KIND]... \| --decision-only] [--idle-after SECONDS] [--no-token-filter]` | Stream noteworthy events as JSONL. Used by Monitor flows. Sentinel filter is on by default (`turn_completed` surfaces only when the trailing `[TOKEN]` is present). `--no-token-filter` disables the sentinel filter entirely. `--decision-only` and `--only` are kind-level subset filters that compose with the sentinel filter. `--idle-after SECONDS` (default `600`, `0` disables) emits a synthetic `idle` event when no surfaced event has been seen for that long. |
 | `provide-output <call_id> [--stdout S] [--stderr S] [--exit N] [--extra S] [--from-file PATH]` | Relay human-run command output to a deferred call |
 
 ## Troubleshooting
@@ -325,7 +291,7 @@ Two policy templates ship in `templates/`:
 
 ## Testing
 
-- `npm run test:unit` — 459 unit tests, no real claude invocation
+- `npm run test:unit` — 463 unit tests, no real claude invocation
 - `npm run test:integration` — 8 integration tests spawning real claude (cost real tokens)
 - `bash scripts/self-dogfood.sh` — end-to-end acceptance smoke
 

@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.5.7] — 2026-04-28
+
+### Changed (breaking)
+
+- **Sentinel vocabulary shrunk from 13 entries to 2.** B now learns only `[NEEDS-INPUT]` (human's turn — covers asking, deciding, confirming, clarifying, recovering from failure) and `[DONE]` (task complete). All retired tokens (`NEEDS-DECISION`, `NEEDS-CONFIRMATION`, `NEEDS-CLARIFICATION`, `ERROR`, `FAILED-NO-RETRY`, `FAILED-WILL-RETRY`, `PARTIAL-FAILURE`, `INFO-FINISHED`, `INFO-CHECKPOINT`, `INFO-PROGRESS`, `INFO-WAITING`, `DEBUG-*`) are gone from the wrapper text and from `VOCAB`. Driver prompts that referenced the retired tokens need updating.
+- **`surface_tokens` policy field removed.** Saved policies that still contain the block will fail validation with a clear error pointing at the removal. Both surviving tokens default to `always` surface — there's nothing to override.
+- **`--surface` and `--silence` flags on `claw-drive watch` removed.** Same rationale as `surface_tokens`.
+- **`isDebugToken()` and the `DEBUG-*` wildcard removed** from the public API of `src/lib/tokens.ts`.
+- **`tokenFilter`'s signature changed:** `(ev, events, noTokenFilter)` — dropped the `cli` and policy-derived `surface_tokens` arguments.
+
+### Added
+
+- **Idle event in `claw-drive watch`.** After N seconds of no surfaced event, watch emits `{kind:"idle", silent_for_ms, current_turn}`. New flag `--idle-after SECONDS` (default `600`; pass `0` to disable). The timer resets on every surfaced event and cancels on `session_stopped`. Synthetic events use negative seq numbers to stay disjoint from runner-emitted seq.
+- **`notification_contract` field on `start_session`'s MCP response.** Describes the session's vocabulary (with semantics + surface modes), watch_command, available watch flags, idle-after default, and whether the wrapper was injected. `version: 1`.
+- **`DEFAULT_IDLE_AFTER_SECONDS` constant** exported from `src/lib/tokens.ts`.
+- **`buildNotificationContract()` builder** exported from `src/lib/tokens.ts`.
+- **`idle` registered in `VALID_WATCH_KINDS`** (so `--only` can include it) and in `DECISION_ONLY_KINDS` (so `--decision-only` consumers receive idle events too).
+
+### Migration
+
+- Remove any `surface_tokens` block from saved policies.
+- Drop any `--surface` / `--silence` flags from scripted `claw-drive watch` invocations; use `--no-token-filter` if you want the raw stream.
+- Update any prompt or scenario_brief that instructs B to emit retired tokens — use `[NEEDS-INPUT]` and `[DONE]` instead.
+- Drivers that hardcode the v0.5.6 vocabulary should switch to reading `start_session`'s `notification_contract` field at spawn time; future contract changes are then automatic.
+
+### Tests
+
+- Net change: ~flat. ~30 tests dropped (surface_tokens validation, `--surface`/`--silence` parsing, `isDebugToken`, wildcard `resolveSurfaceMode`, retired-token assertions); ~25 tests added (idle state machine, `deriveCurrentTurn`, contract assembly).
+- Final count: 471 passing.
+
 ## [0.5.6] — 2026-04-27
 
 ### Added
