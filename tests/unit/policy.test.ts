@@ -281,55 +281,6 @@ describe("validatePolicy", () => {
     const r = validatePolicy({ auto_defer: [{ tool: "Bash", bash_command_matches: "[bad" }] });
     expect(r.ok).toBe(false);
   });
-
-  it("surface_tokens with valid entries is accepted", () => {
-    const r = validatePolicy({
-      surface_tokens: {
-        "FAILED-WILL-RETRY": "always",
-        "INFO-CHECKPOINT": "silent",
-      },
-    });
-    expect(r).toEqual({ ok: true });
-  });
-
-  it("surface_tokens with all VOCAB members + DEBUG-* is accepted", () => {
-    const all: Record<string, "always" | "silent"> = {
-      "NEEDS-INPUT": "always",
-      "NEEDS-DECISION": "always",
-      "NEEDS-CONFIRMATION": "always",
-      "NEEDS-CLARIFICATION": "always",
-      "ERROR": "always",
-      "FAILED-NO-RETRY": "always",
-      "FAILED-WILL-RETRY": "always",
-      "PARTIAL-FAILURE": "always",
-      "INFO-FINISHED": "silent",
-      "INFO-CHECKPOINT": "silent",
-      "INFO-PROGRESS": "always",
-      "INFO-WAITING": "always",
-      "DEBUG-*": "always",
-    };
-    expect(validatePolicy({ surface_tokens: all })).toEqual({ ok: true });
-  });
-
-  it("surface_tokens accepts a specific DEBUG-X token", () => {
-    expect(validatePolicy({ surface_tokens: { "DEBUG-SQL": "always" } })).toEqual({ ok: true });
-  });
-
-  it("surface_tokens with unknown token is rejected", () => {
-    const r = validatePolicy({ surface_tokens: { "TYPO-TOKEN": "always" } });
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.error).toMatch(/TYPO-TOKEN/);
-  });
-
-  it("surface_tokens with invalid mode is rejected", () => {
-    const r = validatePolicy({ surface_tokens: { "NEEDS-INPUT": "loud" as any } });
-    expect(r.ok).toBe(false);
-  });
-
-  it("surface_tokens that's not an object is rejected", () => {
-    expect(validatePolicy({ surface_tokens: "always" as any }).ok).toBe(false);
-    expect(validatePolicy({ surface_tokens: ["NEEDS-INPUT"] as any }).ok).toBe(false);
-  });
 });
 
 describe("permissive policy template", () => {
@@ -683,6 +634,18 @@ describe("v0.5.2 narrow kill -9 + systemctl teardown", () => {
     if (r.decision === "escalate") {
       expect(r.default_action).toBe("defer");
       expect(r.matched_rule?.name).toMatch(/sudo/i);
+    }
+  });
+});
+
+describe("v0.5.7 — surface_tokens removed", () => {
+  it("rejects a policy that still contains a surface_tokens block", () => {
+    const result = validatePolicy({
+      surface_tokens: { "NEEDS-INPUT": "always" },
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toMatch(/unknown key.*surface_tokens/i);
     }
   });
 });

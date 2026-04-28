@@ -15,14 +15,6 @@ export interface PolicyObject {
   auto_reject?: Rule[];
   escalate_default?: boolean;
   decision_timeout_seconds?: number;
-  /**
-   * Per-token override of which sentinel tokens cause `claw-drive watch` to
-   * surface `turn_completed` events to the driver. Keys must be in the
-   * shipped vocabulary (`src/lib/tokens.ts:VOCAB`); values must be `"always"`
-   * or `"silent"`. Missing tokens fall back to `DEFAULT_SURFACE_MODES`. CLI
-   * `--surface` / `--silence` flags override this map per-invocation.
-   */
-  surface_tokens?: Record<string, "always" | "silent">;
 }
 
 export type Policy = "bypass" | PolicyObject;
@@ -160,7 +152,6 @@ export function validatePolicy(p: unknown): { ok: true } | { ok: false; error: s
     "auto_reject",
     "escalate_default",
     "decision_timeout_seconds",
-    "surface_tokens",
   ]);
   for (const key of Object.keys(obj)) {
     if (!allowedKeys.has(key)) return { ok: false, error: `unknown key '${key}'` };
@@ -195,44 +186,6 @@ export function validatePolicy(p: unknown): { ok: true } | { ok: false; error: s
   }
   if (obj.decision_timeout_seconds !== undefined && typeof obj.decision_timeout_seconds !== "number") {
     return { ok: false, error: "decision_timeout_seconds must be a number" };
-  }
-  if (obj.surface_tokens !== undefined) {
-    if (typeof obj.surface_tokens !== "object" || obj.surface_tokens === null || Array.isArray(obj.surface_tokens)) {
-      return { ok: false, error: "surface_tokens must be an object mapping token name → 'always' | 'silent'" };
-    }
-    // Note: VOCAB is imported lazily here to avoid a cycle (policy.ts ↔ tokens.ts)
-    // — tokens.ts already imports types from policy.ts indirectly through PolicyObject.
-    // Use a static guard instead of importing.
-    const validTokens = new Set([
-      "NEEDS-INPUT",
-      "NEEDS-DECISION",
-      "NEEDS-CONFIRMATION",
-      "NEEDS-CLARIFICATION",
-      "ERROR",
-      "FAILED-NO-RETRY",
-      "FAILED-WILL-RETRY",
-      "PARTIAL-FAILURE",
-      "INFO-FINISHED",
-      "INFO-CHECKPOINT",
-      "INFO-PROGRESS",
-      "INFO-WAITING",
-      "DEBUG-*",
-    ]);
-    const isDebugTokenLocal = (t: string): boolean => /^DEBUG-[A-Z0-9-]+$/.test(t);
-    for (const [tok, mode] of Object.entries(obj.surface_tokens as Record<string, unknown>)) {
-      if (!validTokens.has(tok) && !isDebugTokenLocal(tok)) {
-        return {
-          ok: false,
-          error: `surface_tokens['${tok}'] is not a valid token. valid: ${[...validTokens].join(", ")}`,
-        };
-      }
-      if (mode !== "always" && mode !== "silent") {
-        return {
-          ok: false,
-          error: `surface_tokens['${tok}'] must be 'always' or 'silent', got ${JSON.stringify(mode)}`,
-        };
-      }
-    }
   }
   return { ok: true };
 }
