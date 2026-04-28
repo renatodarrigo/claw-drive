@@ -39,7 +39,7 @@ function baseState(overrides: Partial<SessionState> = {}): SessionState {
 
 describe("extractTrailingToken", () => {
   it("matches a token at end-of-message after a blank line", () => {
-    expect(extractTrailingToken("I'm done\n\n[INFO-FINISHED]")).toBe("INFO-FINISHED");
+    expect(extractTrailingToken("I'm done\n\n[DONE]")).toBe("DONE");
   });
 
   it("matches a token followed by trailing newline", () => {
@@ -51,7 +51,7 @@ describe("extractTrailingToken", () => {
   });
 
   it("matches an only-token message", () => {
-    expect(extractTrailingToken("[INFO-FINISHED]")).toBe("INFO-FINISHED");
+    expect(extractTrailingToken("[DONE]")).toBe("DONE");
   });
 
   it("does NOT match a token mid-message", () => {
@@ -63,24 +63,11 @@ describe("extractTrailingToken", () => {
   });
 
   it("matches a token surrounded by trailing whitespace", () => {
-    expect(extractTrailingToken("done.\n[INFO-CHECKPOINT]\n\n  \t\n")).toBe("INFO-CHECKPOINT");
+    expect(extractTrailingToken("done.\n[DONE]\n\n  \t\n")).toBe("DONE");
   });
 
-  it("matches each of the v0.5.6 vocabulary tokens", () => {
-    const vocab = [
-      "NEEDS-INPUT",
-      "NEEDS-DECISION",
-      "NEEDS-CONFIRMATION",
-      "NEEDS-CLARIFICATION",
-      "ERROR",
-      "FAILED-NO-RETRY",
-      "FAILED-WILL-RETRY",
-      "PARTIAL-FAILURE",
-      "INFO-FINISHED",
-      "INFO-CHECKPOINT",
-      "INFO-PROGRESS",
-      "INFO-WAITING",
-    ];
+  it("matches each of the v0.5.7 vocabulary tokens", () => {
+    const vocab = ["NEEDS-INPUT", "DONE"];
     for (const t of vocab) {
       expect(extractTrailingToken(`done\n[${t}]`)).toBe(t);
     }
@@ -90,8 +77,10 @@ describe("extractTrailingToken", () => {
     expect(extractTrailingToken("done.\r\n[NEEDS-INPUT]\r\n")).toBe("NEEDS-INPUT");
   });
 
-  it("matches DEBUG-style wildcards", () => {
-    expect(extractTrailingToken("trace\n[DEBUG-SQL]")).toBe("DEBUG-SQL");
+  it("matches arbitrary identifiers regardless of vocab membership", () => {
+    // The regex matches any uppercase identifier; vocab enforcement happens
+    // elsewhere (resolveSurfaceMode treats unknown tokens as silent in v0.5.7).
+    expect(extractTrailingToken("trace\n[CUSTOM-TOKEN]")).toBe("CUSTOM-TOKEN");
   });
 
   it("does NOT match a token if anything non-whitespace follows", () => {
