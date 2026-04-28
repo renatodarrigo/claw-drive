@@ -18,6 +18,7 @@ import { cmdPrune } from "./commands/prune.js";
 import { cmdWatch } from "./commands/watch.js";
 import { cmdProvideOutput } from "./commands/provide-output.js";
 import { cmdPolicyTest } from "./commands/policy-test.js";
+import { cmdStatus } from "./commands/status.js";
 
 const commands: Record<string, (argv: string[]) => Promise<number>> = {
   sessions: cmdSessions,
@@ -33,6 +34,7 @@ const commands: Record<string, (argv: string[]) => Promise<number>> = {
   interrupt: cmdInterrupt,
   policy: cmdPolicy,
   "policy-test": cmdPolicyTest,
+  status: cmdStatus,
   prune: cmdPrune,
   watch: cmdWatch,
   "provide-output": cmdProvideOutput,
@@ -89,6 +91,7 @@ Commands:
   policy <session> [--set FILE] [--show]
   policy-test '<command>' [--policy starter|permissive|bypass|<file>] [--explain|--json]
                                 Diagnose a tool call against a policy (Bash + non-Bash tools)
+  status [<session>] [--json]   Snapshot of all (or one) driven session: state, current turn, pending decisions, recent errors
   prune [--older-than 24h]
   provide-output <call_id> [--stdout S] [--stderr S] [--exit N] [--extra S] [--from-file PATH]
                                 Relay human-run command output to a deferred call
