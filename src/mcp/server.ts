@@ -147,6 +147,10 @@ async function handleStartSession(args: Record<string, unknown>) {
         timeout_ms: 3_600_000,
         persistent: true,
       };
+      // Note: notification_contract.watch_command is a string form
+      // ("<bin> watch <id>") — machine-readable for non-Monitor consumers.
+      // The top-level watch_command above is the pre-existing Monitor
+      // payload shape and is preserved for backward compatibility.
       const notification_contract = buildNotificationContract({
         watchCommand: `${selfBinAbs} watch ${sessionId}`,
         wrapperEnabled: args.wrapper !== false,
@@ -470,7 +474,11 @@ export async function runMcpServer(): Promise<void> {
       description:
         "Start a new driven Claude Code session in the given cwd. " +
         "Returns session_id + watch_command (a ready-made payload for the Monitor tool; invoke " +
-        "Monitor(watch_command) to stream only human-actionable events — approvals, deferrals, completions, errors).",
+        "Monitor(watch_command) to stream only human-actionable events — approvals, deferrals, completions, errors) " +
+        "+ notification_contract (describes the session's vocabulary, surface modes, watch flags, and idle default — " +
+        "drivers can read it instead of hardcoding to a specific claw-drive version). " +
+        "Optional `wrapper: false` opts out of the sentinel-token wrapper (B doesn't receive the system-prompt " +
+        "injection); when set, `notification_contract.wrapper_enabled` is `false`.",
       inputSchema: {
         type: "object",
         properties: {

@@ -1,11 +1,13 @@
 /**
- * Sentinel-token vocabulary, wrapper prompt, and surface-mode resolver shared
- * by the runner (which injects the wrapper into B's system prompt) and the
- * watch parser (which extracts trailing tokens from B's assistant_text).
+ * Sentinel-token vocabulary, wrapper prompt, surface-mode resolver, and
+ * notification-contract builder. Shared by the runner (which injects the
+ * wrapper into B's system prompt), the watch parser (which extracts trailing
+ * tokens from B's assistant_text), and the MCP server (which assembles the
+ * notification_contract returned from start_session).
  *
  * v0.5.7: vocabulary shrunk to two tokens ([NEEDS-INPUT], [DONE]); both
  * always-surface; DEBUG-* wildcard, three-layer override chain, and the
- * surface_tokens policy block all retired.
+ * surface_tokens policy block all retired. notification_contract added.
  */
 
 export const WRAPPER_PROMPT: string = `You are running as a driven Claude Code session inside claw-drive.
@@ -119,7 +121,7 @@ export function buildNotificationContract(args: {
     vocabulary: [...VOCAB].map((token) => ({
       token,
       semantic: VOCAB_SEMANTICS[token],
-      surface: DEFAULT_SURFACE_MODES[token] ?? "silent",
+      surface: resolveSurfaceMode(token),
     })),
     watch_command: args.watchCommand,
     watch_flags: { ...WATCH_FLAGS_DOC },

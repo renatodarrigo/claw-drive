@@ -43,6 +43,11 @@ describe("buildNotificationContract", () => {
     expect(contractTokens).toEqual(VOCAB);
   });
 
+  it("vocabulary order matches VOCAB insertion order (NEEDS-INPUT, then DONE)", () => {
+    const c = buildNotificationContract(baseArgs);
+    expect(c.vocabulary.map((v) => v.token)).toEqual(["NEEDS-INPUT", "DONE"]);
+  });
+
   it("returns the watch_command verbatim", () => {
     const c = buildNotificationContract({ ...baseArgs, watchCommand: "claw-drive watch sess_abc" });
     expect(c.watch_command).toBe("claw-drive watch sess_abc");
