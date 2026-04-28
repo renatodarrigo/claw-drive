@@ -154,6 +154,80 @@ export function tokenFilter(
 }
 
 /**
+ * Idle-timer state. Pure data — the loop owns this and updates it
+ * based on real-time events.
+ */
+export interface IdleState {
+  /** ms timestamp of the last surfaced event (or watch-start if none yet) */
+  lastSurfaceMs: number;
+  /** ms threshold; 0 means disabled */
+  thresholdMs: number;
+  /** true once session_stopped has been seen — timer is permanently off */
+  cancelled: boolean;
+}
+
+export function newIdleState(thresholdSeconds: number, nowMs: number): IdleState {
+  return {
+    lastSurfaceMs: nowMs,
+    thresholdMs: thresholdSeconds * 1000,
+    cancelled: false,
+  };
+}
+
+/**
+ * Called whenever an event was emitted to the consumer (passed all filters).
+ * Resets the silence timer.
+ */
+export function noteSurface(state: IdleState, nowMs: number): void {
+  state.lastSurfaceMs = nowMs;
+}
+
+/**
+ * Called when session_stopped is observed. Disables future idle emission.
+ */
+export function cancelIdle(state: IdleState): void {
+  state.cancelled = true;
+}
+
+/**
+ * Returns true iff an idle event should fire NOW.
+ *  - threshold > 0 (idle is enabled for this watch invocation)
+ *  - not cancelled (session is still running)
+ *  - elapsed silence ≥ threshold
+ *
+ * Called by the loop on each tick (real or synthetic). When this returns
+ * true, the caller emits an idle event and calls noteSurface to reset the
+ * timer.
+ */
+export function shouldFireIdle(state: IdleState, nowMs: number): boolean {
+  if (state.cancelled) return false;
+  if (state.thresholdMs === 0) return false;
+  return nowMs - state.lastSurfaceMs >= state.thresholdMs;
+}
+
+/**
+ * Walk the accumulated event history backwards to find the most recent
+ * `turn_started` whose `turn_id` has no matching `turn_completed` later in
+ * the array. Returns that turn_id, or null if no turn has started.
+ */
+export function deriveCurrentTurn(events: Event[]): string | null {
+  const completedTurns = new Set<string>();
+  for (const e of events) {
+    if (e.kind === "turn_completed") {
+      completedTurns.add((e as { turn_id: string }).turn_id);
+    }
+  }
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.kind === "turn_started") {
+      const id = (e as { turn_id: string }).turn_id;
+      if (!completedTurns.has(id)) return id;
+    }
+  }
+  return null;
+}
+
+/**
  * Pure argv parser for `claw-drive watch`. Extracted from `cmdWatch` so tests
  * can exercise flag combinations without spawning a subprocess.
  */
@@ -253,15 +327,22 @@ export async function cmdWatch(argv: string[]): Promise<number> {
   }
   const { sessionId: id, allowed, noTokenFilter, idleAfterSeconds } = parsed;
   let since = parsed.since;
-  // Task 4 wires idleAfterSeconds into the silence-timer state machine.
-  // Parsed/typechecked here so the seam is exercised end-to-end already.
-  void idleAfterSeconds;
 
   // tokenFilter needs to find the matching assistant_text for any
   // turn_completed event, which may have been emitted in an earlier read
   // cycle. We accumulate the full event history seen since cmdWatch started
   // so the lookup always succeeds.
   const allEvents: Event[] = [];
+
+  // Idle-event timer. Threshold of 0 disables the feature entirely;
+  // shouldFireIdle bails on threshold===0, so the timer plumbing below
+  // is a no-op in that mode.
+  const idle = newIdleState(idleAfterSeconds, Date.now());
+
+  // Synthetic events use NEGATIVE seq numbers so they never collide with
+  // the runner's positive monotonic seq from events.jsonl. v0.5.7 convention.
+  let nextSyntheticSeq = -1;
+  const syntheticSeq = (): number => nextSyntheticSeq--;
 
   // Default: stream NEW events only, BUT catch up on unresolved gates +
   // session_stopped first. This plugs a race where events emitted between
@@ -275,11 +356,32 @@ export async function cmdWatch(argv: string[]): Promise<number> {
     for (const e of catchup) {
       if (userFilter(e, allowed)) {
         process.stdout.write(JSON.stringify(e) + "\n");
+        noteSurface(idle, Date.now());
       }
-      if (e.kind === "session_stopped") stopped = true;
+      if (e.kind === "session_stopped") {
+        stopped = true;
+        cancelIdle(idle);
+      }
     }
     since = all.nextSince;
   }
+
+  // Emit a synthetic idle event if the silence threshold has elapsed, then
+  // reset the timer. Subject to userFilter so `--only` works for idle.
+  const maybeEmitIdle = (): void => {
+    if (!shouldFireIdle(idle, Date.now())) return;
+    const idleEvent = {
+      seq: syntheticSeq(),
+      at: new Date().toISOString(),
+      kind: "idle" as const,
+      silent_for_ms: idle.thresholdMs,
+      current_turn: deriveCurrentTurn(allEvents),
+    };
+    if (userFilter(idleEvent as unknown as Event, allowed)) {
+      process.stdout.write(JSON.stringify(idleEvent) + "\n");
+    }
+    noteSurface(idle, Date.now());
+  };
 
   let cursor: number = since;
   const emit = async () => {
@@ -292,10 +394,17 @@ export async function cmdWatch(argv: string[]): Promise<number> {
         tokenFilter(e, allEvents, noTokenFilter)
       ) {
         process.stdout.write(JSON.stringify(e) + "\n");
+        noteSurface(idle, Date.now());
       }
-      if (e.kind === "session_stopped") stopped = true;
+      if (e.kind === "session_stopped") {
+        stopped = true;
+        cancelIdle(idle);
+      }
     }
     cursor = nextSince;
+    // After draining a batch (real or empty), check whether silence has
+    // tripped the idle threshold.
+    maybeEmitIdle();
   };
 
   // Initial drain (only meaningful if --replay or --since < current)
@@ -311,12 +420,30 @@ export async function cmdWatch(argv: string[]): Promise<number> {
     return 1;
   }
 
+  // fs.watch only fires on file changes — but idle is precisely the
+  // absence-of-changes signal. We need an independent ticker. Pick a tick
+  // cadence that catches the threshold crossing within a small fraction
+  // (~quarter) of the threshold, capped at 5s so short thresholds (test
+  // configs, stress runs) react promptly without burning CPU on long ones.
+  const tickMs =
+    idle.thresholdMs === 0
+      ? 0
+      : Math.max(250, Math.min(5000, Math.floor(idle.thresholdMs / 4)));
+
   const done = new Promise<void>((resolve) => {
+    let ticker: ReturnType<typeof setInterval> | null = null;
+    const cleanup = () => {
+      if (ticker) {
+        clearInterval(ticker);
+        ticker = null;
+      }
+      if (watcher) watcher.close();
+    };
     const onChange = async () => {
       try {
         await emit();
         if (stopped) {
-          if (watcher) watcher.close();
+          cleanup();
           resolve();
         }
       } catch {
@@ -324,8 +451,17 @@ export async function cmdWatch(argv: string[]): Promise<number> {
       }
     };
     watcher!.on("change", onChange);
+    if (tickMs > 0) {
+      ticker = setInterval(() => {
+        try {
+          maybeEmitIdle();
+        } catch {
+          /* defensive: never let a tick crash the watcher */
+        }
+      }, tickMs);
+    }
     process.once("SIGINT", () => {
-      if (watcher) watcher.close();
+      cleanup();
       resolve();
     });
   });
