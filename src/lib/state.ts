@@ -22,6 +22,13 @@ export interface SessionState {
   turns: number;
   exit_code: number | null;
   exit_reason: string | null;
+  /**
+   * v0.5.6: when `false`, the runner spawns `claude -p` WITHOUT the
+   * `--append-system-prompt` flag — Session B never sees the sentinel-token
+   * contract. When `true` or absent, the wrapper is injected (default).
+   * Set via `start_session({ ..., wrapper: false })`.
+   */
+  wrapper?: boolean;
 }
 
 export async function readState(statePath: string): Promise<SessionState | null> {

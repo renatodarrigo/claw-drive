@@ -156,6 +156,103 @@ describe("parseWatchArgs — mutual exclusion", () => {
   });
 });
 
+describe("parseWatchArgs — --surface / --silence / --no-token-filter (v0.5.6)", () => {
+  it("--surface single token", () => {
+    const r = parseWatchArgs(["sess_abcdef0123456789", "--surface", "INFO-PROGRESS"]);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.cliSurface).toEqual(["INFO-PROGRESS"]);
+      expect(r.cliSilence).toEqual([]);
+      expect(r.noTokenFilter).toBe(false);
+    }
+  });
+
+  it("--surface multi-token CSV", () => {
+    const r = parseWatchArgs([
+      "sess_abcdef0123456789",
+      "--surface",
+      "INFO-PROGRESS,FAILED-WILL-RETRY",
+    ]);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.cliSurface).toEqual(["INFO-PROGRESS", "FAILED-WILL-RETRY"]);
+    }
+  });
+
+  it("--surface flag is repeatable (accumulates)", () => {
+    const r = parseWatchArgs([
+      "sess_abcdef0123456789",
+      "--surface",
+      "INFO-PROGRESS",
+      "--surface",
+      "FAILED-WILL-RETRY",
+    ]);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.cliSurface).toEqual(["INFO-PROGRESS", "FAILED-WILL-RETRY"]);
+    }
+  });
+
+  it("--silence single token", () => {
+    const r = parseWatchArgs(["sess_abcdef0123456789", "--silence", "INFO-CHECKPOINT"]);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.cliSilence).toEqual(["INFO-CHECKPOINT"]);
+  });
+
+  it("--surface with unknown token → error", () => {
+    const r = parseWatchArgs(["sess_abcdef0123456789", "--surface", "TYPO"]);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/TYPO|unknown token/i);
+  });
+
+  it("--surface accepts DEBUG-X tokens", () => {
+    const r = parseWatchArgs(["sess_abcdef0123456789", "--surface", "DEBUG-SQL"]);
+    expect(r.ok).toBe(true);
+  });
+
+  it("--no-token-filter sets the flag", () => {
+    const r = parseWatchArgs(["sess_abcdef0123456789", "--no-token-filter"]);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.noTokenFilter).toBe(true);
+  });
+
+  it("--no-token-filter combined with --surface → error", () => {
+    const r = parseWatchArgs([
+      "sess_abcdef0123456789",
+      "--surface",
+      "INFO-PROGRESS",
+      "--no-token-filter",
+    ]);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/--no-token-filter|--surface/);
+  });
+
+  it("--no-token-filter then --surface → error (reverse order)", () => {
+    const r = parseWatchArgs([
+      "sess_abcdef0123456789",
+      "--no-token-filter",
+      "--surface",
+      "INFO-PROGRESS",
+    ]);
+    expect(r.ok).toBe(false);
+  });
+
+  it("--surface without value → error", () => {
+    const r = parseWatchArgs(["sess_abcdef0123456789", "--surface"]);
+    expect(r.ok).toBe(false);
+  });
+
+  it("default state: no token-filter overrides", () => {
+    const r = parseWatchArgs(["sess_abcdef0123456789"]);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.cliSurface).toEqual([]);
+      expect(r.cliSilence).toEqual([]);
+      expect(r.noTokenFilter).toBe(false);
+    }
+  });
+});
+
 describe("parseWatchArgs — combinations", () => {
   it("--since 5 --decision-only", () => {
     const r = parseWatchArgs(["sess_abcdef0123456789", "--since", "5", "--decision-only"]);

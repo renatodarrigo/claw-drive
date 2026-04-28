@@ -118,6 +118,9 @@ async function handleStartSession(args: Record<string, unknown>) {
   if (typeof args.scenario_brief === "string") {
     (state as SessionState & { scenario_brief?: string }).scenario_brief = args.scenario_brief;
   }
+  if (typeof args.wrapper === "boolean") {
+    state.wrapper = args.wrapper;
+  }
   await writeState(statePath(sessionId), state);
 
   // Spawn the runner detached. The runner binary is our own dispatcher.
@@ -470,6 +473,11 @@ export async function runMcpServer(): Promise<void> {
           mcp_extra_config: { type: "object" },
           model: { type: "string" },
           decision_timeout_seconds: { type: "number" },
+          wrapper: {
+            type: "boolean",
+            description:
+              "Whether to inject the v0.5.6 sentinel-token contract wrapper into B's system prompt via --append-system-prompt. Default true. Pass false to opt out (raw v0.5.5-style behavior; watch's token filter then has nothing to anchor on, so combine with --no-token-filter).",
+          },
         },
         required: ["cwd"],
       },

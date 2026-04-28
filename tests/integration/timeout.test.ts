@@ -32,6 +32,12 @@ describe("decision timeout (integration)", () => {
       sess.cwd,
       "--policy",
       policyPath,
+      // Skip the v0.5.6 sentinel wrapper: this test verifies the timeout
+      // mechanism, not the wrapper. With wrapper active, B may interpret the
+      // contract and not call Bash for the simple "use Bash to echo hello"
+      // prompt — the wrapper's "no token = autonomous" framing competes
+      // with the prompt's "use Bash" directive in unpredictable ways.
+      "--no-wrapper",
     ]);
     const sessionId = start.stdout.trim();
 

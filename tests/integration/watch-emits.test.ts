@@ -27,8 +27,12 @@ describe("claw-drive watch (integration)", () => {
     ]);
     const sessionId = start.stdout.trim();
 
-    // Start `claw-drive watch` as a subprocess
-    const watchProc = spawn(sess.binPath, ["watch", sessionId], { env: sess.env });
+    // Start `claw-drive watch` as a subprocess. Pass --no-token-filter so the
+    // v0.5.6 sentinel filter doesn't drop turn_completed events from B's
+    // simple "reply with 'hi'" turn (no [TOKEN] appended). This test is about
+    // watch's noise filtering, not the sentinel filter — that's covered in
+    // tests/unit/watch-token-filter.test.ts.
+    const watchProc = spawn(sess.binPath, ["watch", sessionId, "--no-token-filter"], { env: sess.env });
     const lines: string[] = [];
     watchProc.stdout.on("data", (chunk: Buffer) => {
       for (const line of chunk.toString("utf-8").split("\n").filter(Boolean)) {

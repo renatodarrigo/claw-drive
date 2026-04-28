@@ -31,10 +31,12 @@ export async function cmdStart(argv: string[]): Promise<number> {
   let cwd: string | undefined;
   let policyFile: string | undefined;
   let briefFile: string | undefined;
+  let wrapper: boolean | undefined;
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--cwd") cwd = argv[++i];
     else if (argv[i] === "--policy") policyFile = argv[++i];
     else if (argv[i] === "--brief") briefFile = argv[++i];
+    else if (argv[i] === "--no-wrapper") wrapper = false;
   }
   if (!cwd) {
     console.error("--cwd required");
@@ -110,6 +112,7 @@ export async function cmdStart(argv: string[]): Promise<number> {
     exit_reason: null,
   };
   if (brief) (state as any).scenario_brief = brief;
+  if (wrapper !== undefined) state.wrapper = wrapper;
   await writeState(statePath(sessionId), state);
 
   // Resolve self bin from this source file's compiled location (dist/cli/commands/start.js)

@@ -1,6 +1,15 @@
 import * as fs from "node:fs";
-import { eventsPath, isValidSessionId } from "../../lib/paths.js";
+import { eventsPath, statePath, isValidSessionId } from "../../lib/paths.js";
 import { readEventsSince, type Event } from "../../lib/events.js";
+import { readState } from "../../lib/state.js";
+import type { Policy, PolicyObject } from "../../lib/policy.js";
+import {
+  extractTrailingToken,
+  resolveSurfaceMode,
+  VOCAB,
+  isDebugToken,
+  type CliSurfaceOverrides,
+} from "../../lib/tokens.js";
 
 /**
  * Filter predicate: true = emit (human/A needs to see this), false = drop.
@@ -108,8 +117,48 @@ export type ParsedWatchArgs =
       sessionId: string;
       since: number | "current";
       allowed: Set<string> | null;
+      cliSurface: string[];
+      cliSilence: string[];
+      noTokenFilter: boolean;
     }
   | { ok: false; error: string };
+
+/**
+ * Sentinel-aware filter — applied AFTER shouldEmit + userFilter, only for
+ * `turn_completed` events. Walks back through `events` to find the most
+ * recent `assistant_text` of the same turn, extracts the trailing
+ * `[TOKEN]`, and returns true iff the resolved surface mode (CLI > policy
+ * > default) is "always". Other event kinds bypass and always return true.
+ *
+ * If `noTokenFilter` is true, this layer is a no-op (always true).
+ */
+export function tokenFilter(
+  ev: Event,
+  events: Event[],
+  policy: Policy,
+  cli: CliSurfaceOverrides,
+  noTokenFilter: boolean
+): boolean {
+  if (noTokenFilter) return true;
+  if (ev.kind !== "turn_completed") return true;
+
+  const turnId = (ev as { turn_id: string }).turn_id;
+  let lastText: string | undefined;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.kind === "assistant_text" && (e as { turn_id?: string }).turn_id === turnId) {
+      lastText = (e as { text: string }).text;
+      break;
+    }
+  }
+  if (lastText === undefined) return false;
+
+  const token = extractTrailingToken(lastText);
+  if (token === null) return false;
+
+  const surfaceTokens = policy === "bypass" ? {} : (policy as PolicyObject).surface_tokens ?? {};
+  return resolveSurfaceMode(token, cli, surfaceTokens) === "always";
+}
 
 /**
  * Pure argv parser for `claw-drive watch`. Extracted from `cmdWatch` so tests
@@ -124,6 +173,13 @@ export function parseWatchArgs(argv: string[]): ParsedWatchArgs {
   let allowed: Set<string> | null = null;
   let decisionOnlySet = false;
   let onlySet = false;
+  const cliSurface: string[] = [];
+  const cliSilence: string[] = [];
+  let noTokenFilter = false;
+
+  function isValidToken(t: string): boolean {
+    return VOCAB.has(t) || isDebugToken(t);
+  }
 
   for (let i = 1; i < argv.length; i++) {
     const a = argv[i];
@@ -162,12 +218,53 @@ export function parseWatchArgs(argv: string[]): ParsedWatchArgs {
         }
       }
       allowed = new Set(kinds);
+    } else if (a === "--surface" || a === "--silence") {
+      if (noTokenFilter) {
+        return {
+          ok: false,
+          error: "--surface and --silence cannot be combined with --no-token-filter",
+        };
+      }
+      const csv = argv[++i];
+      if (csv === undefined) {
+        return { ok: false, error: `${a} requires a comma-separated list of tokens` };
+      }
+      const tokens = csv.split(",").map((s) => s.trim()).filter(Boolean);
+      if (tokens.length === 0) {
+        return { ok: false, error: `${a} requires at least one token` };
+      }
+      for (const t of tokens) {
+        if (!isValidToken(t)) {
+          return {
+            ok: false,
+            error: `unknown token '${t}'. valid tokens: ${[...VOCAB].join(", ")}`,
+          };
+        }
+      }
+      const target = a === "--surface" ? cliSurface : cliSilence;
+      target.push(...tokens);
+    } else if (a === "--no-token-filter") {
+      if (cliSurface.length > 0 || cliSilence.length > 0) {
+        return {
+          ok: false,
+          error: "--no-token-filter cannot be combined with --surface or --silence",
+        };
+      }
+      noTokenFilter = true;
     } else {
       return { ok: false, error: `unknown flag: ${a}` };
     }
   }
 
-  return { ok: true, sessionId: id, since, allowed };
+  return {
+    ok: true,
+    sessionId: id,
+    since,
+    allowed,
+    cliSurface,
+    cliSilence,
+    noTokenFilter,
+  };
 }
 
 export async function cmdWatch(argv: string[]): Promise<number> {
@@ -185,8 +282,26 @@ export async function cmdWatch(argv: string[]): Promise<number> {
     );
     return 2;
   }
-  const { sessionId: id, allowed } = parsed;
+  const { sessionId: id, allowed, cliSurface, cliSilence, noTokenFilter } = parsed;
   let since = parsed.since;
+  const cli: CliSurfaceOverrides = { surface: cliSurface, silence: cliSilence };
+
+  // Read the session's policy so tokenFilter can resolve surface_tokens.
+  // Failure to load the policy (e.g. orphaned session) is non-fatal — we
+  // fall back to an empty PolicyObject (built-in defaults take effect).
+  let policy: Policy = "bypass";
+  try {
+    const state = await readState(statePath(id));
+    if (state) policy = state.policy;
+  } catch {
+    /* fall through with bypass — built-in defaults apply */
+  }
+
+  // tokenFilter needs to find the matching assistant_text for any
+  // turn_completed event, which may have been emitted in an earlier read
+  // cycle. We accumulate the full event history seen since cmdWatch started
+  // so the lookup always succeeds.
+  const allEvents: Event[] = [];
 
   // Default: stream NEW events only, BUT catch up on unresolved gates +
   // session_stopped first. This plugs a race where events emitted between
@@ -195,6 +310,7 @@ export async function cmdWatch(argv: string[]): Promise<number> {
   let stopped = false;
   if (since === "current") {
     const all = await readEventsSince(eventsPath(id), 0);
+    allEvents.push(...all.events);
     const catchup = catchUpPending(all.events);
     for (const e of catchup) {
       if (userFilter(e, allowed)) {
@@ -209,7 +325,12 @@ export async function cmdWatch(argv: string[]): Promise<number> {
   const emit = async () => {
     const { events, nextSince } = await readEventsSince(eventsPath(id), cursor);
     for (const e of events) {
-      if (shouldEmit(e) && userFilter(e, allowed)) {
+      allEvents.push(e);
+      if (
+        shouldEmit(e) &&
+        userFilter(e, allowed) &&
+        tokenFilter(e, allEvents, policy, cli, noTokenFilter)
+      ) {
         process.stdout.write(JSON.stringify(e) + "\n");
       }
       if (e.kind === "session_stopped") stopped = true;

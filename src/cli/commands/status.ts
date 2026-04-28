@@ -8,6 +8,7 @@ import {
 } from "../../lib/state.js";
 import { readEventsSince, type Event } from "../../lib/events.js";
 import { policyDigest } from "../../lib/policy.js";
+import { extractTrailingToken as extractTrailingTokenShared } from "../../lib/tokens.js";
 
 export interface PendingDecisionSnapshot {
   call_id: string;
@@ -58,12 +59,9 @@ export type ParsedStatusArgs =
   | { ok: true; help: false; sessionId?: string; json: boolean }
   | { ok: false; error: string };
 
-const TRAILING_TOKEN_RE = /(?:^|\n)[ \t]*\[([A-Z*][A-Z0-9*-]*)\]\s*$/;
-
-export function extractTrailingToken(text: string): string | null {
-  const m = TRAILING_TOKEN_RE.exec(text);
-  return m ? m[1] : null;
-}
+// Shared with the runner-side wrapper system in src/lib/tokens.ts.
+// Keep this re-export for back-compat with v0.5.5's tests.
+export const extractTrailingToken = extractTrailingTokenShared;
 
 export function truncateHead(text: string, limit: number): string {
   return text.length <= limit ? text : text.slice(0, limit) + "…";

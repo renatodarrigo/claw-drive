@@ -15,6 +15,7 @@ import { appendEvent, type Event } from "../lib/events.js";
 import { policyDigest, matchPolicy, deriveRuleFromResolved, validatePolicy, type DecisionAction } from "../lib/policy.js";
 import { parseClaudeLine } from "./stream-parser.js";
 import { startSocketServer } from "./socket-server.js";
+import { buildClaudeArgs } from "./runner-args.js";
 import type { ControlRequest, ControlResponse } from "../lib/socket-protocol.js";
 
 interface DeferredCall {
@@ -473,17 +474,12 @@ export async function runRunner(sessionId: string): Promise<void> {
 
   await fs.writeFile(runnerPidPath(sessionId), String(process.pid));
 
-  const claudeArgs = [
-    "-p",
-    "--output-format=stream-json",
-    "--input-format=stream-json",
-    "--verbose",
-    "--mcp-config",
-    mcpConfigPath(sessionId),
-    "--settings",
-    settingsPath(sessionId),
-    ...(sess.model ? ["--model", sess.model] : []),
-  ];
+  const claudeArgs = buildClaudeArgs({
+    mcpConfigPath: mcpConfigPath(sessionId),
+    settingsPath: settingsPath(sessionId),
+    model: sess.model,
+    wrapper: sess.wrapper,
+  });
 
   const b = spawn("claude", claudeArgs, {
     cwd: sess.cwd,
