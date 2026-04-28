@@ -156,98 +156,17 @@ describe("parseWatchArgs — mutual exclusion", () => {
   });
 });
 
-describe("parseWatchArgs — --surface / --silence / --no-token-filter (v0.5.6)", () => {
-  it("--surface single token", () => {
-    const r = parseWatchArgs(["sess_abcdef0123456789", "--surface", "INFO-PROGRESS"]);
-    expect(r.ok).toBe(true);
-    if (r.ok) {
-      expect(r.cliSurface).toEqual(["INFO-PROGRESS"]);
-      expect(r.cliSilence).toEqual([]);
-      expect(r.noTokenFilter).toBe(false);
-    }
-  });
-
-  it("--surface multi-token CSV", () => {
-    const r = parseWatchArgs([
-      "sess_abcdef0123456789",
-      "--surface",
-      "INFO-PROGRESS,FAILED-WILL-RETRY",
-    ]);
-    expect(r.ok).toBe(true);
-    if (r.ok) {
-      expect(r.cliSurface).toEqual(["INFO-PROGRESS", "FAILED-WILL-RETRY"]);
-    }
-  });
-
-  it("--surface flag is repeatable (accumulates)", () => {
-    const r = parseWatchArgs([
-      "sess_abcdef0123456789",
-      "--surface",
-      "INFO-PROGRESS",
-      "--surface",
-      "FAILED-WILL-RETRY",
-    ]);
-    expect(r.ok).toBe(true);
-    if (r.ok) {
-      expect(r.cliSurface).toEqual(["INFO-PROGRESS", "FAILED-WILL-RETRY"]);
-    }
-  });
-
-  it("--silence single token", () => {
-    const r = parseWatchArgs(["sess_abcdef0123456789", "--silence", "INFO-CHECKPOINT"]);
-    expect(r.ok).toBe(true);
-    if (r.ok) expect(r.cliSilence).toEqual(["INFO-CHECKPOINT"]);
-  });
-
-  it("--surface with unknown token → error", () => {
-    const r = parseWatchArgs(["sess_abcdef0123456789", "--surface", "TYPO"]);
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.error).toMatch(/TYPO|unknown token/i);
-  });
-
-  it("--surface accepts DEBUG-X tokens", () => {
-    const r = parseWatchArgs(["sess_abcdef0123456789", "--surface", "DEBUG-SQL"]);
-    expect(r.ok).toBe(true);
-  });
-
+describe("parseWatchArgs — --no-token-filter (v0.5.6)", () => {
   it("--no-token-filter sets the flag", () => {
     const r = parseWatchArgs(["sess_abcdef0123456789", "--no-token-filter"]);
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.noTokenFilter).toBe(true);
   });
 
-  it("--no-token-filter combined with --surface → error", () => {
-    const r = parseWatchArgs([
-      "sess_abcdef0123456789",
-      "--surface",
-      "INFO-PROGRESS",
-      "--no-token-filter",
-    ]);
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.error).toMatch(/--no-token-filter|--surface/);
-  });
-
-  it("--no-token-filter then --surface → error (reverse order)", () => {
-    const r = parseWatchArgs([
-      "sess_abcdef0123456789",
-      "--no-token-filter",
-      "--surface",
-      "INFO-PROGRESS",
-    ]);
-    expect(r.ok).toBe(false);
-  });
-
-  it("--surface without value → error", () => {
-    const r = parseWatchArgs(["sess_abcdef0123456789", "--surface"]);
-    expect(r.ok).toBe(false);
-  });
-
-  it("default state: no token-filter overrides", () => {
+  it("default state: noTokenFilter is false", () => {
     const r = parseWatchArgs(["sess_abcdef0123456789"]);
     expect(r.ok).toBe(true);
     if (r.ok) {
-      expect(r.cliSurface).toEqual([]);
-      expect(r.cliSilence).toEqual([]);
       expect(r.noTokenFilter).toBe(false);
     }
   });
@@ -282,5 +201,56 @@ describe("parseWatchArgs — combinations", () => {
     const r = parseWatchArgs(["sess_abcdef0123456789"]);
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.allowed).toBeNull();
+  });
+});
+
+describe("--idle-after parsing", () => {
+  it("defaults idleAfterSeconds to 600 when flag absent", () => {
+    const r = parseWatchArgs(["sess_xxx"]);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.idleAfterSeconds).toBe(600);
+  });
+
+  it("parses --idle-after 300 to 300", () => {
+    const r = parseWatchArgs(["sess_xxx", "--idle-after", "300"]);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.idleAfterSeconds).toBe(300);
+  });
+
+  it("parses --idle-after 0 to disable", () => {
+    const r = parseWatchArgs(["sess_xxx", "--idle-after", "0"]);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.idleAfterSeconds).toBe(0);
+  });
+
+  it("rejects --idle-after with no value", () => {
+    const r = parseWatchArgs(["sess_xxx", "--idle-after"]);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/idle-after requires a value/i);
+  });
+
+  it("rejects --idle-after with a non-integer", () => {
+    const r = parseWatchArgs(["sess_xxx", "--idle-after", "abc"]);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/idle-after.*integer/i);
+  });
+
+  it("rejects --idle-after with a negative value", () => {
+    const r = parseWatchArgs(["sess_xxx", "--idle-after", "-5"]);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/idle-after.*non-negative/i);
+  });
+
+  it("rejects --idle-after with a fractional value", () => {
+    const r = parseWatchArgs(["sess_xxx", "--idle-after", "10.5"]);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/idle-after.*integer/i);
+  });
+});
+
+describe("idle in VALID_WATCH_KINDS", () => {
+  it("accepts 'idle' as a valid --only kind", () => {
+    const r = parseWatchArgs(["sess_xxx", "--only", "idle,turn_completed"]);
+    expect(r.ok).toBe(true);
   });
 });

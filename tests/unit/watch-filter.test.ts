@@ -179,8 +179,8 @@ describe("VALID_WATCH_KINDS", () => {
     expect(VALID_WATCH_KINDS.has("tool_call_started")).toBe(false);
   });
 
-  it("has exactly 8 entries", () => {
-    expect(VALID_WATCH_KINDS.size).toBe(8);
+  it("has exactly 9 entries", () => {
+    expect(VALID_WATCH_KINDS.size).toBe(9);
   });
 
   it("DECISION_ONLY_KINDS is a subset of VALID_WATCH_KINDS", () => {
