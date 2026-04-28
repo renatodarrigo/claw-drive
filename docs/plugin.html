@@ -59,9 +59,11 @@
       <li><code>--verbose</code> — bypass both the sentinel-token wrapper injection (B never sees the contract) and the watch-side sentinel filter (every <code>turn_completed</code> surfaces). Equivalent to <code>start_session({wrapper: false})</code> + <code>claw-drive watch &lt;id&gt; --no-token-filter</code>. Use this if you orchestrate based on raw <code>turn_completed</code> events rather than B's <code>[TOKEN]</code> signals.</li>
     </ul>
 
-    <p>The skill calls <code>start_session</code> via MCP, sends the brief as the first user turn, and starts the Monitor on the watch_command. By default, Session B receives a system-prompt wrapper teaching it to end attention-needing turns with literal <code>[TOKEN]</code> sentinels (e.g. <code>[NEEDS-INPUT]</code>, <code>[ERROR]</code>, <code>[INFO-FINISHED]</code>); Monitor surfaces <code>turn_completed</code> only when the trailing token's surface mode resolves to <code>"always"</code>. Other actionable events (decisions, failures, session stops) always fire.</p>
+    <p>The skill calls <code>start_session</code> via MCP, sends the brief as the first user turn, and starts the Monitor on the watch_command. By default, Session B receives a system-prompt wrapper teaching a tiny two-token vocabulary: end an attention-needing turn with <code>[NEEDS-INPUT]</code> on its own line when human input is required, or <code>[DONE]</code> when the task is complete. Emit nothing otherwise. Monitor surfaces <code>turn_completed</code> only when one of those two trailing tokens is present; other actionable events (decisions, failures, session stops) always fire.</p>
 
-    <p>See <a href="driving-patterns.html#sentinels">Driving patterns → Sentinel tokens</a> for the full vocabulary and override mechanics.</p>
+    <p>If no surfaced activity arrives for a stretch — long-running build, B simply stuck — <code>watch</code> emits a synthetic <code>idle</code> event. The default threshold is 600 seconds; tune via <code>claw-drive watch &lt;id&gt; --idle-after SECONDS</code> (or set <code>0</code> to disable). The skill passes the watch_command through unchanged, so this default applies out of the box.</p>
+
+    <p>See <a href="driving-patterns.html#sentinels">Driving patterns → Sentinel tokens</a> for the full token contract and watch-side flags.</p>
 
     <h3 id="resolve"><code>/claw-drive-resolve</code></h3>
     <p>Resolves a paused tool call.</p>

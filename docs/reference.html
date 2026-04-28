@@ -31,7 +31,7 @@
     <table>
       <thead><tr><th>Tool</th><th>Purpose</th></tr></thead>
       <tbody>
-        <tr><td><code>start_session</code></td><td>Start a driven session. Returns <code>{session_id, watch_command}</code>. Optional <code>wrapper: false</code> opts out of the sentinel-token contract injection (B doesn't receive the system-prompt wrapper).</td></tr>
+        <tr><td><code>start_session</code></td><td>Start a driven session. Returns <code>{session_id, watch_command, notification_contract}</code>. The <code>notification_contract</code> field describes the session's vocabulary, surface modes, watch flags, and idle default — drivers can read it instead of hardcoding to a specific claw-drive version. Optional <code>wrapper: false</code> opts out of the sentinel-token wrapper (B doesn't receive the system-prompt injection); when set, <code>notification_contract.wrapper_enabled</code> is <code>false</code>.</td></tr>
         <tr><td><code>stop_session</code></td><td>Reap B. Keeps the session dir for inspection.</td></tr>
         <tr><td><code>send_turn</code></td><td>Non-blocking send of a user turn to B. Returns <code>turn_id</code>.</td></tr>
         <tr><td><code>poll_turn</code></td><td>Fetch events and status for one turn. Supports long-poll.</td></tr>
@@ -62,7 +62,7 @@
         <tr><td><code>policy &lt;session&gt; [--set FILE] [--show]</code></td><td>View or replace a session's policy.</td></tr>
         <tr><td><code>policy-test '&lt;command&gt;' [flags]</code></td><td>Diagnose a tool call against a policy. See <a href="policies.html#testing">Policies → Testing a policy</a>.</td></tr>
         <tr><td><code>prune [--older-than 24h]</code></td><td>Remove dead sessions older than cutoff.</td></tr>
-        <tr><td><code>watch &lt;session&gt; [--since N | --replay] [--only KIND[,KIND]... | --decision-only] [--surface TOKEN[,TOKEN]...] [--silence TOKEN[,TOKEN]...] [--no-token-filter]</code></td><td>Stream noteworthy events as JSONL. Used by Monitor flows. Sentinel filter is on by default — <code>turn_completed</code> surfaces only when the trailing <code>[TOKEN]</code> resolves to surface mode <code>always</code>. <code>--surface</code> / <code>--silence</code> override per-token; <code>--no-token-filter</code> disables the sentinel layer entirely. <code>--decision-only</code> and <code>--only</code> are kind-level filters that compose with the sentinel filter. See <a href="driving-patterns.html#sentinels">Driving patterns → Sentinel tokens</a>.</td></tr>
+        <tr><td><code>watch &lt;session&gt; [--since N | --replay] [--only KIND[,KIND]... | --decision-only] [--no-token-filter] [--idle-after SECONDS]</code></td><td>Stream noteworthy events as JSONL. Used by Monitor flows. Sentinel filter is on by default — <code>turn_completed</code> surfaces only when the trailing token is <code>[NEEDS-INPUT]</code> or <code>[DONE]</code>. <code>--no-token-filter</code> disables the filter entirely. <code>--decision-only</code> and <code>--only</code> are kind-level filters that compose with the sentinel filter. <code>--idle-after SECONDS</code> emits a synthetic <code>idle</code> event after N seconds of no surfaced activity (default <code>600</code>; <code>0</code> disables). See <a href="driving-patterns.html#sentinels">Driving patterns → Sentinel tokens</a>.</td></tr>
         <tr><td><code>provide-output &lt;call_id&gt; [flags]</code></td><td>Relay human-run output to a deferred call.</td></tr>
       </tbody>
     </table>

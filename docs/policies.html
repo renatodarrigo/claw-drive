@@ -121,21 +121,6 @@ claw-drive policy-test --tool Grep --arg pattern='api_key'</code></pre>
 
     <p><code>--policy SPEC</code> selects which policy to test against. <code>SPEC</code> is one of <code>starter</code> (default), <code>permissive</code>, <code>bypass</code>, or a <code>&lt;path&gt;</code> to a custom policy JSON. <code>--exit-on reject|defer|approve|escalate</code> turns the diagnostic into a CI gate — exits 1 on match, 0 otherwise.</p>
 
-    <h2 id="surface-tokens">Sentinel surface modes</h2>
-    <p>The optional <code>surface_tokens</code> block on a policy object overrides the built-in sentinel-token surface defaults — it controls which <code>[TOKEN]</code>s in B's last <code>assistant_text</code> cause <code>claw-drive watch</code> to surface a <code>turn_completed</code> event to the driver. See <a href="driving-patterns.html#sentinels">Driving patterns → Sentinel tokens</a> for the contract that B is taught at session start.</p>
-
-    <pre><code class="language-json">{
-  "surface_tokens": {
-    "FAILED-WILL-RETRY": "always",
-    "INFO-CHECKPOINT": "silent",
-    "DEBUG-*": "always"
-  }
-}</code></pre>
-
-    <p>Keys are token names from the shipped vocabulary; values are <code>"always"</code> or <code>"silent"</code>. Tokens not listed fall back to built-in defaults. The <code>"DEBUG-*"</code> wildcard matches any <code>DEBUG-X</code> token.</p>
-
-    <p>Validation runs at <code>start_session</code> and <code>update_policy</code> boundaries — typo'd token names error loudly there, not silently later. CLI <code>--surface</code> / <code>--silence</code> flags on <code>watch</code> override this map per-invocation.</p>
-
     <h2>Timeouts</h2>
     <p>The default <code>decision_timeout_seconds</code> is <strong>3600</strong> (1 hour). If an escalation sits unresolved that long, the runner fires the rule's <code>default_action</code>:</p>
     <ul>

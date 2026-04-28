@@ -27,12 +27,11 @@ The user has invoked this skill to ask "what's happening across the driven sessi
 5. **Characterize, don't dump.** Apply this priority chain when summarizing the result back to the user:
 
    - **Pending decisions with `severity: "high"`** → flag first. Quote the `tool` + a snippet of `args_summary`, and note how long they've been waiting (`age_seconds`). These are the most urgent items.
-   - **`current_turn.last_token` ∈ `{NEEDS-INPUT, NEEDS-DECISION, NEEDS-CONFIRMATION, NEEDS-CLARIFICATION}`** → surface the session's `last_assistant_text` and frame as "Session B is waiting on you." This is the v0.5.6-forward signal — B has explicitly indicated human input is needed.
-   - **`current_turn.last_token` ∈ `{ERROR, FAILED-NO-RETRY}`** OR **`last_completed_turn.last_token` in same set** → surface as a failure that needs human action.
-   - **`current_turn.last_token === "INFO-FINISHED"`** with no current activity → "Session B reports the task is complete."
+   - **`current_turn.last_token === "NEEDS-INPUT"`** → surface the session's `last_assistant_text` and frame as "Session B is waiting on you." This is the explicit signal that human input is needed.
+   - **`current_turn.last_token === "DONE"`** with no current activity → "Session B reports the task is complete."
    - **Lower-severity pending decisions** (`medium` / `low`) → mention briefly with the same tool + args + age structure.
    - **`recent_errors` non-empty** → mention the count + the most recent error's `summary`. Don't enumerate all three unless the user asks.
-   - **All quiet** (no pending, no errors, no needs-* tokens) → "N session(s) running, nothing pending. Session B finished its last turn at <timestamp> saying: '<short snippet of last_assistant_text>'."
+   - **All quiet** (no pending, no errors, no `NEEDS-INPUT`/`DONE` token) → "N session(s) running, nothing pending. Session B finished its last turn at <timestamp> saying: '<short snippet of last_assistant_text>'."
 
 6. **Multi-session output** (no session id was passed):
    - Lead with the count and rough breakdown (`X running, Y stopped, Z orphaned`).

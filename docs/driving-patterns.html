@@ -64,35 +64,25 @@ await Monitor(watch_command);
     <p><code>watch</code> filters <code>events.jsonl</code> to only the eight kinds above — Session B's assistant prose, intermediate tool-call lifecycle events, and successful results stay out of A's stream.</p>
 
     <h3 id="sentinels">Sentinel tokens (the default)</h3>
-    <p>Session B is auto-taught a small contract at session start via <code>--append-system-prompt</code>: end your turns with a literal <code>[TOKEN]</code> on its own line if (and only if) human attention is needed. <code>watch</code> parses each <code>turn_completed</code>'s last <code>assistant_text</code> for the trailing token and surfaces the event only when the token's configured <em>surface mode</em> is <code>always</code>. No token, or a token configured <code>silent</code> → <code>turn_completed</code> is dropped (Session A doesn't get pinged).</p>
+    <p>Session B is auto-taught a tiny two-token contract at session start via <code>--append-system-prompt</code>:</p>
 
     <table>
-      <thead><tr><th>Token</th><th>Default</th><th>Meaning</th></tr></thead>
+      <thead><tr><th>Token</th><th>Meaning</th></tr></thead>
       <tbody>
-        <tr><td><code>[NEEDS-INPUT]</code></td><td>always</td><td>B needs input to proceed (a question, a missing fact).</td></tr>
-        <tr><td><code>[NEEDS-DECISION]</code></td><td>always</td><td>B wants the human to pick from options.</td></tr>
-        <tr><td><code>[NEEDS-CONFIRMATION]</code></td><td>always</td><td>About to do something risky; want explicit go-ahead.</td></tr>
-        <tr><td><code>[NEEDS-CLARIFICATION]</code></td><td>always</td><td>Brief is ambiguous; want it disambiguated.</td></tr>
-        <tr><td><code>[ERROR]</code></td><td>always</td><td>Unrecoverable. Human action needed.</td></tr>
-        <tr><td><code>[FAILED-NO-RETRY]</code></td><td>always</td><td>Retries exhausted. Human takes over.</td></tr>
-        <tr><td><code>[FAILED-WILL-RETRY]</code></td><td>silent</td><td>Failure but B has retries remaining.</td></tr>
-        <tr><td><code>[PARTIAL-FAILURE]</code></td><td>always</td><td>Mixed results; human decides next.</td></tr>
-        <tr><td><code>[INFO-FINISHED]</code></td><td>always</td><td>Task complete. Terminal.</td></tr>
-        <tr><td><code>[INFO-CHECKPOINT]</code></td><td>always</td><td>Milestone hit; B is continuing.</td></tr>
-        <tr><td><code>[INFO-PROGRESS]</code></td><td>silent</td><td>Quiet progress beat.</td></tr>
-        <tr><td><code>[INFO-WAITING]</code></td><td>silent</td><td>Paused on an external thing (long build, async API).</td></tr>
-        <tr><td><code>[DEBUG-*]</code></td><td>silent</td><td>Wildcard for development logs.</td></tr>
+        <tr><td><code>[NEEDS-INPUT]</code></td><td>The human is needed — a question, a decision, a missing fact, an unrecoverable failure. End the turn with this token on its own line.</td></tr>
+        <tr><td><code>[DONE]</code></td><td>The task in the brief is complete. End the turn with this token on its own line.</td></tr>
       </tbody>
     </table>
 
-    <p>Override per-policy via the <code>surface_tokens</code> block (see <a href="policies.html#surface-tokens">Policies → Sentinel surface modes</a>) or per-watch-invocation via flags:</p>
+    <p>The contract for B is exactly that: emit <code>[NEEDS-INPUT]</code> when the human is needed; <code>[DONE]</code> when the task is complete; nothing otherwise. Quiet progress, retries-in-progress, intermediate milestones — no token. Drivers shouldn't have to reason about a vocabulary of marker types; the only signal that matters is "does this turn need human attention or not."</p>
 
-    <pre><code class="language-bash">claw-drive watch &lt;id&gt; --surface FAILED-WILL-RETRY,INFO-PROGRESS --silence INFO-CHECKPOINT</code></pre>
+    <p><code>watch</code> reads the trailing token from each <code>turn_completed</code>'s last <code>assistant_text</code> and surfaces the event only when it matches one of the two. No token, or anything else → <code>turn_completed</code> is dropped (Session A doesn't get pinged). To bypass the sentinel filter entirely (raw stream including every <code>turn_completed</code>), pass <code>--no-token-filter</code>. To bypass the wrapper injection on the runner side, pass <code>wrapper: false</code> to <code>start_session</code>; pair with <code>--no-token-filter</code> on watch since there's no sentinel to anchor on.</p>
 
-    <p>CLI overrides win over policy, which wins over built-in defaults. To bypass the sentinel filter entirely (raw stream including every <code>turn_completed</code>), pass <code>--no-token-filter</code> — mutually exclusive with <code>--surface</code> and <code>--silence</code>. To bypass the wrapper injection on the runner side, pass <code>wrapper: false</code> to <code>start_session</code>; pair with <code>--no-token-filter</code> on watch since there's no sentinel to anchor on.</p>
+    <h3 id="idle">Idle events</h3>
+    <p>If no surfaced event arrives for a configurable stretch, <code>watch</code> emits a synthetic <code>idle</code> event so the driver can break out of an indefinite wait. Default 600 seconds; tune via <code>--idle-after SECONDS</code> on the watch invocation (set to <code>0</code> to disable). Useful when B is genuinely working — a long build, a slow tool — but the driver still wants a heartbeat to decide whether to interrupt.</p>
 
     <h3 id="watch-filter">Narrowing further: <code>--only</code> and <code>--decision-only</code></h3>
-    <p>Even tighter than the sentinel filter, <code>--only KIND[,KIND]...</code> restricts the <em>kind universe</em> to a subset. Mutually exclusive with <code>--decision-only</code> (which is shorthand for the six historically-human-attention kinds). These compose with the sentinel filter — they restrict which kinds watch considers; the sentinel filter restricts which <code>turn_completed</code>s surface among them.</p>
+    <p>Even tighter than the sentinel filter, <code>--only KIND[,KIND]...</code> restricts the <em>kind universe</em> to a subset. Mutually exclusive with <code>--decision-only</code> (which is shorthand for the historically-human-attention kinds). These compose with the sentinel filter — they restrict which kinds watch considers; the sentinel filter restricts which <code>turn_completed</code>s surface among them.</p>
 
     <pre><code class="language-bash"># Specify exactly which kinds to keep — sentinel filter still applies on top.
 claw-drive watch &lt;id&gt; --only tool_decision_required,turn_failed,session_stopped</code></pre>
