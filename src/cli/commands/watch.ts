@@ -214,7 +214,7 @@ export function parseWatchArgs(argv: string[]): ParsedWatchArgs {
         return { ok: false, error: "--idle-after requires a value (non-negative integer seconds; 0 disables)" };
       }
       if (!/^\d+$/.test(v)) {
-        return { ok: false, error: `--idle-after requires a non-negative integer (got '${v}')` };
+        return { ok: false, error: `--idle-after requires a non-negative integer seconds; 0 disables (got '${v}')` };
       }
       idleAfterSeconds = Number(v);
     } else {
@@ -253,6 +253,8 @@ export async function cmdWatch(argv: string[]): Promise<number> {
   }
   const { sessionId: id, allowed, noTokenFilter, idleAfterSeconds } = parsed;
   let since = parsed.since;
+  // Task 4 wires idleAfterSeconds into the silence-timer state machine.
+  // Parsed/typechecked here so the seam is exercised end-to-end already.
   void idleAfterSeconds;
 
   // tokenFilter needs to find the matching assistant_text for any
