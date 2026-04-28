@@ -63,18 +63,41 @@ await Monitor(watch_command);
 
     <p><code>watch</code> filters <code>events.jsonl</code> to only the eight kinds above — Session B's assistant prose, intermediate tool-call lifecycle events, and successful results stay out of A's stream.</p>
 
+    <h3 id="sentinels">Sentinel tokens (the default)</h3>
+    <p>Session B is auto-taught a small contract at session start via <code>--append-system-prompt</code>: end your turns with a literal <code>[TOKEN]</code> on its own line if (and only if) human attention is needed. <code>watch</code> parses each <code>turn_completed</code>'s last <code>assistant_text</code> for the trailing token and surfaces the event only when the token's configured <em>surface mode</em> is <code>always</code>. No token, or a token configured <code>silent</code> → <code>turn_completed</code> is dropped (Session A doesn't get pinged).</p>
+
+    <table>
+      <thead><tr><th>Token</th><th>Default</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>[NEEDS-INPUT]</code></td><td>always</td><td>B needs input to proceed (a question, a missing fact).</td></tr>
+        <tr><td><code>[NEEDS-DECISION]</code></td><td>always</td><td>B wants the human to pick from options.</td></tr>
+        <tr><td><code>[NEEDS-CONFIRMATION]</code></td><td>always</td><td>About to do something risky; want explicit go-ahead.</td></tr>
+        <tr><td><code>[NEEDS-CLARIFICATION]</code></td><td>always</td><td>Brief is ambiguous; want it disambiguated.</td></tr>
+        <tr><td><code>[ERROR]</code></td><td>always</td><td>Unrecoverable. Human action needed.</td></tr>
+        <tr><td><code>[FAILED-NO-RETRY]</code></td><td>always</td><td>Retries exhausted. Human takes over.</td></tr>
+        <tr><td><code>[FAILED-WILL-RETRY]</code></td><td>silent</td><td>Failure but B has retries remaining.</td></tr>
+        <tr><td><code>[PARTIAL-FAILURE]</code></td><td>always</td><td>Mixed results; human decides next.</td></tr>
+        <tr><td><code>[INFO-FINISHED]</code></td><td>always</td><td>Task complete. Terminal.</td></tr>
+        <tr><td><code>[INFO-CHECKPOINT]</code></td><td>always</td><td>Milestone hit; B is continuing.</td></tr>
+        <tr><td><code>[INFO-PROGRESS]</code></td><td>silent</td><td>Quiet progress beat.</td></tr>
+        <tr><td><code>[INFO-WAITING]</code></td><td>silent</td><td>Paused on an external thing (long build, async API).</td></tr>
+        <tr><td><code>[DEBUG-*]</code></td><td>silent</td><td>Wildcard for development logs.</td></tr>
+      </tbody>
+    </table>
+
+    <p>Override per-policy via the <code>surface_tokens</code> block (see <a href="policies.html#surface-tokens">Policies → Sentinel surface modes</a>) or per-watch-invocation via flags:</p>
+
+    <pre><code class="language-bash">claw-drive watch &lt;id&gt; --surface FAILED-WILL-RETRY,INFO-PROGRESS --silence INFO-CHECKPOINT</code></pre>
+
+    <p>CLI overrides win over policy, which wins over built-in defaults. To bypass the sentinel filter entirely (raw stream including every <code>turn_completed</code>), pass <code>--no-token-filter</code> — mutually exclusive with <code>--surface</code> and <code>--silence</code>. To bypass the wrapper injection on the runner side, pass <code>wrapper: false</code> to <code>start_session</code>; pair with <code>--no-token-filter</code> on watch since there's no sentinel to anchor on.</p>
+
     <h3 id="watch-filter">Narrowing further: <code>--only</code> and <code>--decision-only</code></h3>
-    <p>Two of the eight kinds — <code>turn_completed</code> (progress) and <code>tool_output_provided</code> (confirmation that human-supplied output was relayed) — are noise from a human-driver perspective: the human chooses when to send the next turn, and they just provided the output themselves. Two flags on <code>watch</code> drop them:</p>
+    <p>Even tighter than the sentinel filter, <code>--only KIND[,KIND]...</code> restricts the <em>kind universe</em> to a subset. Mutually exclusive with <code>--decision-only</code> (which is shorthand for the six historically-human-attention kinds). These compose with the sentinel filter — they restrict which kinds watch considers; the sentinel filter restricts which <code>turn_completed</code>s surface among them.</p>
 
-    <pre><code class="language-bash"># Drop the two info-only kinds — keep only the six human-attention kinds.
-claw-drive watch &lt;id&gt; --decision-only
-
-# Or specify exactly which kinds to keep.
+    <pre><code class="language-bash"># Specify exactly which kinds to keep — sentinel filter still applies on top.
 claw-drive watch &lt;id&gt; --only tool_decision_required,turn_failed,session_stopped</code></pre>
 
-    <p>Both compose with the eight-kind ceiling — <code>--only</code> can never widen the stream past what <code>watch</code> already passes. Mutually exclusive; unknown kinds in <code>--only</code> exit with an error listing the valid ones.</p>
-
-    <p>The <code>/claw-drive-start</code> plugin skill defaults to <code>--decision-only</code> (the human-driver case). Drivers consuming <code>watch_command</code> directly without the skill get the wider eight-kind stream by default, so orchestration logic that branches on <code>turn_completed</code> keeps working.</p>
+    <p>The <code>/claw-drive-start</code> plugin skill defaults to the sentinel-aware behavior. Pass <code>--verbose</code> to bypass both the wrapper injection and the sentinel filter — full raw event stream.</p>
 
     <h2 id="defer-round-trip">Defer round-trip</h2>
     <p>Some commands can't run inside B — <code>sudo</code>, interactive logins, anything that needs auth, a TTY, or a secret. For these, use <code>auto_defer</code>:</p>
@@ -126,7 +149,7 @@ claw-drive watch &lt;id&gt; --replay
     <a href="https://ko-fi.com/renatodarrigo" target="_blank" rel="noopener noreferrer" class="btn btn-ghost"><svg width="14" height="14" viewBox="0 0 14 14" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" style="vertical-align:-2px;margin-right:6px"><path d="M2 5h8v5a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2z" fill="none" stroke="currentColor" stroke-width="1" stroke-linejoin="round"/><path d="M10 7h2a1.5 1.5 0 0 1 0 3h-2" fill="none" stroke="currentColor" stroke-width="1"/><path d="M4 1v2M6.5 1v2M9 1v2" stroke="currentColor" stroke-width="1" stroke-linecap="round"/></svg>Support on Ko-fi</a>
   </aside>
   <footer>
-    <p class="muted">claw-drive v0.5.5 · MIT · <a href="https://github.com/renatodarrigo/claw-drive">github.com/renatodarrigo/claw-drive</a> · © <span data-year></span></p>
+    <p class="muted">claw-drive v0.5.6 · MIT · <a href="https://github.com/renatodarrigo/claw-drive">github.com/renatodarrigo/claw-drive</a> · © <span data-year></span></p>
   </footer>
   <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-core.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>

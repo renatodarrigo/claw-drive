@@ -56,12 +56,12 @@
       <li><code>&lt;cwd&gt;</code> — absolute or <code>~</code>-relative path to a project. Must exist and not equal the parent session's cwd.</li>
       <li><code>--brief &lt;file&gt;</code> — scenario brief. If omitted, the skill asks for one inline.</li>
       <li><code>--policy &lt;file&gt;</code> — policy JSON. If omitted, claw-drive uses the conservative starter.</li>
-      <li><code>--verbose</code> — receive the wider Monitor stream that also includes <code>turn_completed</code> and <code>tool_output_provided</code>. Without this flag, the skill appends <code>--decision-only</code> to the watch_command so Monitor only surfaces the six human-attention kinds (decision-required, timeout-resolved, turn_failed, error, session_stopped, error tool_call_result).</li>
+      <li><code>--verbose</code> — bypass both the sentinel-token wrapper injection (B never sees the contract) and the watch-side sentinel filter (every <code>turn_completed</code> surfaces). Equivalent to <code>start_session({wrapper: false})</code> + <code>claw-drive watch &lt;id&gt; --no-token-filter</code>. Use this if you orchestrate based on raw <code>turn_completed</code> events rather than B's <code>[TOKEN]</code> signals.</li>
     </ul>
 
-    <p>The skill calls <code>start_session</code> via MCP, sends the brief as the first user turn, and starts the Monitor on the (possibly modified) <code>watch_command</code>. By default, only decision-required notifications and failures appear in your driver session — <code>tool_decision_required</code> events become approval prompts, the rest exists to surface trouble. Pass <code>--verbose</code> if you orchestrate based on <code>turn_completed</code>.</p>
+    <p>The skill calls <code>start_session</code> via MCP, sends the brief as the first user turn, and starts the Monitor on the watch_command. By default, Session B receives a system-prompt wrapper teaching it to end attention-needing turns with literal <code>[TOKEN]</code> sentinels (e.g. <code>[NEEDS-INPUT]</code>, <code>[ERROR]</code>, <code>[INFO-FINISHED]</code>); Monitor surfaces <code>turn_completed</code> only when the trailing token's surface mode resolves to <code>"always"</code>. Other actionable events (decisions, failures, session stops) always fire.</p>
 
-    <p>See <a href="driving-patterns.html#monitor-watch">Driving patterns → Monitor + watch</a> for the full event flow and filter options.</p>
+    <p>See <a href="driving-patterns.html#sentinels">Driving patterns → Sentinel tokens</a> for the full vocabulary and override mechanics.</p>
 
     <h3 id="resolve"><code>/claw-drive-resolve</code></h3>
     <p>Resolves a paused tool call.</p>
@@ -85,14 +85,14 @@
       <li>Auto-register the MCP server in every project. Run <code>/claw-drive-init</code> per project (idempotent).</li>
     </ul>
 
-    <p>Plugin version tracks the CLI version: v0.5.5 plugin works with v0.5.x CLI.</p>
+    <p>Plugin version tracks the CLI version: v0.5.6 plugin works with v0.5.x CLI.</p>
   </main>
   <aside class="donate">
     <p>If claw-drive is useful to you, help me buy my first house.</p>
     <a href="https://ko-fi.com/renatodarrigo" target="_blank" rel="noopener noreferrer" class="btn btn-ghost"><svg width="14" height="14" viewBox="0 0 14 14" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" style="vertical-align:-2px;margin-right:6px"><path d="M2 5h8v5a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2z" fill="none" stroke="currentColor" stroke-width="1" stroke-linejoin="round"/><path d="M10 7h2a1.5 1.5 0 0 1 0 3h-2" fill="none" stroke="currentColor" stroke-width="1"/><path d="M4 1v2M6.5 1v2M9 1v2" stroke="currentColor" stroke-width="1" stroke-linecap="round"/></svg>Support on Ko-fi</a>
   </aside>
   <footer>
-    <p class="muted">claw-drive v0.5.5 · MIT · <a href="https://github.com/renatodarrigo/claw-drive">github.com/renatodarrigo/claw-drive</a> · © <span data-year></span></p>
+    <p class="muted">claw-drive v0.5.6 · MIT · <a href="https://github.com/renatodarrigo/claw-drive">github.com/renatodarrigo/claw-drive</a> · © <span data-year></span></p>
   </footer>
   <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-core.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>

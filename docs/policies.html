@@ -121,6 +121,21 @@ claw-drive policy-test --tool Grep --arg pattern='api_key'</code></pre>
 
     <p><code>--policy SPEC</code> selects which policy to test against. <code>SPEC</code> is one of <code>starter</code> (default), <code>permissive</code>, <code>bypass</code>, or a <code>&lt;path&gt;</code> to a custom policy JSON. <code>--exit-on reject|defer|approve|escalate</code> turns the diagnostic into a CI gate — exits 1 on match, 0 otherwise.</p>
 
+    <h2 id="surface-tokens">Sentinel surface modes</h2>
+    <p>The optional <code>surface_tokens</code> block on a policy object overrides the built-in sentinel-token surface defaults — it controls which <code>[TOKEN]</code>s in B's last <code>assistant_text</code> cause <code>claw-drive watch</code> to surface a <code>turn_completed</code> event to the driver. See <a href="driving-patterns.html#sentinels">Driving patterns → Sentinel tokens</a> for the contract that B is taught at session start.</p>
+
+    <pre><code class="language-json">{
+  "surface_tokens": {
+    "FAILED-WILL-RETRY": "always",
+    "INFO-CHECKPOINT": "silent",
+    "DEBUG-*": "always"
+  }
+}</code></pre>
+
+    <p>Keys are token names from the shipped vocabulary; values are <code>"always"</code> or <code>"silent"</code>. Tokens not listed fall back to built-in defaults. The <code>"DEBUG-*"</code> wildcard matches any <code>DEBUG-X</code> token.</p>
+
+    <p>Validation runs at <code>start_session</code> and <code>update_policy</code> boundaries — typo'd token names error loudly there, not silently later. CLI <code>--surface</code> / <code>--silence</code> flags on <code>watch</code> override this map per-invocation.</p>
+
     <h2>Timeouts</h2>
     <p>The default <code>decision_timeout_seconds</code> is <strong>3600</strong> (1 hour). If an escalation sits unresolved that long, the runner fires the rule's <code>default_action</code>:</p>
     <ul>
@@ -140,7 +155,7 @@ claw-drive policy-test --tool Grep --arg pattern='api_key'</code></pre>
     <a href="https://ko-fi.com/renatodarrigo" target="_blank" rel="noopener noreferrer" class="btn btn-ghost"><svg width="14" height="14" viewBox="0 0 14 14" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" style="vertical-align:-2px;margin-right:6px"><path d="M2 5h8v5a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2z" fill="none" stroke="currentColor" stroke-width="1" stroke-linejoin="round"/><path d="M10 7h2a1.5 1.5 0 0 1 0 3h-2" fill="none" stroke="currentColor" stroke-width="1"/><path d="M4 1v2M6.5 1v2M9 1v2" stroke="currentColor" stroke-width="1" stroke-linecap="round"/></svg>Support on Ko-fi</a>
   </aside>
   <footer>
-    <p class="muted">claw-drive v0.5.5 · MIT · <a href="https://github.com/renatodarrigo/claw-drive">github.com/renatodarrigo/claw-drive</a> · © <span data-year></span></p>
+    <p class="muted">claw-drive v0.5.6 · MIT · <a href="https://github.com/renatodarrigo/claw-drive">github.com/renatodarrigo/claw-drive</a> · © <span data-year></span></p>
   </footer>
   <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-core.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
