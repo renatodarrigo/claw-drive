@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.5.5] — 2026-04-27
+
+### Added
+
+- **`claw-drive status [<session-id>] [--json]`** — new CLI subcommand that aggregates per-session state into a single snapshot. Reads `state.json` + `events.jsonl` for each session and assembles: status (running/orphaned/stopped), cwd, policy label/digest, runner pid, turn count, current turn metadata (id, started_at, last assistant text, extracted trailing token), last completed turn metadata (id, completed_at, stop_reason, last assistant text, extracted token), pending decisions (call_id, tool, args summary, severity, default action, age in seconds — chronological, oldest first), and recent errors (turn_failed / error / is-error tool_call_result, capped at 3, most-recent-first).
+- **Two-mode default-human output:**
+  - **No session id** → summary table (`SESSION_ID  STATUS  TURNS  PENDING  ERRORS  LAST_ACTIVITY  CWD`), one row per session.
+  - **With session id** → labeled multi-line block with all sections (current turn, last completed turn, pending decisions, recent errors). Empty sections are omitted.
+- **`--json` flag** for machine output. Single-session form is a bare object; all-sessions form is `{ "sessions": [...] }`. Schema mirrors the human render's data layout.
+- **Forward-compatible `last_token` field** on every turn block. Extracts a trailing `[TOKEN]` sentinel from the *full* (untruncated) `assistant_text` body via a regex matching the v0.5.6 wrapper-system contract: `(?:^|\n)[ \t]*\[([A-Z*][A-Z0-9*-]*)\]\s*$`. Returns `null` when absent. v0.5.5 ships without the wrapper itself, so the field is `null` until v0.5.6 lands and `start_session` starts injecting the contract — at which point status output starts surfacing the tokens with no schema change.
+- **Head truncation** of long assistant_text (1000 chars) and error summaries (200 chars) to keep response bounded. Token extraction runs *before* truncation, so the trailing sentinel is preserved in `last_token` even when the body is cut.
+- **New plugin skill `/claw-drive-status [<session-id>]`** (at `plugin/skills/claw-drive-status/SKILL.md`). Calls `claw-drive status [--json]`, parses the result, and *characterizes* what's happening rather than dumping raw JSON. Surfaces high-severity pending decisions first, then NEEDS-* / ERROR / FAILED-NO-RETRY tokens, then recent errors. Multi-session output groups quiet sessions as a count; single-session output leads with `last_assistant_text` so the user can see what B is "saying right now."
+- **47 new unit tests** in `tests/unit/status.test.ts` covering token extraction (12 cases including the v0.5.6 vocabulary, CRLF, mid-string non-matches), head truncation (3 cases), snapshot assembler (~14 — orphan detection, current/last-completed turn detection, pending decisions ordering and resolved filtering, age_seconds calculation, args summary across Bash + Edit, recent errors capped at 3 most-recent-first), renderers (~9 cases for summary table / detailed block / JSON), and argv parsing (~7 cases).
+
+### Notes
+
+- No code changes to `src/lib/policy.ts`, `src/lib/events.ts`, `src/lib/state.ts`, or any runner/MCP-side code. Pure file-system reader on top of existing per-session artifacts.
+- No socket-protocol, event-schema, or template change. Backwards-compatible with v0.5.x running sessions.
+- Plugin manifest + marketplace catalog version bumped in lockstep across the same 12 files as v0.5.4.
+- The TRAILING_TOKEN_RE regex in this release is the contract the future v0.5.6 wrapper system will adhere to — both sides matching byte-for-byte ensures the sentinel that lands in `assistant_text` and the one extracted into `last_token` agree.
+- 391/391 tests passing (was 344; +47).
+
+### Out of scope (for future)
+
+- `claw-drive status --watch` streaming refresh. Snapshot-on-demand only in v0.5.5.
+- Filter / sort / search flags on the summary table. Add when there's observed need.
+- An MCP-tool exposure of the status snapshot. CLI is sufficient for the observed pain.
+- The v0.5.6 sentinel wrapper itself (designed at `.superpowers/specs/2026-04-27-v0.5.6-sentinel-wrapper-draft.md`, not implemented here).
+
 ## [0.5.4] — 2026-04-27
 
 ### Added
