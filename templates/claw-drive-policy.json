@@ -1,4 +1,5 @@
 {
+  "_comment": "Starting-point dogfood policy shipped with claw-drive. Tighten or loosen as you learn what a driven session actually does. Rules are evaluated in order: auto_reject > auto_defer > auto_approve > escalate_default. Underscore-prefixed keys (this _comment, _version, etc.) are ignored by the validator and safe to add for inline metadata.",
   "auto_approve": [
     { "tool": "Read" },
     { "tool": "Glob" },

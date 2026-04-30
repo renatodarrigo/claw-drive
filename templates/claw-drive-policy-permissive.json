@@ -1,4 +1,5 @@
 {
+  "_comment": "Permissive dogfood policy variant — adds wider auto_approve rules for compound scripts (set -e, cd, VAR=, source, etc. wrapping a safe payload) so multi-step driver workflows don't hit excessive escalation gates. Same auto_reject and auto_defer guardrails as the starter template. Underscore-prefixed keys (this _comment, _version, etc.) are ignored by the validator and safe to add for inline metadata.",
   "auto_approve": [
     { "tool": "Read" },
     { "tool": "Glob" },
