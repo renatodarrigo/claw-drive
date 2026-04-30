@@ -649,3 +649,34 @@ describe("v0.5.7 — surface_tokens removed", () => {
     }
   });
 });
+
+describe("v0.5.8 — underscore-prefix tolerance", () => {
+  it("accepts a policy with a _comment field", () => {
+    const result = validatePolicy({
+      _comment: "starter dogfood policy",
+      auto_approve: [],
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it("accepts a policy with multiple underscore-prefixed metadata keys", () => {
+    const result = validatePolicy({
+      _comment: "doc",
+      _version: "1",
+      _author: "team",
+      auto_approve: [],
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it("still rejects non-underscore unknown keys (regression for v0.5.7 surface_tokens guard)", () => {
+    const result = validatePolicy({
+      _comment: "fine",
+      surface_tokens: { "NEEDS-INPUT": "always" },
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toMatch(/unknown key.*surface_tokens/i);
+    }
+  });
+});

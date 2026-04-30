@@ -154,6 +154,7 @@ export function validatePolicy(p: unknown): { ok: true } | { ok: false; error: s
     "decision_timeout_seconds",
   ]);
   for (const key of Object.keys(obj)) {
+    if (key.startsWith("_")) continue; // metadata comment; ignored by validator
     if (!allowedKeys.has(key)) return { ok: false, error: `unknown key '${key}'` };
   }
   for (const listKey of ["auto_approve", "auto_defer", "auto_reject"] as const) {
