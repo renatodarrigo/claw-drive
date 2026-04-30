@@ -75,8 +75,19 @@ req=$(printf '{"id":"%s","op":"approve_tool","pretooluse":%s}' "$req_id" "$paylo
 
 # 595s timeout keeps us under claude's 600s hook ceiling (fail-secure).
 # On timeout, the `timeout` command kills nc and returns 124.
-resp=$(printf '%s\n' "$req" | timeout 595 $NC "$SOCKET" 2>/dev/null | head -n1) || {
-  jq -nc --arg r "approver: runner unreachable or timed out (socket: $SOCKET)" \
+APPROVER_TIMEOUT=595
+SPLIT_THRESHOLD_S=5
+
+start_ns=$(date +%s%N)
+resp=$(printf '%s\n' "$req" | timeout "$APPROVER_TIMEOUT" $NC "$SOCKET" 2>/dev/null | head -n1) || {
+  end_ns=$(date +%s%N)
+  elapsed_s=$(( (end_ns - start_ns) / 1000000000 ))
+  if (( elapsed_s < SPLIT_THRESHOLD_S )); then
+    msg="approver: runner unreachable (socket: $SOCKET) — runner may have crashed; check 'claw-drive sessions'"
+  else
+    msg="approver: gate unresolved within ${APPROVER_TIMEOUT}s — fail-secure deny (the human did not resolve in time)"
+  fi
+  jq -nc --arg r "$msg" \
     '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}'
   exit 2
 }
