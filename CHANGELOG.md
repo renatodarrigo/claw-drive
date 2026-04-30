@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.5.8] — 2026-04-29
+
+### Changed
+
+- **`validatePolicy` accepts underscore-prefixed top-level keys.** The shipped templates now lead with a `_comment` doc-string explaining the policy's purpose; round-trips cleanly through `start_session` and `update_policy`. Standard JSON-comment convention (any `/^_/` key is treated as metadata and ignored by the validator). Non-underscore unknown keys still reject — the v0.5.7 `surface_tokens` migration guard remains intact.
+- **Approver hook splits its failure error into two specific messages** based on elapsed time. Sub-5-second failures emit `approver: runner unreachable (socket: ...) — runner may have crashed; check 'claw-drive sessions'`. Full-timeout failures emit `approver: gate unresolved within 595s — fail-secure deny (the human did not resolve in time)`. The previous `approver: runner unreachable or timed out` message conflated both conditions.
+
+### Added
+
+- `_comment` doc-string in both shipped policy templates (`templates/claw-drive-policy.json`, `templates/claw-drive-policy-permissive.json`), demonstrating the new underscore-prefix support and giving users a starter inline doc.
+
+### Notes
+
+- **Underscore-prefix convention is permissive.** Any `_`-prefixed top-level key is silently ignored by `validatePolicy`, including typos like `_auto_approve` (so be aware that misspellings of real schema keys won't be flagged). This matches the standard JSON-comment convention.
+
+### Migration
+
+- None. Both changes are additive/clarifying. v0.5.7 consumers see no behavior change.
+
+### Tests
+
+- +3 unit tests for the validator's underscore-prefix tolerance + `surface_tokens` regression guard. Total: 466 unit + 8 integration.
+
 ## [0.5.7] — 2026-04-28
 
 ### Changed (breaking)

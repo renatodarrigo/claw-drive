@@ -75,6 +75,8 @@ req=$(printf '{"id":"%s","op":"approve_tool","pretooluse":%s}' "$req_id" "$paylo
 
 # 595s timeout keeps us under claude's 600s hook ceiling (fail-secure).
 # On timeout, the `timeout` command kills nc and returns 124.
+# We classify the failure by elapsed time rather than exit code: nc
+# connect-failures complete in milliseconds; full-timeout kills happen at ~$APPROVER_TIMEOUT s.
 APPROVER_TIMEOUT=595
 SPLIT_THRESHOLD_S=5
 
