@@ -13,7 +13,8 @@
     { "tool": "Bash", "bash_command_matches": "^(rg|sed -n|awk|jq|diff|cmp|column)\\s", "name": "common read/inspect CLIs" },
     { "tool": "Bash", "bash_command_matches": "^(mkdir -p|touch|cp(?!\\s+(-[^-\\s]*[rRa]|--recursive|--archive))|mv)(\\s|$)", "name": "common non-destructive file ops — cp recursive forms (-r, -R, -a, -pR, --recursive, --archive) still escalate" },
     { "tool": "Bash", "bash_command_matches": "^git (fetch|pull --ff-only|rebase --abort|rebase --continue|rebase --skip|cherry-pick --abort|merge --abort)(\\s|$)", "name": "common safe git ops" },
-    { "tool": "Bash", "bash_command_matches": "^(which|type|printenv|basename|dirname|realpath|readlink)(\\s|$)", "name": "common path/env introspection (env intentionally excluded — it execs its argv)" }
+    { "tool": "Bash", "bash_command_matches": "^(which|type|printenv|basename|dirname|realpath|readlink)(\\s|$)", "name": "common path/env introspection (env intentionally excluded — it execs its argv)" },
+    { "tool": "Bash", "bash_command_matches": "^#", "name": "comment-prefixed line — destructive lines anywhere in the script still caught by auto_reject" }
   ],
 
   "auto_defer": [

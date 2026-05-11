@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **`auto_approve` rule for comment-prefixed lines** in `templates/claw-drive-policy-permissive.json`. Reviewer/driver prompts commonly emit `# rationale\ncommand` blocks; the previously-anchored `^cloverleaf-cli `, `^(set -e|cd ...)` rules didn't match comment lines, causing escalation noise. New rule `{ "tool": "Bash", "bash_command_matches": "^#" }` covers them. Destructive lines anywhere in the script remain blocked by `auto_reject` (which has higher precedence than `auto_approve`). Surfaced by claw-crypto dogfood (commit 27fed00).
+
+### Tests
+
+- +2 regression tests in `policy.test.ts`: comment-then-safe → `approve_silent`; comment-then-destructive → `escalate` with `reject` default. Total: 468 unit + 8 integration.
+
 ## [0.5.8] — 2026-04-29
 
 ### Changed
