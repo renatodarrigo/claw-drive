@@ -705,3 +705,134 @@ describe("v0.5.8 — underscore-prefix tolerance", () => {
     }
   });
 });
+
+describe("v0.5.9 — privilege-boundary defense", () => {
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = nodePath.dirname(__filename);
+  const starter: Policy = JSON.parse(
+    fsSync.readFileSync(nodePath.resolve(__dirname, "..", "..", "templates", "claw-drive-policy.json"), "utf-8")
+  );
+  const permissive: Policy = JSON.parse(
+    fsSync.readFileSync(nodePath.resolve(__dirname, "..", "..", "templates", "claw-drive-policy-permissive.json"), "utf-8")
+  );
+  const templates: Array<[string, Policy]> = [
+    ["starter", starter],
+    ["permissive", permissive],
+  ];
+
+  // -- Edit/Write against policy file ---------------------------------------
+  const policyFilePaths: string[] = [
+    ".cloverleaf/claw-drive-policy.json",
+    "/etc/claw-drive-policy-prod.json",
+    "/home/ren/projects/foo/.cloverleaf/claw-drive-policy-permissive.json",
+    "templates/claw-drive-policy.json",
+  ];
+
+  for (const [tplName, policy] of templates) {
+    for (const path of policyFilePaths) {
+      it(`${tplName}: Edit ${path} → reject`, () => {
+        const r = matchPolicy(policy, { tool: "Edit", args: { file_path: path } });
+        expect(r.decision).toBe("escalate");
+        if (r.decision === "escalate") {
+          expect(r.default_action).toBe("reject");
+          expect(r.matched_rule?.name).toMatch(/policy file/i);
+        }
+      });
+      it(`${tplName}: Write ${path} → reject`, () => {
+        const r = matchPolicy(policy, { tool: "Write", args: { file_path: path } });
+        expect(r.decision).toBe("escalate");
+        if (r.decision === "escalate") {
+          expect(r.default_action).toBe("reject");
+        }
+      });
+    }
+  }
+
+  // Negative: Read against policy file should NOT be rejected (debugging is fine)
+  for (const [tplName, policy] of templates) {
+    it(`${tplName}: Read .cloverleaf/claw-drive-policy.json → approve_silent (tool-wide Read rule)`, () => {
+      const r = matchPolicy(policy, { tool: "Read", args: { file_path: ".cloverleaf/claw-drive-policy.json" } });
+      expect(r.decision).toBe("approve_silent");
+    });
+  }
+
+  // -- Edit/Write against runtime state -------------------------------------
+  const runtimeStatePaths: string[] = [
+    "/home/ren/.claw-drive/sessions/sid/state.json",
+    "/home/ren/.claw-drive/sessions/sid/events.jsonl",
+    "/home/ren/.claw-drive/sessions/sid/control.sock",
+  ];
+
+  for (const [tplName, policy] of templates) {
+    for (const path of runtimeStatePaths) {
+      it(`${tplName}: Edit ${path} → reject`, () => {
+        const r = matchPolicy(policy, { tool: "Edit", args: { file_path: path } });
+        expect(r.decision).toBe("escalate");
+        if (r.decision === "escalate") {
+          expect(r.default_action).toBe("reject");
+          expect(r.matched_rule?.name).toMatch(/runtime state/i);
+        }
+      });
+    }
+  }
+
+  // -- Bash write vectors against policy file -------------------------------
+  const bashWriteCases: string[] = [
+    "cp newpolicy.json .cloverleaf/claw-drive-policy.json",
+    "mv newpolicy.json .cloverleaf/claw-drive-policy.json",
+    "rsync newpolicy.json .cloverleaf/claw-drive-policy.json",
+    "tee .cloverleaf/claw-drive-policy.json",
+    "echo '{}' > .cloverleaf/claw-drive-policy.json",
+    "echo '{}' >> .cloverleaf/claw-drive-policy.json",
+    "sed -i 's/x/y/' .cloverleaf/claw-drive-policy.json",
+    "awk -i inplace '{print}' .cloverleaf/claw-drive-policy.json",
+    "dd of=.cloverleaf/claw-drive-policy.json if=/dev/zero",
+  ];
+
+  for (const [tplName, policy] of templates) {
+    for (const command of bashWriteCases) {
+      it(`${tplName}: Bash "${command}" → reject`, () => {
+        const r = matchPolicy(policy, { tool: "Bash", args: { command } });
+        expect(r.decision).toBe("escalate");
+        if (r.decision === "escalate") {
+          expect(r.default_action).toBe("reject");
+        }
+      });
+    }
+  }
+
+  // -- Bash write vectors against runtime state -----------------------------
+  const bashRuntimeWriteCases: string[] = [
+    "echo 'corrupt' > /home/ren/.claw-drive/sessions/sid/state.json",
+    "tee /home/ren/.claw-drive/sessions/sid/events.jsonl",
+  ];
+
+  for (const [tplName, policy] of templates) {
+    for (const command of bashRuntimeWriteCases) {
+      it(`${tplName}: Bash "${command}" → reject`, () => {
+        const r = matchPolicy(policy, { tool: "Bash", args: { command } });
+        expect(r.decision).toBe("escalate");
+        if (r.decision === "escalate") {
+          expect(r.default_action).toBe("reject");
+        }
+      });
+    }
+  }
+
+  // -- Negative: Bash reads should NOT be rejected --------------------------
+  const bashReadCases: string[] = [
+    "cat .cloverleaf/claw-drive-policy.json",
+    "jq . .cloverleaf/claw-drive-policy.json",
+    "head -5 .cloverleaf/claw-drive-policy.json",
+    "cat /home/ren/.claw-drive/sessions/sid/state.json",
+  ];
+
+  for (const [tplName, policy] of templates) {
+    for (const command of bashReadCases) {
+      it(`${tplName}: Bash "${command}" → approve_silent (read allowed)`, () => {
+        const r = matchPolicy(policy, { tool: "Bash", args: { command } });
+        expect(r.decision).toBe("approve_silent");
+      });
+    }
+  }
+});

@@ -35,6 +35,16 @@
       "bash_command_matches": "\\brm\\s+(-[a-zA-Z]*[rR]|--recursive)|\\brm --no-preserve-root\\b|\\bgit push\\b|\\bgit reset --hard\\b|\\bgit clean -fdx\\b|\\bnpm publish\\b|\\bdd if=|\\bmkfs\\b|\\bshred\\b|\\b(fdisk|parted|gdisk|sgdisk)\\b|\\b(curl|wget)\\s.*\\|\\s*(sudo\\s+)?(bash|sh|zsh)\\b|> /dev/(sd[a-z]|nvme\\d+n\\d+|xvd[a-z]|hd[a-z]|loop\\d*|mmcblk\\d+|vd[a-z])",
       "severity": "high",
       "name": "irreversible / destructive"
+    },
+    { "tool": "Edit",  "arg_matches": { "file_path": "claw-drive-policy[^/]*\\.json$" }, "severity": "high", "name": "policy file (Edit) — claw-drive's own privilege boundary" },
+    { "tool": "Write", "arg_matches": { "file_path": "claw-drive-policy[^/]*\\.json$" }, "severity": "high", "name": "policy file (Write) — claw-drive's own privilege boundary" },
+    { "tool": "Edit",  "arg_matches": { "file_path": "/\\.claw-drive/" }, "severity": "high", "name": "claw-drive runtime state (Edit) — sessions, sockets, events" },
+    { "tool": "Write", "arg_matches": { "file_path": "/\\.claw-drive/" }, "severity": "high", "name": "claw-drive runtime state (Write) — sessions, sockets, events" },
+    {
+      "tool": "Bash",
+      "bash_command_matches": "((cp|mv|rsync|tee|sed\\s+-i|awk\\s+-i\\s+inplace|dd\\s+of=)\\s*[^|;&]*?(claw-drive-policy[^\\s/]*\\.json|/\\.claw-drive/)|>{1,2}\\s*[^|;&]*(claw-drive-policy[^\\s/]*\\.json|/\\.claw-drive/))",
+      "severity": "high",
+      "name": "bash writes to policy file or claw-drive runtime state"
     }
   ],
 
