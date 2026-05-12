@@ -743,6 +743,7 @@ describe("v0.5.9 — privilege-boundary defense", () => {
         expect(r.decision).toBe("escalate");
         if (r.decision === "escalate") {
           expect(r.default_action).toBe("reject");
+          expect(r.matched_rule?.name).toMatch(/policy file/i);
         }
       });
     }
@@ -767,6 +768,19 @@ describe("v0.5.9 — privilege-boundary defense", () => {
     for (const path of runtimeStatePaths) {
       it(`${tplName}: Edit ${path} → reject`, () => {
         const r = matchPolicy(policy, { tool: "Edit", args: { file_path: path } });
+        expect(r.decision).toBe("escalate");
+        if (r.decision === "escalate") {
+          expect(r.default_action).toBe("reject");
+          expect(r.matched_rule?.name).toMatch(/runtime state/i);
+        }
+      });
+    }
+  }
+
+  for (const [tplName, policy] of templates) {
+    for (const path of runtimeStatePaths) {
+      it(`${tplName}: Write ${path} → reject`, () => {
+        const r = matchPolicy(policy, { tool: "Write", args: { file_path: path } });
         expect(r.decision).toBe("escalate");
         if (r.decision === "escalate") {
           expect(r.default_action).toBe("reject");

@@ -38,11 +38,11 @@
     },
     { "tool": "Edit",  "arg_matches": { "file_path": "claw-drive-policy[^/]*\\.json$" }, "severity": "high", "name": "policy file (Edit) — claw-drive's own privilege boundary" },
     { "tool": "Write", "arg_matches": { "file_path": "claw-drive-policy[^/]*\\.json$" }, "severity": "high", "name": "policy file (Write) — claw-drive's own privilege boundary" },
-    { "tool": "Edit",  "arg_matches": { "file_path": "/\\.claw-drive/" }, "severity": "high", "name": "claw-drive runtime state (Edit) — sessions, sockets, events" },
-    { "tool": "Write", "arg_matches": { "file_path": "/\\.claw-drive/" }, "severity": "high", "name": "claw-drive runtime state (Write) — sessions, sockets, events" },
+    { "tool": "Edit",  "arg_matches": { "file_path": "(?:^|/)\\.claw-drive/" }, "severity": "high", "name": "claw-drive runtime state (Edit) — sessions, sockets, events" },
+    { "tool": "Write", "arg_matches": { "file_path": "(?:^|/)\\.claw-drive/" }, "severity": "high", "name": "claw-drive runtime state (Write) — sessions, sockets, events" },
     {
       "tool": "Bash",
-      "bash_command_matches": "((cp|mv|rsync|tee|sed\\s+-i|awk\\s+-i\\s+inplace|dd\\s+of=)\\s*[^|;&]*?(claw-drive-policy[^\\s/]*\\.json|/\\.claw-drive/)|>{1,2}\\s*[^|;&]*(claw-drive-policy[^\\s/]*\\.json|/\\.claw-drive/))",
+      "bash_command_matches": "(((\\bcp|\\bmv|\\brsync|\\btee)\\s+|sed\\s+-i\\s+|awk\\s+-i\\s+inplace\\s+|dd\\s+of=)[^|;&]*?(claw-drive-policy[^\\s/]*\\.json|(?:^|/)\\.claw-drive/)|>{1,2}\\s*[^|;&]*(claw-drive-policy[^\\s/]*\\.json|(?:^|/)\\.claw-drive/))",
       "severity": "high",
       "name": "bash writes to policy file or claw-drive runtime state"
     }
