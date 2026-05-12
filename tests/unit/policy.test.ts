@@ -859,3 +859,122 @@ describe("v0.5.9 — privilege-boundary defense", () => {
     expect(r.decision).toBe("approve_silent");
   });
 });
+
+describe("v0.5.9 — permissive hardening from claw-crypto", () => {
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = nodePath.dirname(__filename);
+  const starter: Policy = JSON.parse(
+    fsSync.readFileSync(nodePath.resolve(__dirname, "..", "..", "templates", "claw-drive-policy.json"), "utf-8")
+  );
+  const permissive: Policy = JSON.parse(
+    fsSync.readFileSync(nodePath.resolve(__dirname, "..", "..", "templates", "claw-drive-policy-permissive.json"), "utf-8")
+  );
+
+  // -- Group A: git read-rule fix (bare 'git status' + 'git -C') applies to BOTH ---
+  const gitReadCases: string[] = [
+    "git status",            // bare, no trailing space — the bug fix
+    "git status -s",
+    "git -C /repo status",
+    "git -C /home/foo log --oneline",
+    "git -C /tmp/walker-CC-37 diff",
+  ];
+
+  for (const [tplName, policy] of [["starter", starter], ["permissive", permissive]] as const) {
+    for (const command of gitReadCases) {
+      it(`${tplName}: Bash "${command}" → approve_silent`, () => {
+        const r = matchPolicy(policy, { tool: "Bash", args: { command } });
+        expect(r.decision).toBe("approve_silent");
+      });
+    }
+  }
+
+  // Negative: git push still rejects in both
+  for (const [tplName, policy] of [["starter", starter], ["permissive", permissive]] as const) {
+    it(`${tplName}: git push still rejects (auto_reject precedence)`, () => {
+      const r = matchPolicy(policy, { tool: "Bash", args: { command: "git push origin main" } });
+      expect(r.decision).toBe("escalate");
+      if (r.decision === "escalate") {
+        expect(r.default_action).toBe("reject");
+      }
+    });
+  }
+
+  // -- Group B: chmod/chown non-recursive auto-approve in PERMISSIVE only ---
+  const chmodChownApproveCases: string[] = [
+    "chmod 644 foo",
+    "chmod +x scripts/build.sh",
+    "chmod 755 /tmp/foo",
+    "chown user foo",
+    "chown user:group foo bar",
+  ];
+
+  for (const command of chmodChownApproveCases) {
+    it(`permissive: Bash "${command}" → approve_silent`, () => {
+      const r = matchPolicy(permissive, { tool: "Bash", args: { command } });
+      expect(r.decision).toBe("approve_silent");
+    });
+    it(`starter: Bash "${command}" → escalate (no auto-approve in conservative)`, () => {
+      const r = matchPolicy(starter, { tool: "Bash", args: { command } });
+      expect(r.decision).toBe("escalate");
+    });
+  }
+
+  // Recursive forms still defer in BOTH (auto_defer precedence preserved)
+  const chmodChownDeferCases: string[] = [
+    "chmod -R 777 foo",
+    "chown -R user foo",
+  ];
+  for (const [tplName, policy] of [["starter", starter], ["permissive", permissive]] as const) {
+    for (const command of chmodChownDeferCases) {
+      it(`${tplName}: Bash "${command}" → still defers via auto_defer rule`, () => {
+        const r = matchPolicy(policy, { tool: "Bash", args: { command } });
+        expect(r.decision).toBe("escalate");
+        if (r.decision === "escalate") {
+          expect(r.default_action).toBe("defer");
+        }
+      });
+    }
+  }
+
+  // -- Group C: bash <script> auto-approve in PERMISSIVE only --------------
+  const bashScriptCases: string[] = [
+    "bash scripts/build.sh",
+    "bash /tmp/run.sh",
+    "bash -e my-script.sh",
+  ];
+  for (const command of bashScriptCases) {
+    it(`permissive: Bash "${command}" → approve_silent`, () => {
+      const r = matchPolicy(permissive, { tool: "Bash", args: { command } });
+      expect(r.decision).toBe("approve_silent");
+    });
+    it(`starter: Bash "${command}" → escalate`, () => {
+      const r = matchPolicy(starter, { tool: "Bash", args: { command } });
+      expect(r.decision).toBe("escalate");
+    });
+  }
+
+  // -- Group D: rm -f /tmp/ auto-approve in PERMISSIVE only -----------------
+  it(`permissive: Bash "rm /tmp/foo" → approve_silent`, () => {
+    const r = matchPolicy(permissive, { tool: "Bash", args: { command: "rm /tmp/foo" } });
+    expect(r.decision).toBe("approve_silent");
+  });
+  it(`permissive: Bash "rm -f /tmp/foo" → approve_silent`, () => {
+    const r = matchPolicy(permissive, { tool: "Bash", args: { command: "rm -f /tmp/foo" } });
+    expect(r.decision).toBe("approve_silent");
+  });
+  it(`starter: Bash "rm -f /tmp/foo" → escalate (no auto-approve in conservative)`, () => {
+    const r = matchPolicy(starter, { tool: "Bash", args: { command: "rm -f /tmp/foo" } });
+    expect(r.decision).toBe("escalate");
+  });
+
+  // Critical safety check: rm -rf /tmp/foo must still reject in BOTH
+  for (const [tplName, policy] of [["starter", starter], ["permissive", permissive]] as const) {
+    it(`${tplName}: Bash "rm -rf /tmp/foo" → still rejects (auto_reject precedence)`, () => {
+      const r = matchPolicy(policy, { tool: "Bash", args: { command: "rm -rf /tmp/foo" } });
+      expect(r.decision).toBe("escalate");
+      if (r.decision === "escalate") {
+        expect(r.default_action).toBe("reject");
+      }
+    });
+  }
+});
