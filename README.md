@@ -286,12 +286,12 @@ Under heavy concurrency (e.g., B with many subagents), a single `poll_session` c
 
 Two policy templates ship in `templates/`:
 
-- **`claw-drive-policy.json`** — conservative starter. Default for `install.sh` and when no `--policy` is passed to `start_session`. Safe for unknown projects.
-- **`claw-drive-policy-permissive.json`** — starter plus common dev-CLI auto-approves (`rg`, `sed`, `awk`, `jq`, `diff`, `mkdir -p`, `touch`, `cp` (non-recursive), `mv`, safe `git` ops like `fetch` and `pull --ff-only`, path/env introspection). Reduces escalation volume in dev-heavy sessions. Destructive commands (`rm -rf`, `git push`, `git reset --hard`, etc.) still auto-reject. Opt in via `--policy templates/claw-drive-policy-permissive.json` at install or by passing the inline policy to `start_session`.
+- **`claw-drive-policy.json`** — conservative starter. Default for `install.sh` and when no `--policy` is passed to `start_session`. Safe for unknown projects. Auto-rejects `Edit`/`Write` and Bash write vectors against the policy file itself and `~/.claw-drive/` runtime state — see [docs/policies.html](https://renatodarrigo.github.io/claw-drive/policies.html#policy-file).
+- **`claw-drive-policy-permissive.json`** — starter plus common dev-CLI auto-approves (`rg`, `sed`, `awk`, `jq`, `diff`, `mkdir -p`, `touch`, `cp` (non-recursive), `mv`, non-recursive `chmod`/`chown`, safe `git` ops including `git -C <path>` prefix forms, `bash <script>` (rejects `-c` inline form), `rm -f /tmp/...`, comment-prefixed Bash lines (`# rationale`), path/env introspection). Reduces escalation volume in dev-heavy sessions. Destructive commands (`rm -rf`, `git push`, `git reset --hard`, recursive `chmod -R 777`, etc.) still auto-reject — and the comment-prefix rule never beats them since `auto_reject` is evaluated first. Opt in via `--policy templates/claw-drive-policy-permissive.json` at install or by passing the inline policy to `start_session`.
 
 ## Testing
 
-- `npm run test:unit` — 463 unit tests, no real claude invocation
+- `npm run test:unit` — 570 unit tests, no real claude invocation
 - `npm run test:integration` — 8 integration tests spawning real claude (cost real tokens)
 - `bash scripts/self-dogfood.sh` — end-to-end acceptance smoke
 

@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.5.9] — 2026-05-12
+
+### Added
+
+- **Privilege-boundary defense in both shipped templates.** New `auto_reject` rules cover (a) `Edit`/`Write` against `claw-drive-policy*.json` (any parent dir) and against `~/.claw-drive/` runtime state (sessions, sockets, events), and (b) Bash write vectors (`cp`, `mv`, `rsync`, `tee`, `sed -i`, `awk -i inplace`, `dd of=`, `>`, `>>`) targeting either path. Reads remain silently allowed via the existing tool-wide `Read` rule and Bash read CLIs — debugging by `cat`/`jq` is still fine. Surfaced by the claw-crypto walker dogfood (`5c692db` over there reverted an unintended Implementer edit to its own policy file).
+- **Permissive template gains 2 new auto-approve rules:** `^bash\s+(-[^c\s]+\s+)*[^-]\S*` (for `bash scripts/build.sh` style invocations; rejects `bash -c "..."` inline-command form) and `^rm\s+(-f\s+)?/tmp/` (cleanup idioms — `rm -rf` still caught by auto_reject precedence).
+- **Permissive file-ops rule extended** with non-recursive `chmod` and `chown`. Recursive forms — `chmod -R 777`, `chmod --recursive`, `chown -R`, `chown --recursive` — fall through to escalation; `chmod -R 777` still matches the existing auto_defer rule.
+
+### Changed
+
+- **Git read-rule fixes in BOTH templates.** Now matches bare `git status` (was failing the trailing-` ?` form) and supports `git -C <path>` prefix used by walker workflows in isolated worktrees. Same prefix support added to the permissive template's safe-git-ops rule.
+
+### Notes
+
+- Template-only changes — no source-code changes, no MCP/socket/runner impact, no schema change. v0.5.x in-flight sessions are unaffected (policy loaded at session start; not re-read).
+- **Known acceptable false positive:** `cp claw-drive-policy.json /backup/` is read-intent but write-shaped — flagged as reject. Recovers via one human approval.
+- **Known coverage gap:** indirect Bash write paths (`python -c`, `node -e`, `eval`) bypass the Bash regex. Documented in the policies page "Known limits" callout. Will be addressed by runtime enforcement in a future release.
+- **Both templates: `claw-drive-policy[^/]*\.json$` regex is intentionally loose** — matches any basename starting `claw-drive-policy` ending `.json`. Sessions B running inside the claw-drive repo cannot Edit `templates/claw-drive-policy*.json` without per-call human approval. This is intentional.
+- **Long-form `--recursive` for chmod/chown** falls through to `escalate_default` rather than being explicitly caught by `auto_defer`. The short `-R` form still matches the existing auto_defer rule. Known limitation; can widen the auto_defer in a future patch if needed.
+
+### Migration
+
+- None. Existing template copies see no change until re-installed. New installs get v0.5.9 templates immediately.
+
+### Tests
+
+- 102 new unit tests across two `describe` blocks: `v0.5.9 — privilege-boundary defense` (59 tests including 6 added during code-review fixup) and `v0.5.9 — permissive hardening from claw-crypto` (43 tests including 6 added during code-review fixup). Total: 570 unit + 8 integration = 578.
+
 ## [Unreleased]
 
 ### Added
