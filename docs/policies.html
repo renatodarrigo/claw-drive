@@ -71,7 +71,7 @@
     <p>Two policy templates ship in <code>templates/</code>:</p>
     <ul>
       <li><strong><code>claw-drive-policy.json</code></strong> — conservative starter. Default when no <code>--policy</code> is passed. Safe for unknown projects.</li>
-      <li><strong><code>claw-drive-policy-permissive.json</code></strong> — starter plus common dev-CLI auto-approves: <code>rg</code>, <code>sed</code>, <code>awk</code>, <code>jq</code>, <code>diff</code>, <code>mkdir -p</code>, <code>touch</code>, non-recursive <code>cp</code>, <code>mv</code>, safe <code>git</code> ops like <code>fetch</code> and <code>pull --ff-only</code>, path/env introspection. Destructive rules preserved verbatim.</li>
+      <li><strong><code>claw-drive-policy-permissive.json</code></strong> — starter plus common dev-CLI auto-approves: <code>rg</code>, <code>sed</code>, <code>awk</code>, <code>jq</code>, <code>diff</code>, <code>mkdir -p</code>, <code>touch</code>, non-recursive <code>cp</code>, <code>mv</code>, non-recursive <code>chmod</code>/<code>chown</code>, safe <code>git</code> ops including <code>git -C &lt;path&gt;</code> prefix forms, <code>bash &lt;script&gt;</code> (rejects <code>-c</code> inline form), <code>rm -f /tmp/...</code>, comment-prefixed Bash lines (<code># rationale</code>), path/env introspection. Destructive rules preserved verbatim; recursive <code>chmod -R 777</code> / <code>chown -R</code> still escalate.</li>
     </ul>
 
     <h2 id="policy-file">The policy file is a privilege boundary</h2>
