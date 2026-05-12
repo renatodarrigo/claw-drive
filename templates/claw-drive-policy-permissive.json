@@ -11,10 +11,10 @@
     { "tool": "Bash", "bash_command_matches": "cloverleaf-cli ", "name": "cloverleaf-cli anywhere in compound script (set -e, cd, REPO=, etc.)" },
     { "tool": "Bash", "bash_command_matches": "^(set -e|cd |REPO=|export\\s|source )", "name": "common shell prefixes that usually wrap a safe payload" },
     { "tool": "Bash", "bash_command_matches": "^(rg|sed -n|awk|jq|diff|cmp|column)\\s", "name": "common read/inspect CLIs" },
-    { "tool": "Bash", "bash_command_matches": "^(mkdir -p|touch|cp(?!\\s+(-[^-\\s]*[rRa]|--recursive|--archive))|mv|chmod(?! -R)|chown(?! -R))(\\s|$)", "name": "common non-destructive file ops — cp/chmod/chown recursive forms still escalate" },
+    { "tool": "Bash", "bash_command_matches": "^(mkdir -p|touch|cp(?!\\s+(-[^-\\s]*[rRa]|--recursive|--archive))|mv|chmod(?!\\s+(-R|--recursive))|chown(?!\\s+(-R|--recursive)))(\\s|$)", "name": "common non-destructive file ops — cp/chmod/chown recursive forms still escalate" },
     { "tool": "Bash", "bash_command_matches": "^git( -C \\S+)? (fetch|pull --ff-only|rebase --abort|rebase --continue|rebase --skip|cherry-pick --abort|merge --abort)(\\s|$)", "name": "common safe git ops" },
     { "tool": "Bash", "bash_command_matches": "^(which|type|printenv|basename|dirname|realpath|readlink)(\\s|$)", "name": "common path/env introspection (env intentionally excluded — it execs its argv)" },
-    { "tool": "Bash", "bash_command_matches": "^bash\\s+\\S+", "name": "bash <script> invocation" },
+    { "tool": "Bash", "bash_command_matches": "^bash\\s+(-[^c\\s]+\\s+)*[^-]\\S*", "name": "bash <script> invocation (rejects -c inline)" },
     { "tool": "Bash", "bash_command_matches": "^rm\\s+(-f\\s+)?/tmp/", "name": "rm under /tmp/ (cleanups; rm -rf still caught by auto_reject)" },
     { "tool": "Bash", "bash_command_matches": "^#", "name": "comment-prefixed line — destructive lines anywhere in the script still caught by auto_reject" }
   ],
