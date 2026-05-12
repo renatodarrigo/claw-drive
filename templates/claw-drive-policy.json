@@ -5,7 +5,7 @@
     { "tool": "Glob" },
     { "tool": "Grep" },
     { "tool": "Bash", "bash_command_matches": "^git (status|diff|log|show|branch|stash list|ls-files|rev-parse|worktree list) ?" },
-    { "tool": "Bash", "bash_command_matches": "^(ls|cat|head|tail|find|file|tree|wc|pwd|echo|stat|wc|du|df|jq) " },
+    { "tool": "Bash", "bash_command_matches": "^(ls|cat|head|tail|find|file|tree|wc|pwd|echo|stat|wc|du|df) " },
     { "tool": "Bash", "bash_command_matches": "^(npm|npx|node) " },
     { "tool": "Bash", "bash_command_matches": "^cloverleaf-cli " },
     { "tool": "Bash", "bash_command_matches": "cloverleaf-cli ", "name": "cloverleaf-cli anywhere in compound script (set -e, cd, REPO=, etc.)" },

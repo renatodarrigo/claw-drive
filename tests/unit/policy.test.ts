@@ -820,19 +820,28 @@ describe("v0.5.9 — privilege-boundary defense", () => {
   }
 
   // -- Negative: Bash reads should NOT be rejected --------------------------
-  const bashReadCases: string[] = [
+  // Common read CLIs that both templates auto-approve.
+  const commonReadCases: string[] = [
     "cat .cloverleaf/claw-drive-policy.json",
-    "jq . .cloverleaf/claw-drive-policy.json",
     "head -5 .cloverleaf/claw-drive-policy.json",
     "cat /home/ren/.claw-drive/sessions/sid/state.json",
   ];
 
   for (const [tplName, policy] of templates) {
-    for (const command of bashReadCases) {
+    for (const command of commonReadCases) {
       it(`${tplName}: Bash "${command}" → approve_silent (read allowed)`, () => {
         const r = matchPolicy(policy, { tool: "Bash", args: { command } });
         expect(r.decision).toBe("approve_silent");
       });
     }
   }
+
+  // jq is auto-approved in permissive (via the rg/sed/awk/jq/diff/cmp/column rule)
+  // but not in conservative starter. The privilege-defense rules don't change that —
+  // the negative case here just confirms the new auto_reject doesn't accidentally
+  // catch a reading-shaped jq.
+  it(`permissive: Bash "jq . .cloverleaf/claw-drive-policy.json" → approve_silent (read allowed)`, () => {
+    const r = matchPolicy(permissive, { tool: "Bash", args: { command: "jq . .cloverleaf/claw-drive-policy.json" } });
+    expect(r.decision).toBe("approve_silent");
+  });
 });
