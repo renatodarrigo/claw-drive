@@ -3,6 +3,7 @@ import {
   matchPolicy,
   deriveRuleFromResolved,
   validatePolicy,
+  POLICY_SCHEMA_VERSION,
   type Policy,
   type Rule,
 } from "../../src/lib/policy.js";
@@ -672,6 +673,49 @@ describe("v0.5.7 — surface_tokens removed", () => {
     if (!result.ok) {
       expect(result.error).toMatch(/unknown key.*surface_tokens/i);
     }
+  });
+});
+
+describe("CD-12 — policy schema_version (strict + implicit-v1)", () => {
+  it("exports POLICY_SCHEMA_VERSION === 1", () => {
+    expect(POLICY_SCHEMA_VERSION).toBe(1);
+  });
+
+  it("accepts a policy with no schema_version (treated as version 1)", () => {
+    expect(validatePolicy({ auto_approve: [] })).toEqual({ ok: true });
+  });
+
+  it("accepts a policy with explicit schema_version: 1", () => {
+    expect(validatePolicy({ schema_version: 1, auto_approve: [] })).toEqual({ ok: true });
+  });
+
+  it("rejects schema_version: 2 with an error naming the supported version", () => {
+    const result = validatePolicy({ schema_version: 2, auto_approve: [] });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toMatch(/schema_version/);
+      expect(result.error).toMatch(/\b1\b/); // names the supported version
+    }
+  });
+
+  it("rejects any non-1 numeric schema_version (0, 99)", () => {
+    for (const v of [0, 99, -1]) {
+      const result = validatePolicy({ schema_version: v });
+      expect(result.ok, `schema_version ${v} should be rejected`).toBe(false);
+    }
+  });
+
+  it("rejects a non-numeric schema_version", () => {
+    const result = validatePolicy({ schema_version: "1" });
+    expect(result.ok).toBe(false);
+  });
+
+  it("preserves schema_version on a policy object (survives round-trip unchanged)", () => {
+    // validatePolicy does not mutate; the field passes through start_session /
+    // update_policy because those persist the object as-is once it validates.
+    const policy = { schema_version: 1, auto_approve: [{ tool: "Read" }] };
+    expect(validatePolicy(policy)).toEqual({ ok: true });
+    expect(policy.schema_version).toBe(1); // not stripped or altered
   });
 });
 
