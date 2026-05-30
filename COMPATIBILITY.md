@@ -52,7 +52,7 @@ stable.
 | `auto_approve` | `Rule[]` | Matched third; matching calls are approved silently. |
 | `escalate_default` | `boolean` | When no rule matches, escalate (`true`, the default) or deny silently (`false`). |
 | `decision_timeout_seconds` | `number` | Per-session gate timeout. Defaults to 3600 if absent. |
-| `schema_version` | `number` | See [schema\_version](#schema_version) below. |
+| `schema_version` | `number` | See [schema\_version](#schema_version) below. _(Introduced by the CD-1 contract-freeze work; part of the 1.0 contract, not a field that predates it.)_ |
 
 **Evaluation order** (contract as of v0.2.3, frozen):
 
@@ -84,8 +84,10 @@ It bypasses policy evaluation entirely; every tool call is approved silently.
 
 #### `schema_version` {#schema_version}
 
-`schema_version` is the policy-file version marker. The constant
-`POLICY_SCHEMA_VERSION = 1` names the current schema.
+`schema_version` is the policy-file version marker introduced by the CD-1
+contract-freeze work and landing in the 1.0 line (a sibling CD task adds it to
+`src/lib/policy.ts`). The constant `POLICY_SCHEMA_VERSION = 1` names the schema
+version.
 
 Semantics (strict + implicit v1):
 
