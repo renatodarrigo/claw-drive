@@ -16,6 +16,7 @@ import { policyDigest, matchPolicy, deriveRuleFromResolved, validatePolicy, type
 import { parseClaudeLine } from "./stream-parser.js";
 import { startSocketServer } from "./socket-server.js";
 import { buildClaudeArgs } from "./runner-args.js";
+import { scheduleDecisionTimeout } from "./decision-timeout.js";
 import type { ControlRequest, ControlResponse } from "../lib/socket-protocol.js";
 
 interface DeferredCall {
@@ -47,7 +48,6 @@ interface PendingApproval {
   args: Record<string, unknown>;
   default_action: DecisionAction;
   resolve: (decision: { behavior: "allow" | "deny"; message?: string }) => void;
-  timer: NodeJS.Timeout;
 }
 
 /**
@@ -183,18 +183,16 @@ async function handleRequest(
       } as Omit<Event, "seq" | "at">);
 
       return new Promise<ControlResponse>((resolve) => {
-        const timer = setTimeout(async () => {
-          ctx.pendingApprovals.delete(call_id);
-          await emitEvent(ctx, {
-            kind: "tool_decision_resolved",
-            turn_id: turnId,
-            call_id,
-            action: decision.default_action,
-            reason: "timeout → default",
-            resolved_by: "timeout",
-          } as any);
-
-          if (decision.default_action === "defer") {
+        // The decision-timeout unit owns the timer + resolved-by-timeout
+        // semantics; the runner supplies the state side effects it fires.
+        const scheduled = scheduleDecisionTimeout({
+          call_id,
+          turn_id: turnId,
+          timeoutMs,
+          defaultAction: decision.default_action,
+          onFire: () => ctx.pendingApprovals.delete(call_id),
+          emit: (event) => emitEvent(ctx, event as Omit<Event, "seq" | "at">),
+          recordDeferred: () =>
             ctx.deferredCalls.set(call_id, {
               call_id,
               turn_id: turnId,
@@ -202,26 +200,9 @@ async function handleRequest(
               args,
               deferred_at: new Date().toISOString(),
               reason: "timeout → auto-defer",
-            });
-            resolve({
-              id: req.id,
-              ok: true,
-              result: {
-                behavior: "deny",
-                message: "DEFERRED (timeout default). Human will run this; wait for a follow-up user turn.",
-              },
-            });
-            return;
-          }
-
-          resolve({
-            id: req.id,
-            ok: true,
-            result: {
-              behavior: decision.default_action === "approve" ? "allow" : "deny",
-            },
-          });
-        }, timeoutMs);
+            }),
+          resolve: (result) => resolve({ id: req.id, ok: true, result }),
+        });
 
         ctx.pendingApprovals.set(call_id, {
           call_id,
@@ -230,10 +211,9 @@ async function handleRequest(
           args,
           default_action: decision.default_action,
           resolve: (dec) => {
-            clearTimeout(timer);
+            scheduled.clear();
             resolve({ id: req.id, ok: true, result: dec });
           },
-          timer,
         });
       });
     }
