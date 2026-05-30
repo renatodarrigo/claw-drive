@@ -66,6 +66,58 @@
         <tr><td><code>provide-output &lt;call_id&gt; [flags]</code></td><td>Relay human-run output to a deferred call.</td></tr>
       </tbody>
     </table>
+    <h2 id="compatibility">Compatibility</h2>
+    <p>
+      claw-drive 1.0 is a stability promise. The versioning follows
+      <a href="https://semver.org/" rel="noopener">SemVer</a>. Within the 1.x
+      line, releases may be <strong>additive</strong> — new tools, new fields,
+      new event kinds, new CLI subcommands or flags, new sentinel tokens — but
+      will not remove, rename, or incompatibly change anything listed below.
+      Breaking changes are reserved for 2.0.
+    </p>
+    <p>
+      The full stability contract, including the additive vs. breaking
+      distinction and frozen field-level details, is in
+      <a href="../COMPATIBILITY.md"><code>COMPATIBILITY.md</code></a> at the
+      repository root.
+    </p>
+
+    <h3>Frozen public surfaces</h3>
+    <table>
+      <thead><tr><th>Surface</th><th>Source</th><th>What is frozen</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>Policy schema</td>
+          <td><code>src/lib/policy.ts</code></td>
+          <td>All <code>PolicyObject</code> top-level keys (<code>auto_reject</code>, <code>auto_defer</code>, <code>auto_approve</code>, <code>escalate_default</code>, <code>decision_timeout_seconds</code>, <code>schema_version</code>), the <code>Rule</code> field set, the <code>"bypass"</code> string form, evaluation order, and <code>_</code>-prefixed metadata convention.</td>
+        </tr>
+        <tr>
+          <td>MCP tools</td>
+          <td><code>src/mcp/server.ts</code></td>
+          <td>All 10 tool names, their required inputs, and response shapes: <code>start_session</code>, <code>stop_session</code>, <code>send_turn</code>, <code>poll_turn</code>, <code>poll_session</code>, <code>list_sessions</code>, <code>resolve_tool_call</code>, <code>provide_tool_output</code>, <code>update_policy</code>, <code>interrupt_turn</code>.</td>
+        </tr>
+        <tr>
+          <td>Event <code>kind</code> set</td>
+          <td><code>src/lib/events.ts</code></td>
+          <td>All 14 event kinds written to <code>events.jsonl</code>, and the 9-kind <code>VALID_WATCH_KINDS</code> set surfaced by <code>claw-drive watch</code> (including the synthetic <code>idle</code> kind).</td>
+        </tr>
+        <tr>
+          <td>CLI subcommands</td>
+          <td><code>src/cli/cli.ts</code></td>
+          <td>All 17 subcommands and their flags. Global flags <code>--version</code> / <code>-v</code> and <code>--help</code> / <code>-h</code>.</td>
+        </tr>
+        <tr>
+          <td>Sentinel vocabulary</td>
+          <td><code>src/lib/tokens.ts</code></td>
+          <td>The two always-surface tokens (<code>[NEEDS-INPUT]</code>, <code>[DONE]</code>) and the <code>TRAILING_TOKEN_RE</code> regex shape.</td>
+        </tr>
+        <tr>
+          <td><code>notification_contract</code></td>
+          <td><code>src/lib/tokens.ts</code></td>
+          <td>The object returned by <code>start_session</code>: <code>version</code>, <code>wrapper_enabled</code>, <code>vocabulary</code>, <code>watch_command</code>, <code>watch_flags</code>, <code>idle_after_seconds</code>. <code>version: 1</code> is pinned for the entire 1.x line.</td>
+        </tr>
+      </tbody>
+    </table>
   </main>
   <aside class="donate">
     <p>If claw-drive is useful to you, help me buy my first house.</p>
