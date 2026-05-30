@@ -1,6 +1,14 @@
 export type Severity = "low" | "medium" | "high";
 export type DecisionAction = "approve" | "reject" | "defer";
 
+/**
+ * The policy-schema version this build supports. Introduced by CD-1
+ * (contract freeze): a policy object may carry an optional `schema_version`.
+ * Semantics are strict + implicit-v1 — absent means 1, an explicit 1 is
+ * accepted, and any other value is rejected. See COMPATIBILITY.md.
+ */
+export const POLICY_SCHEMA_VERSION = 1;
+
 export interface Rule {
   name?: string;
   tool: string;
@@ -15,6 +23,12 @@ export interface PolicyObject {
   auto_reject?: Rule[];
   escalate_default?: boolean;
   decision_timeout_seconds?: number;
+  /**
+   * Optional policy-schema version. Absent is treated as
+   * {@link POLICY_SCHEMA_VERSION} (1). When present it must equal
+   * POLICY_SCHEMA_VERSION; any other value is rejected by validatePolicy.
+   */
+  schema_version?: number;
 }
 
 export type Policy = "bypass" | PolicyObject;
@@ -152,6 +166,7 @@ export function validatePolicy(p: unknown): { ok: true } | { ok: false; error: s
     "auto_reject",
     "escalate_default",
     "decision_timeout_seconds",
+    "schema_version",
   ]);
   for (const key of Object.keys(obj)) {
     if (key.startsWith("_")) continue; // metadata comment; ignored by validator
@@ -187,6 +202,21 @@ export function validatePolicy(p: unknown): { ok: true } | { ok: false; error: s
   }
   if (obj.decision_timeout_seconds !== undefined && typeof obj.decision_timeout_seconds !== "number") {
     return { ok: false, error: "decision_timeout_seconds must be a number" };
+  }
+  // schema_version: strict + implicit-v1. Absent means POLICY_SCHEMA_VERSION;
+  // an explicit value must equal it. Anything else is rejected with a message
+  // naming the supported version. Purely additive — no existing policy that
+  // omits the field becomes invalid.
+  if (obj.schema_version !== undefined) {
+    if (typeof obj.schema_version !== "number") {
+      return { ok: false, error: "schema_version must be a number" };
+    }
+    if (obj.schema_version !== POLICY_SCHEMA_VERSION) {
+      return {
+        ok: false,
+        error: `policy schema_version ${obj.schema_version} is not supported; this build supports version ${POLICY_SCHEMA_VERSION}`,
+      };
+    }
   }
   return { ok: true };
 }
