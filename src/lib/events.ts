@@ -41,6 +41,10 @@ export type Event =
       default_action: DecisionAction;
       matched_rule?: string;
       default_at: string;
+      /** CD-8: capped preceding assistant_text snippet (why B wants this). Additive, optional. */
+      rationale?: string;
+      /** CD-8: capped unified diff for Edit/Write. Additive, optional. */
+      diff?: string;
     }
   | {
       seq: number;

@@ -11,7 +11,8 @@ import {
   statePath,
 } from "../lib/paths.js";
 import { readState, writeState, type SessionState } from "../lib/state.js";
-import { appendEvent, type Event } from "../lib/events.js";
+import * as path from "node:path";
+import { appendEvent, readEventsSince, type Event } from "../lib/events.js";
 import { policyDigest, matchPolicy, deriveRuleFromResolved, validatePolicy, type DecisionAction } from "../lib/policy.js";
 import { parseClaudeLine } from "./stream-parser.js";
 import { startSocketServer } from "./socket-server.js";
@@ -19,6 +20,46 @@ import { buildClaudeArgs } from "./runner-args.js";
 import { scheduleDecisionTimeout } from "./decision-timeout.js";
 import { createBudgetTracker, budgetExceededReason, type BudgetTracker } from "./budget.js";
 import type { ControlRequest, ControlResponse } from "../lib/socket-protocol.js";
+import { buildDecisionContext } from "../lib/decision-context.js";
+
+/** CD-8: the most recent assistant_text in `turnId`, scanning the session's events back-to-front. */
+async function findPriorAssistantText(sessionId: string, turnId: string): Promise<string | undefined> {
+  const { events } = await readEventsSince(eventsPath(sessionId), 0);
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.kind === "assistant_text" && (e as { turn_id?: string }).turn_id === turnId) {
+      return (e as { text: string }).text;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * CD-8: rationale (preceding assistant_text) + diff (Edit/Write) for an escalated
+ * call, capped at source. Exported + dependency-light (sessionId + cwd, not the
+ * full RunnerContext) so it's unit-testable against a synthetic CLAW_DRIVE_HOME.
+ */
+export async function buildEscalationContext(
+  sessionId: string,
+  cwd: string,
+  turnId: string,
+  tool: string,
+  args: unknown
+): Promise<{ rationale?: string; diff?: string }> {
+  const priorAssistantText = await findPriorAssistantText(sessionId, turnId);
+  let existingFileContent: string | undefined;
+  if (tool === "Write") {
+    const fp = (args as { file_path?: unknown } | null)?.file_path;
+    if (typeof fp === "string") {
+      try {
+        existingFileContent = await fs.readFile(path.resolve(cwd, fp), "utf-8");
+      } catch {
+        existingFileContent = undefined;
+      }
+    }
+  }
+  return buildDecisionContext({ tool, args, priorAssistantText, existingFileContent });
+}
 
 interface DeferredCall {
   call_id: string;
@@ -251,6 +292,13 @@ async function handleRequest(
       const timeoutSec = ctx.state.decision_timeout_seconds ?? 3600;
       const timeoutMs = timeoutSec * 1000;
       const defaultAt = new Date(Date.now() + timeoutMs).toISOString();
+      const decisionContext = await buildEscalationContext(
+        ctx.sessionId,
+        ctx.state.cwd,
+        turnId,
+        tool,
+        args
+      );
       await emitEvent(ctx, {
         kind: "tool_decision_required",
         turn_id: turnId,
@@ -261,6 +309,7 @@ async function handleRequest(
         default_action: decision.default_action,
         matched_rule: decision.matched_rule?.name,
         default_at: defaultAt,
+        ...decisionContext,
       } as Omit<Event, "seq" | "at">);
 
       return new Promise<ControlResponse>((resolve) => {
