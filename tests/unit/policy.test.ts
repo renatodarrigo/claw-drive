@@ -1158,3 +1158,70 @@ describe("CD-3 — interpreter one-liner escapes (defer in both templates)", () 
     }
   });
 });
+
+describe("CD-4 — policy budget block (validatePolicy)", () => {
+  it("accepts a policy with no budget (unlimited)", () => {
+    expect(validatePolicy({ auto_approve: [] })).toEqual({ ok: true });
+  });
+
+  it("accepts positive max_tool_calls / max_wall_clock_seconds / max_consecutive_errors", () => {
+    expect(
+      validatePolicy({ budget: { max_tool_calls: 500, max_wall_clock_seconds: 3600, max_consecutive_errors: 5 } })
+    ).toEqual({ ok: true });
+  });
+
+  it("accepts a budget with only some fields present (others unlimited)", () => {
+    expect(validatePolicy({ budget: { max_tool_calls: 100 } })).toEqual({ ok: true });
+    expect(validatePolicy({ budget: {} })).toEqual({ ok: true });
+  });
+
+  it("a budget block is additive — not rejected by the unknown-key check", () => {
+    expect(validatePolicy({ schema_version: 1, budget: { max_tool_calls: 10 }, auto_approve: [] })).toEqual({ ok: true });
+  });
+
+  it("rejects a non-object budget with a clear error", () => {
+    for (const bad of [5, "x", true, [1, 2], null]) {
+      const r = validatePolicy({ budget: bad } as any);
+      expect(r.ok, `budget=${JSON.stringify(bad)}`).toBe(false);
+      if (!r.ok) expect(r.error).toMatch(/budget/);
+    }
+  });
+
+  it("rejects non-positive or non-number cap values, naming the offending field", () => {
+    for (const field of ["max_tool_calls", "max_wall_clock_seconds", "max_consecutive_errors"]) {
+      for (const bad of [0, -1, -100, "5", null, NaN, Infinity]) {
+        const r = validatePolicy({ budget: { [field]: bad } } as any);
+        expect(r.ok, `${field}=${JSON.stringify(bad)}`).toBe(false);
+        if (!r.ok) expect(r.error, `${field}=${JSON.stringify(bad)}`).toContain(field);
+      }
+    }
+  });
+});
+
+describe("CD-4 — _budget_example in shipped templates (documented, not enabled)", () => {
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = nodePath.dirname(__filename);
+  const load = (name: string): any =>
+    JSON.parse(fsSync.readFileSync(nodePath.resolve(__dirname, "..", "..", "templates", name), "utf-8"));
+  const templates: Array<[string, any]> = [
+    ["starter", load("claw-drive-policy.json")],
+    ["permissive", load("claw-drive-policy-permissive.json")],
+  ];
+
+  for (const [tplName, tpl] of templates) {
+    it(`${tplName}: ships a _budget_example listing all three caps`, () => {
+      expect(tpl._budget_example).toBeDefined();
+      expect(typeof tpl._budget_example.max_tool_calls).toBe("number");
+      expect(typeof tpl._budget_example.max_wall_clock_seconds).toBe("number");
+      expect(typeof tpl._budget_example.max_consecutive_errors).toBe("number");
+    });
+
+    it(`${tplName}: ships NO active top-level budget — the breaker stays off`, () => {
+      expect(tpl.budget).toBeUndefined();
+    });
+
+    it(`${tplName}: still validates (the underscore key is ignored)`, () => {
+      expect(validatePolicy(tpl)).toEqual({ ok: true });
+    });
+  }
+});

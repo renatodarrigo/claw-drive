@@ -29,6 +29,16 @@ export interface PolicyObject {
    * POLICY_SCHEMA_VERSION; any other value is rejected by validatePolicy.
    */
   schema_version?: number;
+  /**
+   * Optional run-level circuit-breaker (CD-4). All fields optional; an absent
+   * field is unlimited and an absent budget entirely is off — no behaviour
+   * change for existing sessions. Enforced by the runner (src/runner/budget.ts).
+   */
+  budget?: {
+    max_tool_calls?: number;
+    max_wall_clock_seconds?: number;
+    max_consecutive_errors?: number;
+  };
 }
 
 export type Policy = "bypass" | PolicyObject;
@@ -167,6 +177,7 @@ export function validatePolicy(p: unknown): { ok: true } | { ok: false; error: s
     "escalate_default",
     "decision_timeout_seconds",
     "schema_version",
+    "budget",
   ]);
   for (const key of Object.keys(obj)) {
     if (key.startsWith("_")) continue; // metadata comment; ignored by validator
@@ -216,6 +227,22 @@ export function validatePolicy(p: unknown): { ok: true } | { ok: false; error: s
         ok: false,
         error: `policy schema_version ${obj.schema_version} is not supported; this build supports version ${POLICY_SCHEMA_VERSION}`,
       };
+    }
+  }
+  // budget (CD-4): optional run-level circuit-breaker. When present it must be
+  // an object; each present cap must be a finite, strictly-positive number.
+  // Absent budget and absent individual caps are accepted as unlimited.
+  if (obj.budget !== undefined) {
+    if (typeof obj.budget !== "object" || obj.budget === null || Array.isArray(obj.budget)) {
+      return { ok: false, error: "budget must be an object" };
+    }
+    const b = obj.budget as Record<string, unknown>;
+    for (const field of ["max_tool_calls", "max_wall_clock_seconds", "max_consecutive_errors"] as const) {
+      const v = b[field];
+      if (v === undefined) continue;
+      if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) {
+        return { ok: false, error: `budget.${field} must be a positive number` };
+      }
     }
   }
   return { ok: true };
