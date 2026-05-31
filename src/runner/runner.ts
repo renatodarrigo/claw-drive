@@ -17,6 +17,7 @@ import { parseClaudeLine } from "./stream-parser.js";
 import { startSocketServer } from "./socket-server.js";
 import { buildClaudeArgs } from "./runner-args.js";
 import { scheduleDecisionTimeout } from "./decision-timeout.js";
+import { createBudgetTracker, budgetExceededReason, type BudgetTracker } from "./budget.js";
 import type { ControlRequest, ControlResponse } from "../lib/socket-protocol.js";
 
 interface DeferredCall {
@@ -38,6 +39,10 @@ interface RunnerContext {
   deferredCalls: Map<string, DeferredCall>;
   /** Set to true by stop_session handler so the main loop's b.on("exit") yields. */
   stopping: boolean;
+  /** CD-4 run-level circuit-breaker; null when no budget is configured. */
+  budget: BudgetTracker | null;
+  /** Set once a budget cap is breached so the breaker fires exactly once. */
+  budgetBreached: boolean;
 }
 
 // Placeholder type; populated in Task 13 when the approval flow lands.
@@ -64,6 +69,82 @@ async function emitEvent(
   await appendEvent(eventsPath(ctx.sessionId), ev);
   ctx.state.last_event_at = ev.at;
   await writeState(statePath(ctx.sessionId), ctx.state);
+  await enforceBudget(ctx, ev);
+}
+
+/**
+ * Tear down Session B: stop input, escalate SIGTERM→SIGKILL, and on exit write
+ * the terminal state + a session_stopped(reason) event and exit the runner.
+ * Shared by the stop_session control op and the CD-4 budget breaker.
+ */
+function teardownSession(ctx: RunnerContext, reason: string): void {
+  ctx.stopping = true;
+  try {
+    ctx.b.stdin?.end();
+  } catch { /* */ }
+  const killSigterm = setTimeout(() => {
+    if (ctx.b.pid) {
+      try { process.kill(ctx.b.pid, "SIGTERM"); } catch { /* */ }
+    }
+  }, 10_000);
+  const killSigkill = setTimeout(() => {
+    if (ctx.b.pid) {
+      try { process.kill(ctx.b.pid, "SIGKILL"); } catch { /* */ }
+    }
+  }, 20_000);
+  ctx.b.once("exit", async (code) => {
+    clearTimeout(killSigterm);
+    clearTimeout(killSigkill);
+    ctx.state.status = "stopped";
+    ctx.state.exit_code = code;
+    await writeState(statePath(ctx.sessionId), ctx.state);
+    await emitEvent(ctx, {
+      kind: "session_stopped",
+      reason,
+      exit_code: code,
+    } as Omit<Event, "seq" | "at">);
+    await fs.rm(readyMarkerPath(ctx.sessionId), { force: true });
+    process.exit(0);
+  });
+}
+
+/**
+ * CD-4 circuit-breaker. Update the budget counters for this event, then check
+ * the caps; on the first breach set exit_reason, emit an error describing it,
+ * and reap B via the shared teardown. No-op without a budget, once a breach is
+ * recorded, or once a stop is already in flight.
+ */
+async function enforceBudget(ctx: RunnerContext, ev: Event): Promise<void> {
+  if (!ctx.budget || ctx.budgetBreached || ctx.stopping) return;
+  switch (ev.kind) {
+    case "tool_call_requested":
+      ctx.budget.recordToolCall();
+      break;
+    case "error":
+    case "turn_failed":
+      ctx.budget.recordError();
+      break;
+    case "tool_call_result":
+      if (ev.is_error) ctx.budget.recordError();
+      break;
+    case "turn_completed":
+      ctx.budget.recordCleanTurn();
+      break;
+  }
+  const startedMs = Date.parse(ctx.state.started_at);
+  const elapsedSeconds = Number.isFinite(startedMs) ? (Date.now() - startedMs) / 1000 : 0;
+  const cap = ctx.budget.check(elapsedSeconds);
+  if (!cap) return;
+
+  // Record the breach before emitting so the nested emit below short-circuits.
+  ctx.budgetBreached = true;
+  ctx.state.exit_reason = budgetExceededReason(cap);
+  await emitEvent(ctx, {
+    kind: "error",
+    message: `session budget exceeded: ${cap} — reaping the session (exit_reason: ${ctx.state.exit_reason})`,
+    recoverable: false,
+  } as Omit<Event, "seq" | "at">);
+  teardownSession(ctx, ctx.state.exit_reason);
 }
 
 /**
@@ -311,35 +392,7 @@ async function handleRequest(
       // Mark stopping so the main loop's b.on("exit") yields control to us.
       ctx.stopping = true;
       // Return first (so the caller sees ok:true promptly), then tear down.
-      setImmediate(async () => {
-        try {
-          ctx.b.stdin?.end();
-        } catch { /* */ }
-        const killSigterm = setTimeout(() => {
-          if (ctx.b.pid) {
-            try { process.kill(ctx.b.pid, "SIGTERM"); } catch { /* */ }
-          }
-        }, 10_000);
-        const killSigkill = setTimeout(() => {
-          if (ctx.b.pid) {
-            try { process.kill(ctx.b.pid, "SIGKILL"); } catch { /* */ }
-          }
-        }, 20_000);
-        ctx.b.once("exit", async (code) => {
-          clearTimeout(killSigterm);
-          clearTimeout(killSigkill);
-          ctx.state.status = "stopped";
-          ctx.state.exit_code = code;
-          await writeState(statePath(ctx.sessionId), ctx.state);
-          await emitEvent(ctx, {
-            kind: "session_stopped",
-            reason: "stop_session",
-            exit_code: code,
-          } as Omit<Event, "seq" | "at">);
-          await fs.rm(readyMarkerPath(ctx.sessionId), { force: true });
-          process.exit(0);
-        });
-      });
+      setImmediate(() => teardownSession(ctx, "stop_session"));
       return { id: req.id, ok: true };
     }
 
@@ -491,6 +544,7 @@ export async function runRunner(sessionId: string): Promise<void> {
     policy_digest: policyDigest(sess.policy),
   } as Event);
 
+  const budgetCfg = sess.policy !== "bypass" ? sess.policy.budget : undefined;
   const ctx: RunnerContext = {
     sessionId,
     state: sess,
@@ -500,6 +554,8 @@ export async function runRunner(sessionId: string): Promise<void> {
     pendingApprovals: new Map(),
     deferredCalls: new Map(),
     stopping: false,
+    budget: budgetCfg ? createBudgetTracker(budgetCfg) : null,
+    budgetBreached: false,
   };
 
   // Start the stdout loop; run it in the background. If it fails, emit an
