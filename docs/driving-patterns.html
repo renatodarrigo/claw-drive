@@ -93,6 +93,12 @@ claw-drive watch &lt;id&gt; --only tool_decision_required,turn_failed,session_st
 
     <p>The <code>/claw-drive-start</code> plugin skill defaults to the sentinel-aware behavior. Pass <code>--verbose</code> to bypass both the wrapper injection and the sentinel filter — full raw event stream.</p>
 
+    <h3 id="fleet">Watching a fleet (<code>watch --all</code>)</h3>
+    <p>When A is driving several sessions at once (B, C, D, …), running one <code>watch</code> per session and merging them by hand is tedious. <code>claw-drive watch --all</code> (no session argument) tails <em>every live session</em> into one merged JSONL stream:</p>
+    <pre><code class="language-bash">claw-drive watch --all</code></pre>
+    <p>Each emitted line carries an additive <code>session_id</code> field so the driver can attribute every event — an additive tag on the watch output, no new event kind. Membership is <strong>dynamic</strong>: a periodic rescan of the live session set means a session spawned <em>after</em> <code>watch --all</code> starts joins the stream automatically, and a session that stops has its own tail closed (its <code>session_stopped</code> surfaces first) without ending the merged stream — which runs until you SIGINT it. Every single-session flag works identically under <code>--all</code> (<code>--replay</code>, <code>--only</code> / <code>--decision-only</code>, <code>--no-token-filter</code>, <code>--idle-after</code>, <code>--no-suspected-needs-input</code>); each session's filters apply independently.</p>
+    <p>For a point-in-time snapshot of the whole fleet rather than a live feed, <code>claw-drive status</code> (no argument) is the companion: a summary table of every session's state, last token, and pending-decision count.</p>
+
     <h2 id="defer-round-trip">Defer round-trip</h2>
     <p>Some commands can't run inside B — <code>sudo</code>, interactive logins, anything that needs auth, a TTY, or a secret. For these, use <code>auto_defer</code>:</p>
 

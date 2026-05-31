@@ -81,6 +81,8 @@ Commands:
   watch <session> [--replay|--since N]
                                 Stream human-actionable events as JSONL (for Monitor);
                                 defaults to new events only; --replay = full history
+  watch --all [same flags]      Merge every live session into one session_id-tagged
+                                stream; dynamic membership; runs until SIGINT
   pending [<session>]           List awaiting-approval calls
   approve <call_id> [--reason R]
   reject <call_id> [--reason R]

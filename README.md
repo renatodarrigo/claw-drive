@@ -178,6 +178,18 @@ To bypass the wrapper injection on the runner side, pass `wrapper: false` to `st
 
 The `/claw-drive-start` plugin skill defaults to the sentinel-aware behavior. Pass `--verbose` to bypass both layers (no wrapper, no token filter — full raw stream).
 
+### Fleet view: `watch --all`
+
+A driver supervising several sessions at once (A spawning B, C, D, …) can merge them all into one stream:
+
+```bash
+claw-drive watch --all
+```
+
+`watch --all` tails **every live session** concurrently and writes a single merged JSONL feed where each line carries an additive `session_id` field, so the driver can attribute every event. Membership is **dynamic**: a session spawned after `watch --all` starts joins the stream automatically, and a session that stops has its tail closed (its `session_stopped` surfaces first) — the merged stream itself runs until you SIGINT it. Every single-session flag works identically under `--all` (`--replay`, `--only` / `--decision-only`, `--no-token-filter`, `--idle-after`, `--no-suspected-needs-input`), and each session's filters apply independently.
+
+For a point-in-time snapshot of the whole fleet rather than a live feed, `claw-drive status` (no argument) is the companion — a summary table of every session's state, last token, and pending-decision count.
+
 ## Policy
 
 A policy is either `"bypass"` (no gating) or an object. Rules are evaluated `auto_reject` → `auto_defer` → `auto_approve`; the first match wins, so a reject beats an approve. Unmatched calls escalate by default.
@@ -276,6 +288,7 @@ B's echo fires the hook → policy defers → monitor alerts A → human answers
 | `policy-test '<command>' [flags]` | Diagnose a tool call against a policy. Three output formats (default human, `--explain`, `--json`); multi-tool via `--tool TOOL --arg KEY=VALUE`; `--policy starter\|permissive\|bypass\|<file>`; `--exit-on reject\|defer\|approve\|escalate` for CI gating. |
 | `prune [--older-than 24h]` | Remove dead sessions older than cutoff |
 | `watch <session> [--since N \| --replay] [--only KIND[,KIND]... \| --decision-only] [--idle-after SECONDS] [--no-token-filter] [--no-suspected-needs-input]` | Stream noteworthy events as JSONL. Used by Monitor flows. Sentinel filter is on by default (`turn_completed` surfaces only when the trailing `[TOKEN]` is present). `--no-token-filter` disables the sentinel filter entirely. `--decision-only` and `--only` are kind-level subset filters that compose with the sentinel filter. `--idle-after SECONDS` (default `600`, `0` disables) emits a synthetic `idle` event when no surfaced event has been seen for that long. The silent-miss backstop surfaces a no-token `turn_completed` whose final line ends in `?` with an additive `suspected_needs_input` marker; `--no-suspected-needs-input` disables it. |
+| `watch --all [same flags]` | Merge every live session into one JSONL stream, each line tagged with an additive `session_id`. Dynamic membership (sessions spawned later join via a periodic rescan); runs until SIGINT. All single-session filters apply per session. `status` (no arg) is the point-in-time fleet-snapshot companion. |
 | `provide-output <call_id> [--stdout S] [--stderr S] [--exit N] [--extra S] [--from-file PATH]` | Relay human-run command output to a deferred call |
 
 ## Troubleshooting
