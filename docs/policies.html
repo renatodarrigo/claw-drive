@@ -92,7 +92,7 @@
     </div>
 
     <div class="callout">
-      <strong>Known limits.</strong> Indirect write paths bypass the Bash regex — for example <code>python -c 'open(".cloverleaf/claw-drive-policy.json","w").write(...)'</code> or any custom interpreter that opens the file directly. The Edit/Write tool rules still catch the file-tool path. A future release will add runtime enforcement that defends against indirect paths regardless of regex.
+      <strong>Known limits — cooperative, not adversarial.</strong> The rules above match the command string, so they can't inspect what an interpreter does — <code>python -c 'open(".cloverleaf/claw-drive-policy.json","w").write(...)'</code> reaches the policy file without touching the <code>Edit</code>/<code>Write</code> rules. Interpreter one-liners (<code>python -c</code>, <code>node -e</code>, <code>perl -e</code>, <code>eval</code>, <code>sh -c</code>, …) now <strong>defer</strong> to you rather than slipping through silently, but the deferral surfaces the command, not its payload: you are the inspector. Indirect writes and obfuscated commands slip a regex by construction. claw-drive gates a cooperative agent against accidental damage; it is not a sandbox against an adversarial one — for that, run the session inside an OS-level sandbox. See <a href="../THREAT-MODEL.md">THREAT-MODEL.md</a> for the full boundary.
     </div>
 
     <h2 id="claw-gate">The CLAW-GATE convention</h2>
