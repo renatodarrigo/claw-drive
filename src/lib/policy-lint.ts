@@ -12,7 +12,7 @@
  * known-FP check skips the policy-self-protection privilege rules whose
  * read-shape false-positive is documented and accepted.
  */
-import type { PolicyObject, Rule } from "./policy.js";
+import { matchPolicy, type PolicyObject, type Rule } from "./policy.js";
 
 export interface Finding {
   severity: "error" | "warn" | "info";
@@ -211,8 +211,35 @@ function checkKnownFp(policy: PolicyObject, findings: Finding[]): void {
 
 // -- Common-danger coverage (opt-in; CD-31) ----------------------------------
 
-function checkCoverage(_policy: PolicyObject, _findings: Finding[]): void {
-  // No-op stub — coverage analysis is delivered in CD-31.
+/**
+ * Common destructive families and a representative command for each. A family
+ * is "covered" when an auto_reject or auto_defer rule matches its representative
+ * (evaluated through matchPolicy — the canonical semantics, so "covered" means a
+ * reject-or-defer rule actually matches). Off by default so intentionally
+ * permissive policies aren't nagged unless --check-coverage asks.
+ */
+const COMMON_DANGER_FAMILIES: ReadonlyArray<{ family: string; command: string }> = [
+  { family: "rm -rf (recursive delete)", command: "rm -rf /tmp/x" },
+  { family: "git push", command: "git push origin main" },
+  { family: "dd (raw disk write)", command: "dd if=/dev/zero of=/dev/sda" },
+  { family: "mkfs (format a filesystem)", command: "mkfs.ext4 /dev/sda1" },
+  { family: "interpreter escapes (e.g. node -e)", command: 'node -e "1"' },
+];
+
+function checkCoverage(policy: PolicyObject, findings: Finding[]): void {
+  for (const fam of COMMON_DANGER_FAMILIES) {
+    const decision = matchPolicy(policy, { tool: "Bash", args: { command: fam.command } });
+    const covered =
+      decision.decision === "escalate" &&
+      (decision.default_action === "reject" || decision.default_action === "defer");
+    if (!covered) {
+      findings.push({
+        severity: "info",
+        code: "missing_coverage",
+        message: `no auto_reject or auto_defer rule covers the ${fam.family} family (representative: \`${fam.command}\`)`,
+      });
+    }
+  }
 }
 
 // -- Deterministic ordering --------------------------------------------------
