@@ -1,11 +1,11 @@
-import * as fs from "node:fs";
-import { eventsPath, isValidSessionId } from "../../lib/paths.js";
-import { readEventsSince, type Event } from "../../lib/events.js";
+import { isValidSessionId } from "../../lib/paths.js";
+import { type Event } from "../../lib/events.js";
 import {
   extractTrailingToken,
   resolveSurfaceMode,
   DEFAULT_IDLE_AFTER_SECONDS,
 } from "../../lib/tokens.js";
+import { startSessionTailer } from "../../lib/session-tailer.js";
 
 /**
  * Filter predicate: true = emit (human/A needs to see this), false = drop.
@@ -481,157 +481,29 @@ export async function cmdWatch(argv: string[]): Promise<number> {
   if (parsed.all) {
     return cmdWatchAll(parsed);
   }
-  const {
-    sessionId: id,
-    allowed,
-    noTokenFilter,
-    idleAfterSeconds,
-    suspectedNeedsInput,
-  } = parsed;
-  let since = parsed.since;
-
-  // tokenFilter needs to find the matching assistant_text for any
-  // turn_completed event, which may have been emitted in an earlier read
-  // cycle. We accumulate the full event history seen since cmdWatch started
-  // so the lookup always succeeds.
-  const allEvents: Event[] = [];
-
-  // Idle-event timer. Threshold of 0 disables the feature entirely;
-  // shouldFireIdle bails on threshold===0, so the timer plumbing below
-  // is a no-op in that mode.
-  const idle = newIdleState(idleAfterSeconds, Date.now());
-
-  // Synthetic events use NEGATIVE seq numbers so they never collide with
-  // the runner's positive monotonic seq from events.jsonl. v0.5.7 convention.
-  let nextSyntheticSeq = -1;
-  const syntheticSeq = (): number => nextSyntheticSeq--;
-
-  // Default: stream NEW events only, BUT catch up on unresolved gates +
-  // session_stopped first. This plugs a race where events emitted between
-  // start_session's return and Monitor's spawn-of-watch would otherwise be
-  // skipped (cloverleaf CLV-16 dogfood finding, 2026-04-22).
-  let stopped = false;
-  if (since === "current") {
-    const all = await readEventsSince(eventsPath(id), 0);
-    allEvents.push(...all.events);
-    const catchup = catchUpPending(all.events);
-    for (const e of catchup) {
-      if (userFilter(e, allowed)) {
-        process.stdout.write(JSON.stringify(e) + "\n");
-        noteSurface(idle, Date.now());
-      }
-      if (e.kind === "session_stopped") {
-        stopped = true;
-        cancelIdle(idle);
-      }
-    }
-    since = all.nextSince;
-  }
-
-  // Emit a synthetic idle event if the silence threshold has elapsed, then
-  // reset the timer. Subject to userFilter so `--only` works for idle.
-  const maybeEmitIdle = (): void => {
-    if (!shouldFireIdle(idle, Date.now())) return;
-    const idleEvent = {
-      seq: syntheticSeq(),
-      at: new Date().toISOString(),
-      kind: "idle" as const,
-      silent_for_ms: idle.thresholdMs,
-      current_turn: deriveCurrentTurn(allEvents),
-    };
-    if (userFilter(idleEvent as unknown as Event, allowed)) {
-      process.stdout.write(JSON.stringify(idleEvent) + "\n");
-    }
-    // Reset the silence timer even when userFilter drops the idle event;
-    // otherwise the ticker would build-and-drop an idle every tick after
-    // threshold expires.
-    noteSurface(idle, Date.now());
-  };
-
-  let cursor: number = since;
-  const emit = async () => {
-    const { events, nextSince } = await readEventsSince(eventsPath(id), cursor);
-    for (const e of events) {
-      allEvents.push(e);
-      if (shouldEmit(e) && userFilter(e, allowed)) {
-        const decision = decideWatchEmit(e, allEvents, {
-          noTokenFilter,
-          suspectedNeedsInput,
-        });
-        if (decision.emit) {
-          process.stdout.write(JSON.stringify(decision.payload) + "\n");
-          noteSurface(idle, Date.now());
-        }
-      }
-      if (e.kind === "session_stopped") {
-        stopped = true;
-        cancelIdle(idle);
-      }
-    }
-    cursor = nextSince;
-    // After draining a batch (real or empty), check whether silence has
-    // tripped the idle threshold.
-    maybeEmitIdle();
-  };
-
-  // Initial drain (only meaningful if --replay or --since < current)
-  await emit();
-  if (stopped) return 0;
-
-  // Tail on changes
-  let watcher: fs.FSWatcher | null = null;
-  try {
-    watcher = fs.watch(eventsPath(id), { persistent: true });
-  } catch (err) {
-    console.error("cannot watch events.jsonl:", (err as Error).message);
+  // Single-session watch is now the tailer driven straight to stdout. The
+  // tail loop (catch-up, cursor, fs.watch, idle ticker, filter chain,
+  // session_stopped handling) lives in src/lib/session-tailer.ts so the
+  // watch --all multiplexer can reuse it. No tag → output is byte-identical
+  // to before.
+  let watchError: string | null = null;
+  const tailer = startSessionTailer({
+    sessionId: parsed.sessionId,
+    emit: (line) => process.stdout.write(line),
+    since: parsed.since,
+    allowed: parsed.allowed,
+    noTokenFilter: parsed.noTokenFilter,
+    suspectedNeedsInput: parsed.suspectedNeedsInput,
+    idleAfterSeconds: parsed.idleAfterSeconds,
+    onWatchError: (msg) => {
+      watchError = msg;
+    },
+  });
+  process.once("SIGINT", () => tailer.close());
+  await tailer.done;
+  if (watchError !== null) {
+    console.error("cannot watch events.jsonl:", watchError);
     return 1;
   }
-
-  // fs.watch only fires on file changes — but idle is precisely the
-  // absence-of-changes signal. We need an independent ticker. Pick a tick
-  // cadence that catches the threshold crossing within a small fraction
-  // (~quarter) of the threshold, capped at 5s so short thresholds (test
-  // configs, stress runs) react promptly without burning CPU on long ones.
-  const tickMs =
-    idle.thresholdMs === 0
-      ? 0
-      : Math.max(250, Math.min(5000, Math.floor(idle.thresholdMs / 4)));
-
-  const done = new Promise<void>((resolve) => {
-    let ticker: ReturnType<typeof setInterval> | null = null;
-    const cleanup = () => {
-      if (ticker) {
-        clearInterval(ticker);
-        ticker = null;
-      }
-      if (watcher) watcher.close();
-    };
-    const onChange = async () => {
-      try {
-        await emit();
-        if (stopped) {
-          cleanup();
-          resolve();
-        }
-      } catch {
-        /* swallow transient read errors */
-      }
-    };
-    watcher!.on("change", onChange);
-    if (tickMs > 0) {
-      ticker = setInterval(() => {
-        try {
-          maybeEmitIdle();
-        } catch {
-          /* defensive: never let a tick crash the watcher */
-        }
-      }, tickMs);
-    }
-    process.once("SIGINT", () => {
-      cleanup();
-      resolve();
-    });
-  });
-  await done;
   return 0;
 }
