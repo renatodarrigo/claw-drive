@@ -137,7 +137,7 @@ await Monitor(watch_command);  // spawns `claw-drive watch <id>` and streams not
 
 ### Sentinel tokens (the default)
 
-Session B is auto-taught a tiny contract at session start: end your turns with a literal `[TOKEN]` on its own line if (and only if) human attention is needed. `claw-drive watch` parses each `turn_completed`'s last `assistant_text` for the trailing token and surfaces the event only when one is present. No token = silent / autonomous — Session A is not pulled in.
+Session B is auto-taught a tiny contract at session start: end your turns with a literal `[TOKEN]` on its own line if (and only if) human attention is needed. `claw-drive watch` parses each `turn_completed`'s last `assistant_text` for the trailing token and surfaces the event only when one is present. No token = silent / autonomous — Session A is not pulled in (with one narrow exception, the silent-miss backstop below).
 
 The shipped vocabulary is two tokens:
 
@@ -149,6 +149,20 @@ The shipped vocabulary is two tokens:
 Both default to surface mode `always`; there is nothing to override.
 
 `start_session` returns a `notification_contract` field describing the live vocabulary (token names, semantics, surface modes), the `watch_command` payload, the available watch flags, the idle-after default, and whether the wrapper was injected. Drivers that want to stay forward-compatible should read `notification_contract` at spawn time rather than hardcoding the token list.
+
+### Silent-miss backstop
+
+The sentinel protocol's worst failure is silent: if B *should* have ended a turn with `[NEEDS-INPUT]` but forgot, the turn has no token, `watch` drops it, and Session A assumes B is working autonomously — the session stalls until the idle event eventually fires. Token compliance is high but not perfect, and a miss is invisible.
+
+To catch that, `watch` applies a conservative backstop: when a no-token `turn_completed`'s final non-empty line ends in `?`, the event is surfaced anyway, carrying an additive marker so the driver can tell it apart from a real token:
+
+```json
+{"kind":"turn_completed","turn_id":"…","suspected_needs_input":true,"suspected_needs_input_signal":"trailing-question-mark"}
+```
+
+A genuine `[NEEDS-INPUT]` turn surfaces *without* this marker; `suspected_needs_input` means "B emitted no token, but its last line looks like a question — likely a forgotten `[NEEDS-INPUT]`." The heuristic is deliberately narrow — a trailing `?` only, no phrase matching — to keep false positives low, so a no-token statement turn still drops exactly as before. The marker is an additive field on the existing `turn_completed` watch JSON; there is no new event kind.
+
+On by default. Pass `--no-suspected-needs-input` to `watch` to disable it (no-token `?` turns drop as before).
 
 ### Idle events
 
@@ -261,7 +275,7 @@ B's echo fires the hook → policy defers → monitor alerts A → human answers
 | `policy <session> [--set FILE] [--show]` | View/replace a session's policy |
 | `policy-test '<command>' [flags]` | Diagnose a tool call against a policy. Three output formats (default human, `--explain`, `--json`); multi-tool via `--tool TOOL --arg KEY=VALUE`; `--policy starter\|permissive\|bypass\|<file>`; `--exit-on reject\|defer\|approve\|escalate` for CI gating. |
 | `prune [--older-than 24h]` | Remove dead sessions older than cutoff |
-| `watch <session> [--since N \| --replay] [--only KIND[,KIND]... \| --decision-only] [--idle-after SECONDS] [--no-token-filter]` | Stream noteworthy events as JSONL. Used by Monitor flows. Sentinel filter is on by default (`turn_completed` surfaces only when the trailing `[TOKEN]` is present). `--no-token-filter` disables the sentinel filter entirely. `--decision-only` and `--only` are kind-level subset filters that compose with the sentinel filter. `--idle-after SECONDS` (default `600`, `0` disables) emits a synthetic `idle` event when no surfaced event has been seen for that long. |
+| `watch <session> [--since N \| --replay] [--only KIND[,KIND]... \| --decision-only] [--idle-after SECONDS] [--no-token-filter] [--no-suspected-needs-input]` | Stream noteworthy events as JSONL. Used by Monitor flows. Sentinel filter is on by default (`turn_completed` surfaces only when the trailing `[TOKEN]` is present). `--no-token-filter` disables the sentinel filter entirely. `--decision-only` and `--only` are kind-level subset filters that compose with the sentinel filter. `--idle-after SECONDS` (default `600`, `0` disables) emits a synthetic `idle` event when no surfaced event has been seen for that long. The silent-miss backstop surfaces a no-token `turn_completed` whose final line ends in `?` with an additive `suspected_needs_input` marker; `--no-suspected-needs-input` disables it. |
 | `provide-output <call_id> [--stdout S] [--stderr S] [--exit N] [--extra S] [--from-file PATH]` | Relay human-run command output to a deferred call |
 
 ## Troubleshooting
