@@ -51,9 +51,11 @@ EOF
 
 SESS=""
 SESS_DEFER=""
+SESS_CTX=""
 cleanup() {
   [[ -n "$SESS"       ]] && "$BIN" stop "$SESS"       2>/dev/null || true
   [[ -n "$SESS_DEFER" ]] && "$BIN" stop "$SESS_DEFER" 2>/dev/null || true
+  [[ -n "$SESS_CTX"   ]] && "$BIN" stop "$SESS_CTX"   2>/dev/null || true
   rm -rf "$ROOT"
 }
 trap cleanup EXIT
@@ -131,5 +133,64 @@ fi
 info "stopping session"
 "$BIN" stop "$SESS_DEFER"
 SESS_DEFER=""
+
+section "CD-8 decision context (rationale + diff on the poll/pending path)"
+
+# Escalate Edit + Bash so the runner enriches the tool_decision_required event.
+cat > "$ROOT/policy-ctx.json" <<'POLICY'
+{
+  "auto_approve": [{ "tool": "Read" }],
+  "escalate": [{ "tool": "Edit" }, { "tool": "Write" }, { "tool": "Bash" }],
+  "escalate_default": true,
+  "decision_timeout_seconds": 60
+}
+POLICY
+
+info "starting session (context policy)"
+SESS_CTX=$("$BIN" start --cwd "$CWD" --policy "$ROOT/policy-ctx.json")
+info "session: $SESS_CTX"
+
+# --- Edit: expect a capped diff + rationale on the decision event ---
+info "sending an Edit turn that should escalate"
+"$BIN" send "$SESS_CTX" "Use the Edit tool to change the word 'hello' to 'goodbye' in readme.txt." >/dev/null
+
+info "waiting for an Edit tool_decision_required (up to 75s)"
+DEADLINE=$(( $(date +%s) + 75 ))
+while [[ $(date +%s) -lt $DEADLINE ]]; do
+  "$BIN" pending "$SESS_CTX" 2>/dev/null | grep -q '"tool":"Edit"' && break
+  sleep 2
+done
+
+EDIT_LINE=$("$BIN" pending "$SESS_CTX" 2>/dev/null | grep '"tool":"Edit"' | head -1 || true)
+if [[ -n "$EDIT_LINE" ]]; then
+  echo "$EDIT_LINE" | grep -q '"diff":'      && pass "Edit decision carries a diff"      || fail "Edit decision missing diff"
+  echo "$EDIT_LINE" | grep -q '"rationale":' && pass "Edit decision carries a rationale" || fail "Edit decision missing rationale"
+  CALL_ID=$(echo "$EDIT_LINE" | grep -oE '"call_id":"[^"]+"' | head -1 | sed 's/"call_id":"//; s/"//')
+  [[ -n "$CALL_ID" ]] && "$BIN" reject "$CALL_ID" --reason "e2e" >/dev/null 2>&1 || true
+else
+  fail "Edit decision never fired (no pending Edit within 75s)"
+fi
+
+# --- Bash: expect a rationale but NO diff (non-file tool) ---
+info "sending a Bash turn that should escalate"
+"$BIN" send "$SESS_CTX" "Run the bash command: echo context-check" >/dev/null
+
+info "waiting for a Bash tool_decision_required (up to 75s)"
+DEADLINE=$(( $(date +%s) + 75 ))
+while [[ $(date +%s) -lt $DEADLINE ]]; do
+  "$BIN" pending "$SESS_CTX" 2>/dev/null | grep -q '"tool":"Bash"' && break
+  sleep 2
+done
+
+BASH_LINE=$("$BIN" pending "$SESS_CTX" 2>/dev/null | grep '"tool":"Bash"' | head -1 || true)
+if [[ -n "$BASH_LINE" ]]; then
+  echo "$BASH_LINE" | grep -q '"diff":' && fail "Bash decision unexpectedly carries a diff" || pass "Bash decision has no diff (non-file tool)"
+else
+  fail "Bash decision never fired (no pending Bash within 75s)"
+fi
+
+info "stopping session"
+"$BIN" stop "$SESS_CTX"
+SESS_CTX=""
 
 summary
