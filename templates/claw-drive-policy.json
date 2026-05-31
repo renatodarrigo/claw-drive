@@ -6,7 +6,8 @@
     { "tool": "Grep" },
     { "tool": "Bash", "bash_command_matches": "^git( -C \\S+)? (status|diff|log|show|branch|stash list|ls-files|rev-parse|worktree list)(\\s|$)" },
     { "tool": "Bash", "bash_command_matches": "^(ls|cat|head|tail|find|file|tree|wc|pwd|echo|stat|wc|du|df) " },
-    { "tool": "Bash", "bash_command_matches": "^(npm|npx|node) " },
+    { "tool": "Bash", "bash_command_matches": "^(npm|npx) " },
+    { "tool": "Bash", "bash_command_matches": "^node\\s+(?!(--eval|--print|-[a-zA-Z]*[ep])\\b)", "name": "node <script> — eval/print forms (-e/--eval/-p/--print) are excluded and hit auto_defer" },
     { "tool": "Bash", "bash_command_matches": "^cloverleaf-cli " },
     { "tool": "Bash", "bash_command_matches": "cloverleaf-cli ", "name": "cloverleaf-cli anywhere in compound script (set -e, cd, REPO=, etc.)" },
     { "tool": "Bash", "bash_command_matches": "^(set -e|cd |REPO=|export\\s|source )", "name": "common shell prefixes that usually wrap a safe payload" }
@@ -21,7 +22,14 @@
     { "tool": "Bash", "bash_command_matches": "\\bchown\\s+-R\\b", "name": "chown -R — recursive ownership change", "severity": "high" },
     { "tool": "Bash", "bash_command_matches": "\\btruncate\\b", "name": "truncate — zero-out or resize (common log-rotation idiom, but destructive on DBs)", "severity": "high" },
     { "tool": "Bash", "bash_command_matches": "\\bkill\\s+-9\\b.*?\\s(-1|0|1)(\\s|$|[;&|])", "name": "kill -9 of init/everything/process-group (PID 1, -1, or 0)", "severity": "high" },
-    { "tool": "Bash", "bash_command_matches": "\\bsystemctl\\s+(--?[\\w-]+(=\\S+)?\\s+)*(stop|disable|kill|mask)\\b", "name": "systemctl stop/disable/kill/mask — service teardown", "severity": "high" }
+    { "tool": "Bash", "bash_command_matches": "\\bsystemctl\\s+(--?[\\w-]+(=\\S+)?\\s+)*(stop|disable|kill|mask)\\b", "name": "systemctl stop/disable/kill/mask — service teardown", "severity": "high" },
+    { "tool": "Bash", "bash_command_matches": "\\bpython[0-9.]*\\s+-c\\b", "name": "python -c — runs arbitrary code the command regex can't inspect", "severity": "high" },
+    { "tool": "Bash", "bash_command_matches": "\\bnode\\s+(--eval|--print|-[a-zA-Z]*[ep])\\b", "name": "node -e/--eval/-p/--print — runs arbitrary code", "severity": "high" },
+    { "tool": "Bash", "bash_command_matches": "\\bperl[0-9.]*\\s+-e\\b", "name": "perl -e — runs arbitrary code", "severity": "high" },
+    { "tool": "Bash", "bash_command_matches": "\\bruby[0-9.]*\\s+-e\\b", "name": "ruby -e — runs arbitrary code", "severity": "high" },
+    { "tool": "Bash", "bash_command_matches": "\\bphp[0-9.]*\\s+-r\\b", "name": "php -r — runs arbitrary code", "severity": "high" },
+    { "tool": "Bash", "bash_command_matches": "(?:^|[;&|]\\s*)eval(?:\\s|$)", "name": "eval — shell evaluates a constructed string", "severity": "high" },
+    { "tool": "Bash", "bash_command_matches": "\\b(sh|bash|zsh)\\s+(-\\S+\\s+)*-[a-z]*c\\b", "name": "sh/bash/zsh -c — inline shell string bypasses command-level inspection", "severity": "high" }
   ],
 
   "auto_reject": [

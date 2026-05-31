@@ -1050,3 +1050,111 @@ describe("v0.5.9 — permissive hardening from claw-crypto", () => {
     });
   }
 });
+
+describe("CD-3 — interpreter one-liner escapes (defer in both templates)", () => {
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = nodePath.dirname(__filename);
+  const starter: Policy = JSON.parse(
+    fsSync.readFileSync(nodePath.resolve(__dirname, "..", "..", "templates", "claw-drive-policy.json"), "utf-8")
+  );
+  const permissive: Policy = JSON.parse(
+    fsSync.readFileSync(nodePath.resolve(__dirname, "..", "..", "templates", "claw-drive-policy-permissive.json"), "utf-8")
+  );
+  const templates: Array<[string, Policy]> = [
+    ["starter", starter],
+    ["permissive", permissive],
+  ];
+
+  // Each interpreter one-liner runs code the command regex can't inspect, so it
+  // must DEFER (surface to the human) in BOTH templates. Payloads are benign so
+  // they don't trip auto_reject (which would reject, not defer).
+  const deferCases: string[] = [
+    'python -c "print(1)"',
+    'python3 -c "print(1)"',
+    'node -e "1+1"',
+    'node --eval "1+1"',
+    'perl -e "print 1"',
+    'ruby -e "puts 1"',
+    'php -r "echo 1;"',
+    'eval "echo hi"',
+    'sh -c "echo hi"',
+    'bash -c "echo hi"',
+    'zsh -c "echo hi"',
+  ];
+
+  for (const [tplName, policy] of templates) {
+    for (const command of deferCases) {
+      it(`${tplName}: "${command}" → escalate/defer`, () => {
+        const r = matchPolicy(policy, { tool: "Bash", args: { command } });
+        expect(r.decision, `cmd: ${command}`).toBe("escalate");
+        if (r.decision === "escalate") {
+          expect(r.default_action, `cmd: ${command}`).toBe("defer");
+        }
+      });
+    }
+  }
+
+  // Regression: the node -e auto-approve hole is closed. eval/print forms
+  // (-e, --eval, -p, --print, and combined -pe) must no longer auto-approve.
+  const nodeEvalForms: string[] = [
+    'node -e "x"',
+    'node --eval "x"',
+    'node -p "x"',
+    'node --print "x"',
+    'node -pe "x"',
+  ];
+  for (const [tplName, policy] of templates) {
+    for (const command of nodeEvalForms) {
+      it(`${tplName}: "${command}" no longer auto-approves`, () => {
+        const r = matchPolicy(policy, { tool: "Bash", args: { command } });
+        expect(r.decision, `cmd: ${command}`).not.toBe("approve_silent");
+      });
+    }
+  }
+
+  // No over-tightening: legitimate non-eval node/npm/npx still auto-approve.
+  const stillApprove: string[] = [
+    "node script.js",
+    "node dist/app.js",
+    "node --version",
+    "npm test",
+    "npm run build",
+    "npx tsc",
+  ];
+  for (const [tplName, policy] of templates) {
+    for (const command of stillApprove) {
+      it(`${tplName}: "${command}" still auto-approves`, () => {
+        const r = matchPolicy(policy, { tool: "Bash", args: { command } });
+        expect(r.decision, `cmd: ${command}`).toBe("approve_silent");
+      });
+    }
+  }
+
+  // Compound bypass: an interpreter one-liner after a benign prefix still
+  // defers — auto_defer fires before the cd/set-e auto_approve.
+  const compoundDefer: string[] = [
+    'cd /tmp && node -e "1"',
+    'set -e; python3 -c "print(1)"',
+  ];
+  for (const [tplName, policy] of templates) {
+    for (const command of compoundDefer) {
+      it(`${tplName}: compound "${command}" → escalate/defer`, () => {
+        const r = matchPolicy(policy, { tool: "Bash", args: { command } });
+        expect(r.decision, `cmd: ${command}`).toBe("escalate");
+        if (r.decision === "escalate") {
+          expect(r.default_action, `cmd: ${command}`).toBe("defer");
+        }
+      });
+    }
+  }
+
+  // The two shipped templates must keep identical auto_defer arrays (the
+  // existing byte-for-byte mirror test guards this; restated here for CD-3).
+  it("both templates carry the same interpreter-escape auto_defer rules", () => {
+    expect(permissive.auto_defer).toEqual(starter.auto_defer);
+    const names = (starter.auto_defer ?? []).map((r) => r.name ?? "").join("|");
+    for (const frag of ["python -c", "node -e", "perl -e", "ruby -e", "php -r", "eval", "sh/bash/zsh -c"]) {
+      expect(names, `missing rule for ${frag}`).toContain(frag);
+    }
+  });
+});
