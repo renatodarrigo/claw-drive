@@ -6,6 +6,7 @@ import {
   DEFAULT_IDLE_AFTER_SECONDS,
 } from "../../lib/tokens.js";
 import { startSessionTailer } from "../../lib/session-tailer.js";
+import { startWatchMultiplexer } from "../../lib/watch-multiplexer.js";
 
 /**
  * Filter predicate: true = emit (human/A needs to see this), false = drop.
@@ -447,15 +448,27 @@ export function parseWatchArgs(argv: string[]): ParsedWatchArgs {
 }
 
 /**
- * `watch --all` fleet multiplexer. CD-38 lands parsing + live-session
- * enumeration; CD-40 replaces this stub body with the dynamic-membership
- * multiplexer that tails every live session into one tagged stream.
+ * `watch --all` fleet multiplexer: tail every live session into one merged,
+ * session_id-tagged stream with dynamic membership, running until SIGINT. The
+ * mux owns enumeration + rescan (src/lib/watch-multiplexer.ts) and reuses the
+ * per-session tailer; this just wires it to stdout + SIGINT.
  */
 async function cmdWatchAll(
-  _parsed: Extract<ParsedWatchArgs, { ok: true; all: true }>
+  parsed: Extract<ParsedWatchArgs, { ok: true; all: true }>
 ): Promise<number> {
-  console.error("watch --all is not yet available");
-  return 1;
+  const mux = startWatchMultiplexer({
+    emit: (line) => process.stdout.write(line),
+    filters: {
+      since: parsed.since,
+      allowed: parsed.allowed,
+      noTokenFilter: parsed.noTokenFilter,
+      suspectedNeedsInput: parsed.suspectedNeedsInput,
+      idleAfterSeconds: parsed.idleAfterSeconds,
+    },
+  });
+  process.once("SIGINT", () => mux.close());
+  await mux.done;
+  return 0;
 }
 
 export async function cmdWatch(argv: string[]): Promise<number> {
@@ -466,6 +479,8 @@ export async function cmdWatch(argv: string[]): Promise<number> {
         "\nusage: claw-drive watch <session_id> [--since N | --replay] " +
         "[--only KIND[,KIND]... | --decision-only] [--no-token-filter] " +
         "[--idle-after SECONDS] [--no-suspected-needs-input]\n" +
+        "   or: claw-drive watch --all [same flags]   (merge every live session into one\n" +
+        "       session_id-tagged stream; dynamic membership; runs until SIGINT)\n" +
         "  default: stream NEW events only (no replay), idle event after 600s of silence\n" +
         "  --since N: start from seq N (0 = full replay)\n" +
         "  --replay: shorthand for --since 0\n" +
