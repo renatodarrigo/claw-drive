@@ -109,16 +109,18 @@ export function catchUpPending(events: Event[]): Event[] {
   return out;
 }
 
+/** The per-session filter/replay flags shared by single- and all-mode watch. */
+export interface WatchFilterArgs {
+  since: number | "current";
+  allowed: Set<string> | null;
+  noTokenFilter: boolean;
+  idleAfterSeconds: number;
+  suspectedNeedsInput: boolean;
+}
+
 export type ParsedWatchArgs =
-  | {
-      ok: true;
-      sessionId: string;
-      since: number | "current";
-      allowed: Set<string> | null;
-      noTokenFilter: boolean;
-      idleAfterSeconds: number;
-      suspectedNeedsInput: boolean;
-    }
+  | ({ ok: true; all: false; sessionId: string } & WatchFilterArgs)
+  | ({ ok: true; all: true } & WatchFilterArgs)
   | { ok: false; error: string };
 
 /**
@@ -345,10 +347,8 @@ export function deriveCurrentTurn(events: Event[]): string | null {
  * can exercise flag combinations without spawning a subprocess.
  */
 export function parseWatchArgs(argv: string[]): ParsedWatchArgs {
-  const id = argv[0];
-  if (!id || !isValidSessionId(id)) {
-    return { ok: false, error: "session id missing or malformed" };
-  }
+  let sessionId: string | null = null;
+  let all = false;
   let since: number | "current" = "current";
   let allowed: Set<string> | null = null;
   let decisionOnlySet = false;
@@ -357,9 +357,11 @@ export function parseWatchArgs(argv: string[]): ParsedWatchArgs {
   let idleAfterSeconds = DEFAULT_IDLE_AFTER_SECONDS;
   let suspectedNeedsInput = true;
 
-  for (let i = 1; i < argv.length; i++) {
+  for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === "--since") {
+    if (a === "--all") {
+      all = true;
+    } else if (a === "--since") {
       const v = argv[++i];
       if (v === undefined) return { ok: false, error: "--since requires a value" };
       since = Number(v);
@@ -407,20 +409,53 @@ export function parseWatchArgs(argv: string[]): ParsedWatchArgs {
         return { ok: false, error: `--idle-after requires a non-negative integer seconds; 0 disables (got '${v}')` };
       }
       idleAfterSeconds = Number(v);
-    } else {
+    } else if (a.startsWith("--")) {
       return { ok: false, error: `unknown flag: ${a}` };
+    } else {
+      // A positional token: the (single) session id.
+      if (sessionId !== null) {
+        return { ok: false, error: "at most one session id" };
+      }
+      if (!isValidSessionId(a)) {
+        return { ok: false, error: "session id missing or malformed" };
+      }
+      sessionId = a;
     }
   }
 
-  return {
-    ok: true,
-    sessionId: id,
+  const filters: WatchFilterArgs = {
     since,
     allowed,
     noTokenFilter,
     idleAfterSeconds,
     suspectedNeedsInput,
   };
+
+  if (all && sessionId !== null) {
+    return {
+      ok: false,
+      error: "--all takes no session id — watch one session by id, or the whole fleet with --all",
+    };
+  }
+  if (!all && sessionId === null) {
+    return { ok: false, error: "session id missing or malformed" };
+  }
+
+  return all
+    ? { ok: true, all: true, ...filters }
+    : { ok: true, all: false, sessionId: sessionId as string, ...filters };
+}
+
+/**
+ * `watch --all` fleet multiplexer. CD-38 lands parsing + live-session
+ * enumeration; CD-40 replaces this stub body with the dynamic-membership
+ * multiplexer that tails every live session into one tagged stream.
+ */
+async function cmdWatchAll(
+  _parsed: Extract<ParsedWatchArgs, { ok: true; all: true }>
+): Promise<number> {
+  console.error("watch --all is not yet available");
+  return 1;
 }
 
 export async function cmdWatch(argv: string[]): Promise<number> {
@@ -442,6 +477,9 @@ export async function cmdWatch(argv: string[]): Promise<number> {
         `  valid kinds: ${[...VALID_WATCH_KINDS].join(", ")}`
     );
     return 2;
+  }
+  if (parsed.all) {
+    return cmdWatchAll(parsed);
   }
   const {
     sessionId: id,

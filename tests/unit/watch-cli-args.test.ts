@@ -19,7 +19,7 @@ describe("parseWatchArgs — session id", () => {
     // Session IDs are isValidSessionId-shaped; a UUID-ish hex string works.
     const r = parseWatchArgs(["sess_abcdef0123456789"]);
     expect(r.ok).toBe(true);
-    if (r.ok) {
+    if (r.ok && !r.all) {
       expect(r.sessionId).toBe("sess_abcdef0123456789");
       expect(r.since).toBe("current");
       expect(r.allowed).toBeNull();
@@ -297,6 +297,65 @@ describe("parseWatchArgs — --no-suspected-needs-input (CD-6 backstop toggle)",
     if (r.ok) {
       expect(r.suspectedNeedsInput).toBe(false);
       expect(r.allowed!.has("turn_completed")).toBe(true);
+    }
+  });
+});
+
+describe("parseWatchArgs — --all (CD-7 fleet mode)", () => {
+  it("--all returns an ok all-mode result with no sessionId", () => {
+    const r = parseWatchArgs(["--all"]);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.all).toBe(true);
+      expect((r as Record<string, unknown>).sessionId).toBeUndefined();
+    }
+  });
+
+  it("--all combined with a session id is rejected", () => {
+    const r = parseWatchArgs(["--all", "sess_abcdef0123456789"]);
+    expect(r.ok).toBe(false);
+  });
+
+  it("a session id alone is single-mode (all=false)", () => {
+    const r = parseWatchArgs(["sess_abcdef0123456789"]);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.all).toBe(false);
+      if (!r.all) expect(r.sessionId).toBe("sess_abcdef0123456789");
+    }
+  });
+
+  it("neither --all nor a session id is rejected (as before)", () => {
+    expect(parseWatchArgs([]).ok).toBe(false);
+  });
+
+  it("every existing flag parses identically under --all", () => {
+    const r = parseWatchArgs([
+      "--all",
+      "--decision-only",
+      "--idle-after",
+      "30",
+      "--no-token-filter",
+      "--no-suspected-needs-input",
+    ]);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.all).toBe(true);
+      expect(r.idleAfterSeconds).toBe(30);
+      expect(r.noTokenFilter).toBe(true);
+      expect(r.suspectedNeedsInput).toBe(false);
+      expect(r.allowed).not.toBeNull();
+    }
+  });
+
+  it("--all composes with --replay and --only", () => {
+    const r = parseWatchArgs(["--all", "--replay", "--only", "turn_completed,session_stopped"]);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.all).toBe(true);
+      expect(r.since).toBe(0);
+      expect(r.allowed!.has("turn_completed")).toBe(true);
+      expect(r.allowed!.has("session_stopped")).toBe(true);
     }
   });
 });
