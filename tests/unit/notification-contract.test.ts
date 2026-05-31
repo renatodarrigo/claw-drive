@@ -53,11 +53,12 @@ describe("buildNotificationContract", () => {
     expect(c.watch_command).toBe("claw-drive watch sess_abc");
   });
 
-  it("includes the four documented watch_flags keys", () => {
+  it("includes the five documented watch_flags keys (incl. CD-6 --no-suspected-needs-input)", () => {
     const c = buildNotificationContract(baseArgs);
     expect(Object.keys(c.watch_flags).sort()).toEqual([
       "--decision-only",
       "--idle-after SECONDS",
+      "--no-suspected-needs-input",
       "--no-token-filter",
       "--only KIND[,KIND]...",
     ]);

@@ -117,6 +117,7 @@ export type ParsedWatchArgs =
       allowed: Set<string> | null;
       noTokenFilter: boolean;
       idleAfterSeconds: number;
+      suspectedNeedsInput: boolean;
     }
   | { ok: false; error: string };
 
@@ -138,20 +139,131 @@ export function tokenFilter(
   if (ev.kind !== "turn_completed") return true;
 
   const turnId = (ev as { turn_id: string }).turn_id;
-  let lastText: string | undefined;
-  for (let i = events.length - 1; i >= 0; i--) {
-    const e = events[i];
-    if (e.kind === "assistant_text" && (e as { turn_id?: string }).turn_id === turnId) {
-      lastText = (e as { text: string }).text;
-      break;
-    }
-  }
+  const lastText = lastAssistantTextForTurn(turnId, events);
   if (lastText === undefined) return false;
 
   const token = extractTrailingToken(lastText);
   if (token === null) return false;
 
   return resolveSurfaceMode(token) === "always";
+}
+
+/** Find the most recent `assistant_text` for `turnId`, or undefined. */
+function lastAssistantTextForTurn(turnId: string, events: Event[]): string | undefined {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.kind === "assistant_text" && (e as { turn_id?: string }).turn_id === turnId) {
+      return (e as { text: string }).text;
+    }
+  }
+  return undefined;
+}
+
+/** The final non-empty (trimmed) line of `text`, or "" if there is none. */
+function finalNonEmptyLine(text: string): string {
+  const lines = text.split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const trimmed = lines[i].trim();
+    if (trimmed.length > 0) return trimmed;
+  }
+  return "";
+}
+
+/**
+ * CD-6 silent-miss backstop: a bounded, stable descriptor for the matched
+ * signal, attached to the watch JSON alongside `suspected_needs_input`. A
+ * descriptor (not the raw line) keeps the watch stream bounded — the driver
+ * gets the full assistant_text via `tail`/`status`.
+ */
+export const SUSPECTED_NEEDS_INPUT_SIGNAL = "trailing-question-mark";
+
+export type SuspectedNeedsInputVerdict =
+  | { suspected: false }
+  | { suspected: true; signal: string };
+
+/**
+ * CD-6 silent-miss backstop. The sentinel protocol's scariest failure is
+ * silent: if Session B should have emitted `[NEEDS-INPUT]` but forgot,
+ * `tokenFilter` drops the `turn_completed` and Session A assumes B is working
+ * autonomously — the session deadlocks until the idle event eventually fires.
+ *
+ * For a no-token `turn_completed` this tests the turn's final assistant line:
+ * if it ends in `?`, treat the turn as a SUSPECTED needs-input so the caller
+ * surfaces it (with an additive marker so the driver can tell it apart from a
+ * real `[NEEDS-INPUT]`).
+ *
+ * Conservative by design (RFC CD-6 out-of-scope list): trailing `?` ONLY — no
+ * phrase matching ("should I", "confirm", …). Returns `suspected:false` when
+ * disabled, for non-`turn_completed` kinds, for tokened turns (those are not a
+ * silent miss), when the turn has no assistant_text, or when the final line is
+ * a statement.
+ */
+export function detectSuspectedNeedsInput(
+  ev: Event,
+  events: Event[],
+  enabled: boolean
+): SuspectedNeedsInputVerdict {
+  if (!enabled) return { suspected: false };
+  if (ev.kind !== "turn_completed") return { suspected: false };
+
+  const turnId = (ev as { turn_id: string }).turn_id;
+  const lastText = lastAssistantTextForTurn(turnId, events);
+  if (lastText === undefined) return { suspected: false };
+  if (extractTrailingToken(lastText) !== null) return { suspected: false };
+
+  if (finalNonEmptyLine(lastText).endsWith("?")) {
+    return { suspected: true, signal: SUSPECTED_NEEDS_INPUT_SIGNAL };
+  }
+  return { suspected: false };
+}
+
+/** The additive CD-6 marker the backstop attaches to a rescued turn_completed. */
+export interface SuspectedNeedsInputMarker {
+  suspected_needs_input: true;
+  suspected_needs_input_signal: string;
+}
+
+export interface WatchEmitDecision {
+  /** true = write `payload` to the watch stream; false = drop. */
+  emit: boolean;
+  /**
+   * The object to serialize. Identical to `ev` unless the CD-6 backstop
+   * rescued an otherwise-dropped no-token question turn, in which case it is a
+   * shallow copy carrying the additive `suspected_needs_input` marker.
+   */
+  payload: Event | (Event & SuspectedNeedsInputMarker);
+}
+
+/**
+ * The full per-event surface decision for `claw-drive watch`, layering the
+ * CD-6 silent-miss backstop on top of the sentinel `tokenFilter`. Pure and
+ * exported so tests exercise the decision AND the additive-marker shape
+ * without spawning a subprocess.
+ *
+ * `shouldEmit` + `userFilter` are applied by the caller before this; this
+ * layer owns only the token/backstop decision and the emitted payload. When
+ * `tokenFilter` already surfaces the turn (a real token, or `--no-token-filter`)
+ * the event passes through raw — the marker only appears on turns the backstop
+ * itself rescues.
+ */
+export function decideWatchEmit(
+  ev: Event,
+  events: Event[],
+  opts: { noTokenFilter: boolean; suspectedNeedsInput: boolean }
+): WatchEmitDecision {
+  if (tokenFilter(ev, events, opts.noTokenFilter)) {
+    return { emit: true, payload: ev };
+  }
+  const verdict = detectSuspectedNeedsInput(ev, events, opts.suspectedNeedsInput);
+  if (verdict.suspected) {
+    const payload: Event & SuspectedNeedsInputMarker = {
+      ...ev,
+      suspected_needs_input: true,
+      suspected_needs_input_signal: verdict.signal,
+    };
+    return { emit: true, payload };
+  }
+  return { emit: false, payload: ev };
 }
 
 /**
@@ -243,6 +355,7 @@ export function parseWatchArgs(argv: string[]): ParsedWatchArgs {
   let onlySet = false;
   let noTokenFilter = false;
   let idleAfterSeconds = DEFAULT_IDLE_AFTER_SECONDS;
+  let suspectedNeedsInput = true;
 
   for (let i = 1; i < argv.length; i++) {
     const a = argv[i];
@@ -283,6 +396,8 @@ export function parseWatchArgs(argv: string[]): ParsedWatchArgs {
       allowed = new Set(kinds);
     } else if (a === "--no-token-filter") {
       noTokenFilter = true;
+    } else if (a === "--no-suspected-needs-input") {
+      suspectedNeedsInput = false;
     } else if (a === "--idle-after") {
       const v = argv[++i];
       if (v === undefined) {
@@ -304,6 +419,7 @@ export function parseWatchArgs(argv: string[]): ParsedWatchArgs {
     allowed,
     noTokenFilter,
     idleAfterSeconds,
+    suspectedNeedsInput,
   };
 }
 
@@ -314,7 +430,7 @@ export async function cmdWatch(argv: string[]): Promise<number> {
       parsed.error +
         "\nusage: claw-drive watch <session_id> [--since N | --replay] " +
         "[--only KIND[,KIND]... | --decision-only] [--no-token-filter] " +
-        "[--idle-after SECONDS]\n" +
+        "[--idle-after SECONDS] [--no-suspected-needs-input]\n" +
         "  default: stream NEW events only (no replay), idle event after 600s of silence\n" +
         "  --since N: start from seq N (0 = full replay)\n" +
         "  --replay: shorthand for --since 0\n" +
@@ -322,11 +438,18 @@ export async function cmdWatch(argv: string[]): Promise<number> {
         "  --decision-only: shorthand for --only on the human-attention kinds\n" +
         "  --no-token-filter: surface every event regardless of trailing token\n" +
         "  --idle-after SECONDS: emit synthetic 'idle' event after N seconds of silence (default 600; 0 disables)\n" +
+        "  --no-suspected-needs-input: disable the silent-miss backstop (no-token '?' turns drop as before; on by default)\n" +
         `  valid kinds: ${[...VALID_WATCH_KINDS].join(", ")}`
     );
     return 2;
   }
-  const { sessionId: id, allowed, noTokenFilter, idleAfterSeconds } = parsed;
+  const {
+    sessionId: id,
+    allowed,
+    noTokenFilter,
+    idleAfterSeconds,
+    suspectedNeedsInput,
+  } = parsed;
   let since = parsed.since;
 
   // tokenFilter needs to find the matching assistant_text for any
@@ -392,13 +515,15 @@ export async function cmdWatch(argv: string[]): Promise<number> {
     const { events, nextSince } = await readEventsSince(eventsPath(id), cursor);
     for (const e of events) {
       allEvents.push(e);
-      if (
-        shouldEmit(e) &&
-        userFilter(e, allowed) &&
-        tokenFilter(e, allEvents, noTokenFilter)
-      ) {
-        process.stdout.write(JSON.stringify(e) + "\n");
-        noteSurface(idle, Date.now());
+      if (shouldEmit(e) && userFilter(e, allowed)) {
+        const decision = decideWatchEmit(e, allEvents, {
+          noTokenFilter,
+          suspectedNeedsInput,
+        });
+        if (decision.emit) {
+          process.stdout.write(JSON.stringify(decision.payload) + "\n");
+          noteSurface(idle, Date.now());
+        }
       }
       if (e.kind === "session_stopped") {
         stopped = true;
