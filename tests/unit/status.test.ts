@@ -639,3 +639,83 @@ describe("parseStatusArgs", () => {
     expect(r.ok).toBe(false);
   });
 });
+
+describe("status — CD-8 rationale + diff in pending decisions", () => {
+  const ms = Date.parse("2026-05-01T00:01:00Z");
+
+  function snapWith(tdrExtra: object): SessionSnapshot {
+    const events: Event[] = [
+      ev({ seq: 1, kind: "turn_started", turn_id: "t1", message: "go" } as any),
+      ev({
+        seq: 2,
+        kind: "tool_decision_required",
+        turn_id: "t1",
+        call_id: "c-x",
+        tool: "Edit",
+        args: { file_path: "x.ts" },
+        severity: "high",
+        default_action: "defer",
+        default_at: "2026-05-01T00:00:05Z",
+        ...tdrExtra,
+      } as any),
+    ];
+    return buildSessionSnapshot(baseState(), events, ms)!;
+  }
+
+  const EDIT_EXTRA = {
+    rationale: "patching x",
+    diff: "--- a/x.ts\n+++ b/x.ts\n@@ -1,1 +1,1 @@\n-const a = 1;\n+const a = 2;",
+  };
+
+  it("status --json includes rationale + diff for an escalated Edit", () => {
+    const json = JSON.parse(renderJson(snapWith(EDIT_EXTRA)));
+    expect(json.pending_decisions[0].rationale).toBe("patching x");
+    expect(json.pending_decisions[0].diff).toContain("+const a = 2;");
+  });
+
+  it("status detail shows the rationale + diff lines", () => {
+    const detail = renderDetailedBlock(snapWith(EDIT_EXTRA));
+    expect(detail).toContain("rationale: patching x");
+    expect(detail).toContain("+const a = 2;");
+  });
+
+  it("a non-file tool surfaces rationale only (no diff)", () => {
+    const events: Event[] = [
+      ev({
+        seq: 1,
+        kind: "tool_decision_required",
+        turn_id: "t1",
+        call_id: "c-b",
+        tool: "Bash",
+        args: { command: "ls" },
+        severity: "high",
+        default_action: "defer",
+        default_at: "2026-05-01T00:00:05Z",
+        rationale: "listing",
+      } as any),
+    ];
+    const snap = buildSessionSnapshot(baseState(), events, ms)!;
+    expect(snap.pending_decisions[0].rationale).toBe("listing");
+    expect(snap.pending_decisions[0].diff).toBeUndefined();
+    expect(renderJson(snap)).not.toContain('"diff"');
+  });
+
+  it("a decision lacking the fields renders with neither key", () => {
+    const events: Event[] = [
+      ev({
+        seq: 1,
+        kind: "tool_decision_required",
+        turn_id: "t1",
+        call_id: "c-n",
+        tool: "Bash",
+        args: { command: "ls" },
+        severity: "high",
+        default_action: "defer",
+        default_at: "2026-05-01T00:00:05Z",
+      } as any),
+    ];
+    const json = JSON.parse(renderJson(buildSessionSnapshot(baseState(), events, ms)!));
+    expect("rationale" in json.pending_decisions[0]).toBe(false);
+    expect("diff" in json.pending_decisions[0]).toBe(false);
+  });
+});

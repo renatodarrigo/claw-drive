@@ -18,6 +18,10 @@ export interface PendingDecisionSnapshot {
   default_action: "approve" | "reject" | "defer";
   deferred_at: string;
   age_seconds: number;
+  /** CD-8: capped rationale (preceding assistant_text), already bounded at source. */
+  rationale?: string;
+  /** CD-8: capped unified diff for Edit/Write, already bounded at source. */
+  diff?: string;
 }
 
 export interface RecentErrorSnapshot {
@@ -157,6 +161,9 @@ export function buildSessionSnapshot(
       default_action: required.default_action,
       deferred_at: required.at,
       age_seconds: ageSeconds,
+      // CD-8: pass the at-source-capped rationale/diff straight through (no re-expand).
+      rationale: required.rationale,
+      diff: required.diff,
     });
   }
 
@@ -382,6 +389,11 @@ export function renderDetailedBlock(s: SessionSnapshot): string {
       lines.push(
         `     severity: ${p.severity} · default: ${p.default_action} · age: ${ageHumanReadable(p.age_seconds)}`
       );
+      if (p.rationale) lines.push(`     rationale: ${p.rationale}`);
+      if (p.diff) {
+        lines.push(`     diff:`);
+        for (const dl of p.diff.split("\n")) lines.push(`       ${dl}`);
+      }
     });
   }
 
