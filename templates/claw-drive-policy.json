@@ -52,5 +52,12 @@
   ],
 
   "escalate_default": true,
-  "decision_timeout_seconds": 3600
+  "decision_timeout_seconds": 3600,
+
+  "_budget_example": {
+    "_comment": "Run-level circuit-breaker (CD-4). RENAME this key to \"budget\" to enable it — it is OFF by default. All fields optional; an absent field is unlimited. On breach the runner reaps the session (SIGTERM then SIGKILL) with exit_reason budget_exceeded:<cap>.",
+    "max_tool_calls": 500,
+    "max_wall_clock_seconds": 3600,
+    "max_consecutive_errors": 5
+  }
 }
