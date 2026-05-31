@@ -144,6 +144,19 @@ claw-drive policy-test --tool Grep --arg pattern='api_key'</code></pre>
 
     <p><code>--policy SPEC</code> selects which policy to test against. <code>SPEC</code> is one of <code>starter</code> (default), <code>permissive</code>, <code>bypass</code>, or a <code>&lt;path&gt;</code> to a custom policy JSON. <code>--exit-on reject|defer|approve|escalate</code> turns the diagnostic into a CI gate — exits 1 on match, 0 otherwise.</p>
 
+    <h2 id="linting">Linting a policy</h2>
+    <p>Where <code>policy-test</code> checks one command, <code>claw-drive policy lint &lt;file&gt;</code> analyzes the whole file for structural problems before you trust it. Default checks:</p>
+    <ul>
+      <li><strong>Regex compile errors</strong> — a <code>bash_command_matches</code> or <code>arg_matches</code> pattern that does not compile.</li>
+      <li><strong>Shadowed / unreachable rules</strong> — a rule an earlier, stricter rule always wins over (per the evaluation order above).</li>
+      <li><strong>Overly-broad patterns</strong> — a pattern that matches the empty string, or leads with <code>.*</code> / <code>.+</code>.</li>
+      <li><strong>Known false-positive shapes</strong> — a write-shaped reject rule that would catch a read-intent backup such as <code>cp config.json /backup/</code>.</li>
+    </ul>
+    <pre><code class="language-bash">claw-drive policy lint ./my-policy.json              # grouped by severity
+claw-drive policy lint --json ./my-policy.json       # { file, findings, summary } for jq / CI
+claw-drive policy lint --max-severity warn ./my-policy.json   # exit 1 on any warn-or-error (CI gate)</code></pre>
+    <p><code>--max-severity warn|error</code> sets the exit-code threshold (omit it for report-only — always exit 0). <code>--check-coverage</code> is opt-in: it additionally flags common destructive families (<code>rm -rf</code>, <code>git push</code>, <code>dd</code>, <code>mkfs</code>, interpreter escapes) the policy neither rejects nor defers. Both shipped templates lint clean — no findings — by default.</p>
+
     <h2>Timeouts</h2>
     <p>The default <code>decision_timeout_seconds</code> is <strong>3600</strong> (1 hour). If an escalation sits unresolved that long, the runner fires the rule's <code>default_action</code>:</p>
     <ul>

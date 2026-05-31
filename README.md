@@ -166,7 +166,7 @@ The `/claw-drive-start` plugin skill defaults to the sentinel-aware behavior. Pa
 
 ## Policy
 
-A policy is either `"bypass"` (no gating) or an object. Rules in order: `auto_approve` wins over `auto_reject`; unmatched calls escalate by default.
+A policy is either `"bypass"` (no gating) or an object. Rules are evaluated `auto_reject` → `auto_defer` → `auto_approve`; the first match wins, so a reject beats an approve. Unmatched calls escalate by default.
 
 ```json
 {
@@ -183,6 +183,24 @@ A policy is either `"bypass"` (no gating) or an object. Rules in order: `auto_ap
 ```
 
 On timeout: the `default_action` for escalated calls is `approve` (when `escalate_default: true`) or `reject` (when `escalate_default: false`). The approver script self-times-out 5s before claude's 600s hook ceiling and fails secure (exit 2 / deny).
+
+### Linting a policy
+
+`claw-drive policy lint <file>` analyzes a whole policy for structural problems before you trust it — a complement to `policy-test`, which checks one command at a time. Default checks:
+
+- **regex compile errors** — a `bash_command_matches` / `arg_matches` pattern that won't compile;
+- **shadowed / unreachable rules** — a rule an earlier, stricter rule always wins over (per the evaluation order above);
+- **overly-broad patterns** — a pattern that matches the empty string or leads with `.*` / `.+`;
+- **known false-positive shapes** — a write-shaped reject rule that would catch a read-intent backup like `cp config.json /backup/`.
+
+```bash
+claw-drive policy lint ./my-policy.json                     # human-readable, grouped by severity
+claw-drive policy lint --json ./my-policy.json              # { file, findings, summary } for jq / CI
+claw-drive policy lint --max-severity warn ./my-policy.json # exit 1 on any warn-or-error (CI gate)
+claw-drive policy lint --check-coverage ./my-policy.json    # also flag uncovered danger families
+```
+
+`--max-severity warn|error` sets the exit-code threshold (omit for report-only). `--check-coverage` is opt-in: it flags common destructive families (`rm -rf`, `git push`, `dd`, `mkfs`, interpreter escapes) the policy neither rejects nor defers. Both shipped templates lint clean — no findings — by default.
 
 ### Deferring commands the human must run
 
