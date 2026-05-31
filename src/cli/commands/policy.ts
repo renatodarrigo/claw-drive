@@ -2,8 +2,11 @@ import * as fs from "node:fs/promises";
 import { socketPath, statePath, isValidSessionId } from "../../lib/paths.js";
 import { readState } from "../../lib/state.js";
 import { sendRequest } from "../../runner/socket-server.js";
+import { cmdPolicyLint } from "./policy-lint.js";
 
 export async function cmdPolicy(argv: string[]): Promise<number> {
+  // `policy lint <file>` — static policy-file analysis (no session); CD-5.
+  if (argv[0] === "lint") return cmdPolicyLint(argv.slice(1));
   const id = argv[0];
   if (!id || !isValidSessionId(id)) {
     console.error("usage: claw-drive policy <session> [--set FILE] [--show]");

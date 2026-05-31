@@ -89,6 +89,9 @@ Commands:
   stop <session>
   interrupt <session> <turn>
   policy <session> [--set FILE] [--show]
+  policy lint <file> [--check-coverage] [--json] [--max-severity warn|error]
+                                Analyze a policy file for structural problems
+                                (regex compile, shadowed/unreachable, overly-broad, known-FP)
   policy-test '<command>' [--policy starter|permissive|bypass|<file>] [--explain|--json]
                                 Diagnose a tool call against a policy (Bash + non-Bash tools)
   status [<session>] [--json]   Snapshot of all (or one) driven session: state, current turn, pending decisions, recent errors
