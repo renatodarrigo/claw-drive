@@ -276,7 +276,7 @@ B's echo fires the hook → policy defers → monitor alerts A → human answers
 | `sessions` | List sessions (live + orphaned) |
 | `show <session>` | State + last 20 events |
 | `tail <session> [--since N] [--follow]` | Stream events |
-| `pending [<session>]` | List awaiting-approval calls |
+| `pending [<session>]` | List awaiting-approval calls. An escalated decision carries a capped `rationale` and (for Edit/Write) a `diff`. |
 | `approve <call_id> [--reason R] [--remember]` | Approve a paused call. `--remember` derives a rule and appends to `auto_approve`. |
 | `reject <call_id> [--reason R] [--remember]` | Reject a paused call. `--remember` appends to `auto_reject`. |
 | `defer <call_id> [--reason R] [--remember]` | Defer a paused call to the human. `--remember` appends to `auto_defer`. |
@@ -290,6 +290,15 @@ B's echo fires the hook → policy defers → monitor alerts A → human answers
 | `watch <session> [--since N \| --replay] [--only KIND[,KIND]... \| --decision-only] [--idle-after SECONDS] [--no-token-filter] [--no-suspected-needs-input]` | Stream noteworthy events as JSONL. Used by Monitor flows. Sentinel filter is on by default (`turn_completed` surfaces only when the trailing `[TOKEN]` is present). `--no-token-filter` disables the sentinel filter entirely. `--decision-only` and `--only` are kind-level subset filters that compose with the sentinel filter. `--idle-after SECONDS` (default `600`, `0` disables) emits a synthetic `idle` event when no surfaced event has been seen for that long. The silent-miss backstop surfaces a no-token `turn_completed` whose final line ends in `?` with an additive `suspected_needs_input` marker; `--no-suspected-needs-input` disables it. |
 | `watch --all [same flags]` | Merge every live session into one JSONL stream, each line tagged with an additive `session_id`. Dynamic membership (sessions spawned later join via a periodic rescan); runs until SIGINT. All single-session filters apply per session. `status` (no arg) is the point-in-time fleet-snapshot companion. |
 | `provide-output <call_id> [--stdout S] [--stderr S] [--exit N] [--extra S] [--from-file PATH]` | Relay human-run command output to a deferred call |
+
+### Decision context (rationale + diff)
+
+When a tool call escalates, the decision you resolve is enriched at the source so you can see *why* — `pending`, `status`, and the MCP `poll_session`/`poll_turn` responses all carry the same fields on the `tool_decision_required`:
+
+- **`rationale`** — the same turn's preceding assistant text (why B wants the call), head-truncated to ~1000 chars.
+- **`diff`** — for `Edit`/`Write` only, a unified diff (Edit: `old_string`→`new_string`; Write: against the existing file, or the new content as added lines), capped at ~4 KiB.
+
+Both caps apply **uniformly** on every path — human, `--json`, and MCP — so polling a busy session can't blow the token budget. Non-file tools (Bash, etc.) carry `rationale` only, no `diff`. The complete, uncapped context is always available via `claw-drive tail` / `claw-drive show`. The rationale is the raw assistant snippet (not an LLM summary), and diffs are plain text (not syntax-highlighted).
 
 ## Troubleshooting
 
