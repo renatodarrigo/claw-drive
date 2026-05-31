@@ -108,6 +108,8 @@ const WATCH_FLAGS_DOC: Record<string, string> = {
     "Restrict to a subset of valid event kinds.",
   "--idle-after SECONDS":
     "Emit a synthetic 'idle' event after N seconds of no surfaced activity. Default 600. Pass 0 to disable.",
+  "--no-suspected-needs-input":
+    "Disable the silent-miss backstop. By default, a no-token turn whose final line ends in '?' is surfaced with a suspected_needs_input marker (B likely meant to emit [NEEDS-INPUT]); this flag drops such turns as before.",
 };
 
 export function buildNotificationContract(args: {

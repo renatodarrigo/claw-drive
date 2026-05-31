@@ -254,3 +254,49 @@ describe("idle in VALID_WATCH_KINDS", () => {
     expect(r.ok).toBe(true);
   });
 });
+
+describe("parseWatchArgs — --no-suspected-needs-input (CD-6 backstop toggle)", () => {
+  it("defaults suspectedNeedsInput to true when the flag is absent", () => {
+    const r = parseWatchArgs(["sess_abcdef0123456789"]);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.suspectedNeedsInput).toBe(true);
+  });
+
+  it("--no-suspected-needs-input sets suspectedNeedsInput to false", () => {
+    const r = parseWatchArgs(["sess_abcdef0123456789", "--no-suspected-needs-input"]);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.suspectedNeedsInput).toBe(false);
+  });
+
+  it("composes with --decision-only, --idle-after, and --no-token-filter without a parse error", () => {
+    const r = parseWatchArgs([
+      "sess_abcdef0123456789",
+      "--decision-only",
+      "--idle-after",
+      "30",
+      "--no-token-filter",
+      "--no-suspected-needs-input",
+    ]);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.suspectedNeedsInput).toBe(false);
+      expect(r.noTokenFilter).toBe(true);
+      expect(r.idleAfterSeconds).toBe(30);
+      expect(r.allowed).not.toBeNull();
+    }
+  });
+
+  it("composes with --only without a parse error", () => {
+    const r = parseWatchArgs([
+      "sess_abcdef0123456789",
+      "--only",
+      "turn_completed",
+      "--no-suspected-needs-input",
+    ]);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.suspectedNeedsInput).toBe(false);
+      expect(r.allowed!.has("turn_completed")).toBe(true);
+    }
+  });
+});

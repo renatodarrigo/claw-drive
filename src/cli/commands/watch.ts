@@ -117,6 +117,7 @@ export type ParsedWatchArgs =
       allowed: Set<string> | null;
       noTokenFilter: boolean;
       idleAfterSeconds: number;
+      suspectedNeedsInput: boolean;
     }
   | { ok: false; error: string };
 
@@ -354,6 +355,7 @@ export function parseWatchArgs(argv: string[]): ParsedWatchArgs {
   let onlySet = false;
   let noTokenFilter = false;
   let idleAfterSeconds = DEFAULT_IDLE_AFTER_SECONDS;
+  let suspectedNeedsInput = true;
 
   for (let i = 1; i < argv.length; i++) {
     const a = argv[i];
@@ -394,6 +396,8 @@ export function parseWatchArgs(argv: string[]): ParsedWatchArgs {
       allowed = new Set(kinds);
     } else if (a === "--no-token-filter") {
       noTokenFilter = true;
+    } else if (a === "--no-suspected-needs-input") {
+      suspectedNeedsInput = false;
     } else if (a === "--idle-after") {
       const v = argv[++i];
       if (v === undefined) {
@@ -415,6 +419,7 @@ export function parseWatchArgs(argv: string[]): ParsedWatchArgs {
     allowed,
     noTokenFilter,
     idleAfterSeconds,
+    suspectedNeedsInput,
   };
 }
 
@@ -425,7 +430,7 @@ export async function cmdWatch(argv: string[]): Promise<number> {
       parsed.error +
         "\nusage: claw-drive watch <session_id> [--since N | --replay] " +
         "[--only KIND[,KIND]... | --decision-only] [--no-token-filter] " +
-        "[--idle-after SECONDS]\n" +
+        "[--idle-after SECONDS] [--no-suspected-needs-input]\n" +
         "  default: stream NEW events only (no replay), idle event after 600s of silence\n" +
         "  --since N: start from seq N (0 = full replay)\n" +
         "  --replay: shorthand for --since 0\n" +
@@ -433,16 +438,19 @@ export async function cmdWatch(argv: string[]): Promise<number> {
         "  --decision-only: shorthand for --only on the human-attention kinds\n" +
         "  --no-token-filter: surface every event regardless of trailing token\n" +
         "  --idle-after SECONDS: emit synthetic 'idle' event after N seconds of silence (default 600; 0 disables)\n" +
+        "  --no-suspected-needs-input: disable the silent-miss backstop (no-token '?' turns drop as before; on by default)\n" +
         `  valid kinds: ${[...VALID_WATCH_KINDS].join(", ")}`
     );
     return 2;
   }
-  const { sessionId: id, allowed, noTokenFilter, idleAfterSeconds } = parsed;
+  const {
+    sessionId: id,
+    allowed,
+    noTokenFilter,
+    idleAfterSeconds,
+    suspectedNeedsInput,
+  } = parsed;
   let since = parsed.since;
-
-  // CD-6 silent-miss backstop: ON by default. CD-35 wires the
-  // --no-suspected-needs-input flag that toggles this off.
-  const suspectedNeedsInputEnabled = true;
 
   // tokenFilter needs to find the matching assistant_text for any
   // turn_completed event, which may have been emitted in an earlier read
@@ -510,7 +518,7 @@ export async function cmdWatch(argv: string[]): Promise<number> {
       if (shouldEmit(e) && userFilter(e, allowed)) {
         const decision = decideWatchEmit(e, allEvents, {
           noTokenFilter,
-          suspectedNeedsInput: suspectedNeedsInputEnabled,
+          suspectedNeedsInput,
         });
         if (decision.emit) {
           process.stdout.write(JSON.stringify(decision.payload) + "\n");
