@@ -24,6 +24,7 @@ import { writeState, readState, isPidAlive, type SessionState } from "../lib/sta
 import { validatePolicy, type Policy } from "../lib/policy.js";
 import { sendRequest } from "../runner/socket-server.js";
 import { buildNotificationContract } from "../lib/tokens.js";
+import { isValidAlias, findLiveAliasHolder, resolveSessionRef } from "../lib/alias.js";
 
 function newSessionId(): string {
   // sess_YYYYMMDDTHHMMSS_<6char>
@@ -51,6 +52,17 @@ function ok(result: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
 }
 
+/**
+ * CD-10: resolve a session-arg (`args.session_id`) that may be a canonical id
+ * or a live alias to its canonical id. Returns the id, or null when the arg is
+ * not a string or resolves to no live session — the caller returns the existing
+ * SESSION_NOT_FOUND error shape in that case.
+ */
+async function resolveArgSession(sessionId: unknown): Promise<string | null> {
+  if (typeof sessionId !== "string") return null;
+  return resolveSessionRef(sessionId);
+}
+
 async function handleStartSession(args: Record<string, unknown>) {
   const cwd = args.cwd;
   if (typeof cwd !== "string") return err("INVALID_CWD", "cwd must be a string");
@@ -65,6 +77,23 @@ async function handleStartSession(args: Record<string, unknown>) {
   const policy: Policy = (args.policy as Policy) ?? "bypass";
   const pv = validatePolicy(policy);
   if (!pv.ok) return err("INVALID_POLICY", (pv as { ok: false; error: string }).error);
+
+  // CD-10: validate + uniqueness-check the alias BEFORE creating any session
+  // dir/state, so an invalid or conflicting name leaves nothing behind.
+  let alias: string | undefined;
+  if (args.name !== undefined) {
+    if (typeof args.name !== "string" || !isValidAlias(args.name)) {
+      return err(
+        "INVALID_NAME",
+        "name must be 1-32 chars, start with a letter, use only letters/digits/_/-, and not begin with 'sess_'"
+      );
+    }
+    const holder = await findLiveAliasHolder(args.name);
+    if (holder) {
+      return err("NAME_IN_USE", `alias '${args.name}' is already in use by live session ${holder}`);
+    }
+    alias = args.name;
+  }
 
   const sessionId = newSessionId();
   if (!isValidSessionId(sessionId)) {
@@ -122,6 +151,9 @@ async function handleStartSession(args: Record<string, unknown>) {
   if (typeof args.wrapper === "boolean") {
     state.wrapper = args.wrapper;
   }
+  if (alias !== undefined) {
+    state.alias = alias;
+  }
   await writeState(statePath(sessionId), state);
 
   // Spawn the runner detached. The runner binary is our own dispatcher.
@@ -177,8 +209,8 @@ function resolveSelfBinPath(): string {
 }
 
 async function handleStopSession(args: Record<string, unknown>) {
-  const sessionId = args.session_id;
-  if (typeof sessionId !== "string" || !isValidSessionId(sessionId)) {
+  const sessionId = await resolveArgSession(args.session_id);
+  if (sessionId === null) {
     return err("SESSION_NOT_FOUND", "invalid session_id");
   }
   try {
@@ -240,8 +272,8 @@ function deriveTurnStatus(
 }
 
 async function handleSendTurn(args: Record<string, any>) {
-  const sessionId = args.session_id;
-  if (typeof sessionId !== "string" || !isValidSessionId(sessionId)) {
+  const sessionId = await resolveArgSession(args.session_id);
+  if (sessionId === null) {
     return err("SESSION_NOT_FOUND", "invalid session_id");
   }
   if (typeof args.message !== "string") {
@@ -261,9 +293,9 @@ async function handleSendTurn(args: Record<string, any>) {
 }
 
 async function handlePollTurn(args: Record<string, any>) {
-  const sessionId = args.session_id;
+  const sessionId = await resolveArgSession(args.session_id);
   const turnId = args.turn_id;
-  if (typeof sessionId !== "string" || !isValidSessionId(sessionId)) {
+  if (sessionId === null) {
     return err("SESSION_NOT_FOUND", "invalid session_id");
   }
   if (typeof turnId !== "string" || !turnId.startsWith("turn_")) {
@@ -284,8 +316,8 @@ async function handlePollTurn(args: Record<string, any>) {
 }
 
 async function handlePollSession(args: Record<string, any>) {
-  const sessionId = args.session_id;
-  if (typeof sessionId !== "string" || !isValidSessionId(sessionId)) {
+  const sessionId = await resolveArgSession(args.session_id);
+  if (sessionId === null) {
     return err("SESSION_NOT_FOUND", "invalid session_id");
   }
   const since = typeof args.since_event === "number" ? args.since_event : 0;
@@ -386,8 +418,8 @@ async function handleResolveToolCall(args: Record<string, any>) {
 }
 
 async function handleProvideToolOutput(args: Record<string, any>) {
-  const sessionId = args.session_id;
-  if (typeof sessionId !== "string" || !isValidSessionId(sessionId)) {
+  const sessionId = await resolveArgSession(args.session_id);
+  if (sessionId === null) {
     return err("SESSION_NOT_FOUND", "invalid session_id");
   }
   if (typeof args.call_id !== "string" || args.call_id.length === 0) {
@@ -419,8 +451,8 @@ async function handleProvideToolOutput(args: Record<string, any>) {
 }
 
 async function handleUpdatePolicy(args: Record<string, any>) {
-  const sessionId = args.session_id;
-  if (typeof sessionId !== "string" || !isValidSessionId(sessionId)) {
+  const sessionId = await resolveArgSession(args.session_id);
+  if (sessionId === null) {
     return err("SESSION_NOT_FOUND", "invalid session_id");
   }
   const pv = validatePolicy(args.policy);
@@ -439,8 +471,8 @@ async function handleUpdatePolicy(args: Record<string, any>) {
 }
 
 async function handleInterruptTurn(args: Record<string, any>) {
-  const sessionId = args.session_id;
-  if (typeof sessionId !== "string" || !isValidSessionId(sessionId)) {
+  const sessionId = await resolveArgSession(args.session_id);
+  if (sessionId === null) {
     return err("SESSION_NOT_FOUND", "invalid session_id");
   }
   try {
@@ -485,6 +517,11 @@ export async function runMcpServer(): Promise<void> {
           cwd: { type: "string" },
           policy: {},
           scenario_brief: { type: "string" },
+          name: {
+            type: "string",
+            description:
+              "Optional human-friendly alias for this session, usable in place of the canonical session_id at any session-arg tool. 1-32 chars, starts with a letter, letters/digits/_/- only, must not begin with 'sess_'. Must be unique among live sessions.",
+          },
           mcp_extra_config: { type: "object" },
           model: { type: "string" },
           decision_timeout_seconds: { type: "number" },

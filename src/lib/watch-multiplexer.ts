@@ -1,5 +1,7 @@
 import { listLiveSessions } from "./live-sessions.js";
 import { startSessionTailer, type SessionTailerHandle } from "./session-tailer.js";
+import { readState } from "./state.js";
+import { statePath } from "./paths.js";
 import type { WatchFilterArgs } from "../cli/commands/watch.js";
 
 const DEFAULT_RESCAN_INTERVAL_MS = 1000;
@@ -46,9 +48,17 @@ export function startWatchMultiplexer(opts: WatchMultiplexerOptions): WatchMulti
   let rescanTimer: ReturnType<typeof setInterval> | null = null;
   let finished = false;
 
-  const addSession = (id: string): void => {
+  const addSession = async (id: string): Promise<void> => {
     if (everStarted.has(id)) return;
     everStarted.add(id);
+    // CD-10: read the session's alias (if any) so the tag-line carries it
+    // alongside session_id. Best-effort — a missing/unreadable state just omits it.
+    let aliasTag: string | undefined;
+    try {
+      aliasTag = (await readState(statePath(id)))?.alias;
+    } catch {
+      aliasTag = undefined;
+    }
     const handle = startSessionTailer({
       sessionId: id,
       emit: opts.emit,
@@ -58,6 +68,7 @@ export function startWatchMultiplexer(opts: WatchMultiplexerOptions): WatchMulti
       suspectedNeedsInput: opts.filters.suspectedNeedsInput,
       idleAfterSeconds: opts.filters.idleAfterSeconds,
       tag: id,
+      aliasTag,
       onWatchError: () => {
         // events file vanished between enumeration and tail — drop it.
       },
@@ -76,7 +87,7 @@ export function startWatchMultiplexer(opts: WatchMultiplexerOptions): WatchMulti
     } catch {
       return;
     }
-    for (const id of live) addSession(id);
+    for (const id of live) await addSession(id);
   };
 
   const close = (): void => {

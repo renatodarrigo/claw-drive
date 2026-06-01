@@ -623,9 +623,17 @@ describe("parseStatusArgs", () => {
     }
   });
 
-  it("invalid session id → error", () => {
-    const r = parseStatusArgs(["not-valid"]);
-    expect(r.ok).toBe(false);
+  it("a ref that is neither a canonical id nor a valid alias shape → error", () => {
+    // CD-10: the positional accepts an id OR an alias shape; a space (or a
+    // leading digit) is neither, so it's still rejected at parse time.
+    expect(parseStatusArgs(["not valid"]).ok).toBe(false);
+    expect(parseStatusArgs(["9bad"]).ok).toBe(false);
+  });
+
+  it("accepts an alias-shaped positional (resolution happens in cmdStatus)", () => {
+    const r = parseStatusArgs(["reviewer"]);
+    expect(r.ok).toBe(true);
+    if (r.ok && !r.help) expect(r.sessionId).toBe("reviewer");
   });
 
   it("--help → help action", () => {
@@ -717,5 +725,39 @@ describe("status — CD-8 rationale + diff in pending decisions", () => {
     const json = JSON.parse(renderJson(buildSessionSnapshot(baseState(), events, ms)!));
     expect("rationale" in json.pending_decisions[0]).toBe(false);
     expect("diff" in json.pending_decisions[0]).toBe(false);
+  });
+});
+
+describe("status — CD-10 alias display", () => {
+  it("buildSessionSnapshot includes alias when state has one, omits it otherwise", () => {
+    const withAlias = buildSessionSnapshot(baseState({ alias: "reviewer" }), [], NOW_MS)!;
+    const without = buildSessionSnapshot(baseState(), [], NOW_MS)!;
+    expect(withAlias.alias).toBe("reviewer");
+    expect("alias" in without).toBe(false);
+  });
+
+  it("renderSummaryTable appends (alias) to the id cell only when present", () => {
+    const a = buildSessionSnapshot(baseState({ alias: "rev" }), [], NOW_MS)!;
+    const b = buildSessionSnapshot(baseState({ session_id: "sess_other00000001" }), [], NOW_MS)!;
+    const table = renderSummaryTable([a, b], NOW_MS);
+    const aLine = table.split("\n").find((l) => l.includes("(rev)"))!;
+    expect(aLine).toBeTruthy();
+    const bLine = table.split("\n").find((l) => l.includes("sess_other"))!;
+    expect(bLine).not.toContain("(");
+  });
+
+  it("renderDetailedBlock shows an Alias: line only when present", () => {
+    const withA = renderDetailedBlock(buildSessionSnapshot(baseState({ alias: "qa" }), [], NOW_MS)!);
+    const withoutA = renderDetailedBlock(buildSessionSnapshot(baseState(), [], NOW_MS)!);
+    expect(withA).toContain("Alias:");
+    expect(withA).toContain("qa");
+    expect(withoutA).not.toContain("Alias:");
+  });
+
+  it("renderJson serializes alias when present and drops it when absent", () => {
+    const withA = JSON.parse(renderJson(buildSessionSnapshot(baseState({ alias: "x" }), [], NOW_MS)!));
+    const withoutA = JSON.parse(renderJson(buildSessionSnapshot(baseState(), [], NOW_MS)!));
+    expect(withA.alias).toBe("x");
+    expect("alias" in withoutA).toBe(false);
   });
 });

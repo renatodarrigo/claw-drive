@@ -87,7 +87,7 @@ Commands:
   approve <call_id> [--reason R]
   reject <call_id> [--reason R]
   send <session> "<message>"    Send a user turn
-  start --cwd <path> [--policy FILE] [--brief FILE]
+  start --cwd <path> [--policy FILE] [--brief FILE] [--name <alias>]
   stop <session>
   interrupt <session> <turn>
   policy <session> [--set FILE] [--show]

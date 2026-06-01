@@ -31,7 +31,10 @@ export async function cmdSessions(_argv: string[]): Promise<number> {
     );
     let pending = 0;
     for (const c of requiredCalls) if (!resolvedCalls.has(c)) pending++;
-    rows.push([id, status, String(s.turns), String(pending), s.cwd].join("\t"));
+    // CD-10: show the alias inline with the id when present; un-aliased rows
+    // render byte-identically to before.
+    const idCell = s.alias ? `${id} (${s.alias})` : id;
+    rows.push([idCell, status, String(s.turns), String(pending), s.cwd].join("\t"));
   }
   console.log(rows.join("\n"));
   return 0;

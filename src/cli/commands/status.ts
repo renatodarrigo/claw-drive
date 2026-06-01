@@ -1,5 +1,6 @@
 import * as fs from "node:fs/promises";
 import { sessionsRoot, statePath, eventsPath, isValidSessionId } from "../../lib/paths.js";
+import { isValidAlias, resolveSessionRef } from "../../lib/alias.js";
 import {
   readState,
   isPidAlive,
@@ -44,6 +45,8 @@ export interface CompletedTurnSnapshot extends TurnSnapshot {
 
 export interface SessionSnapshot {
   session_id: string;
+  /** CD-10: the session's alias, when set. */
+  alias?: string;
   status: SessionStateStatus;
   cwd: string;
   policy_label?: string;
@@ -102,7 +105,9 @@ export function parseStatusArgs(argv: string[]): ParsedStatusArgs {
       if (sessionId !== undefined) {
         return { ok: false, error: "at most one session id" };
       }
-      if (!isValidSessionId(a)) {
+      // CD-10: accept a canonical id OR an alias (shape only); cmdStatus
+      // resolves an alias to its id.
+      if (!isValidSessionId(a) && !isValidAlias(a)) {
         return { ok: false, error: `invalid session id: ${a}` };
       }
       sessionId = a;
@@ -273,6 +278,7 @@ export function buildSessionSnapshot(
 
   return {
     session_id: state.session_id,
+    ...(state.alias ? { alias: state.alias } : {}),
     status,
     cwd: state.cwd,
     policy_label,
@@ -317,8 +323,11 @@ export function renderSummaryTable(snaps: SessionSnapshot[], nowMs: number): str
   rows.push(["SESSION_ID", "STATUS", "TURNS", "PENDING", "ERRORS", "LAST_ACTIVITY", "CWD"]);
   for (const s of snaps) {
     const idShort = s.session_id.length > 20 ? s.session_id.slice(0, 19) + "…" : s.session_id;
+    // CD-10: append the alias to the id cell when present; un-aliased rows are
+    // byte-identical to before.
+    const idCell = s.alias ? `${idShort} (${s.alias})` : idShort;
     rows.push([
-      idShort,
+      idCell,
       s.status,
       String(s.turns),
       String(s.pending_decisions.length),
@@ -343,6 +352,7 @@ function ageHumanReadable(seconds: number): string {
 export function renderDetailedBlock(s: SessionSnapshot): string {
   const lines: string[] = [];
   lines.push(`Session: ${s.session_id}`);
+  if (s.alias) lines.push(`Alias:         ${s.alias}`); // CD-10
   const statusLine = s.runner_pid ? `${s.status} (pid ${s.runner_pid})` : s.status;
   lines.push(`Status:        ${statusLine}`);
   lines.push(`Cwd:           ${s.cwd}`);
@@ -486,11 +496,15 @@ export async function cmdStatus(argv: string[]): Promise<number> {
   const ids = entries.filter(isValidSessionId);
 
   if (parsed.sessionId) {
-    if (!ids.includes(parsed.sessionId)) {
+    // CD-10: resolve an alias to its canonical id (a canonical id passes
+    // through). resolveSessionRef only resolves LIVE alias holders, so fall
+    // back to the raw arg for canonical ids of stopped sessions still on disk.
+    const targetId = (await resolveSessionRef(parsed.sessionId)) ?? parsed.sessionId;
+    if (!ids.includes(targetId)) {
       console.error("session not found");
       return 1;
     }
-    const snap = await buildSnapshotForId(parsed.sessionId, nowMs);
+    const snap = await buildSnapshotForId(targetId, nowMs);
     if (snap === null) {
       console.error("session not found or unreadable");
       return 1;

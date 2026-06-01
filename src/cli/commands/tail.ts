@@ -1,11 +1,17 @@
 import * as fs from "node:fs";
-import { eventsPath, isValidSessionId } from "../../lib/paths.js";
+import { eventsPath } from "../../lib/paths.js";
 import { readEventsSince } from "../../lib/events.js";
+import { resolveSessionRef } from "../../lib/alias.js";
 
 export async function cmdTail(argv: string[]): Promise<number> {
-  const id = argv[0];
-  if (!id || !isValidSessionId(id)) {
+  const ref = argv[0];
+  if (!ref) {
     console.error("usage: claw-drive tail <session_id> [--since N] [--follow]");
+    return 2;
+  }
+  const id = await resolveSessionRef(ref);
+  if (id === null) {
+    console.error(`no live session for '${ref}'`);
     return 2;
   }
   let since = 0;

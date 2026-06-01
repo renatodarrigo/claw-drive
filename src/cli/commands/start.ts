@@ -12,6 +12,7 @@ import {
 } from "../../lib/paths.js";
 import { writeState, type SessionState } from "../../lib/state.js";
 import { validatePolicy, type Policy } from "../../lib/policy.js";
+import { isValidAlias, findLiveAliasHolder } from "../../lib/alias.js";
 
 function newSessionId(): string {
   const now = new Date();
@@ -32,11 +33,13 @@ export async function cmdStart(argv: string[]): Promise<number> {
   let policyFile: string | undefined;
   let briefFile: string | undefined;
   let wrapper: boolean | undefined;
+  let alias: string | undefined;
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--cwd") cwd = argv[++i];
     else if (argv[i] === "--policy") policyFile = argv[++i];
     else if (argv[i] === "--brief") briefFile = argv[++i];
     else if (argv[i] === "--no-wrapper") wrapper = false;
+    else if (argv[i] === "--name") alias = argv[++i];
   }
   if (!cwd) {
     console.error("--cwd required");
@@ -66,6 +69,23 @@ export async function cmdStart(argv: string[]): Promise<number> {
     console.error(`invalid policy: ${(pv as any).error}`);
     return 2;
   }
+  // CD-10: validate + uniqueness-check the alias BEFORE creating any session
+  // dir/state, so an invalid or conflicting --name leaves nothing behind.
+  if (alias !== undefined) {
+    if (!isValidAlias(alias)) {
+      console.error(
+        `invalid --name '${alias}': alias must be 1-32 chars, start with a letter, ` +
+          `use only letters/digits/_/-, and not begin with 'sess_'`
+      );
+      return 2;
+    }
+    const holder = await findLiveAliasHolder(alias);
+    if (holder) {
+      console.error(`alias '${alias}' is already in use by live session ${holder}`);
+      return 2;
+    }
+  }
+
   const brief = briefFile ? await fs.readFile(briefFile, "utf-8") : undefined;
 
   // Honor decision_timeout_seconds from policy object if present
@@ -113,6 +133,7 @@ export async function cmdStart(argv: string[]): Promise<number> {
   };
   if (brief) (state as any).scenario_brief = brief;
   if (wrapper !== undefined) state.wrapper = wrapper;
+  if (alias !== undefined) state.alias = alias;
   await writeState(statePath(sessionId), state);
 
   // Resolve self bin from this source file's compiled location (dist/cli/commands/start.js)

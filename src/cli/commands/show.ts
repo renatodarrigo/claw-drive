@@ -1,11 +1,17 @@
-import { statePath, eventsPath, isValidSessionId } from "../../lib/paths.js";
+import { statePath, eventsPath } from "../../lib/paths.js";
 import { readState } from "../../lib/state.js";
 import { readEventsSince } from "../../lib/events.js";
+import { resolveSessionRef } from "../../lib/alias.js";
 
 export async function cmdShow(argv: string[]): Promise<number> {
-  const id = argv[0];
-  if (!id || !isValidSessionId(id)) {
+  const ref = argv[0];
+  if (!ref) {
     console.error("usage: claw-drive show <session_id>");
+    return 2;
+  }
+  const id = await resolveSessionRef(ref);
+  if (id === null) {
+    console.error(`no live session for '${ref}'`);
     return 2;
   }
   const s = await readState(statePath(id));

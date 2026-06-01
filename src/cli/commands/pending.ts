@@ -2,16 +2,19 @@ import * as fs from "node:fs/promises";
 import { sessionsRoot, statePath, eventsPath, isValidSessionId } from "../../lib/paths.js";
 import { readState, isPidAlive } from "../../lib/state.js";
 import { readEventsSince } from "../../lib/events.js";
+import { resolveSessionRef } from "../../lib/alias.js";
 
 export async function cmdPending(argv: string[]): Promise<number> {
   const target = argv[0];
   let ids: string[];
   if (target) {
-    if (!isValidSessionId(target)) {
-      console.error("invalid session_id");
+    // CD-10: accept a canonical id or a live alias.
+    const id = await resolveSessionRef(target);
+    if (id === null) {
+      console.error(`no live session for '${target}'`);
       return 2;
     }
-    ids = [target];
+    ids = [id];
   } else {
     try {
       ids = (await fs.readdir(sessionsRoot())).filter(isValidSessionId);
@@ -31,7 +34,10 @@ export async function cmdPending(argv: string[]): Promise<number> {
       (e) => e.kind === "tool_decision_required" && !resolved.has((e as any).call_id)
     );
     for (const p of pending) {
-      console.log(JSON.stringify({ session_id: id, ...p }));
+      // CD-10: include the alias alongside session_id when the session has one;
+      // un-aliased lines are byte-identical (no alias key).
+      const tag = s.alias ? { session_id: id, alias: s.alias } : { session_id: id };
+      console.log(JSON.stringify({ ...tag, ...p }));
     }
   }
   return 0;
