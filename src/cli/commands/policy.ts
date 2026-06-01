@@ -3,13 +3,19 @@ import { socketPath, statePath, isValidSessionId } from "../../lib/paths.js";
 import { readState } from "../../lib/state.js";
 import { sendRequest } from "../../runner/socket-server.js";
 import { cmdPolicyLint } from "./policy-lint.js";
+import { resolveSessionRef } from "../../lib/alias.js";
 
 export async function cmdPolicy(argv: string[]): Promise<number> {
   // `policy lint <file>` — static policy-file analysis (no session); CD-5.
   if (argv[0] === "lint") return cmdPolicyLint(argv.slice(1));
-  const id = argv[0];
-  if (!id || !isValidSessionId(id)) {
+  const ref = argv[0];
+  if (!ref) {
     console.error("usage: claw-drive policy <session> [--set FILE] [--show]");
+    return 2;
+  }
+  const id = await resolveSessionRef(ref);
+  if (id === null) {
+    console.error(`no live session for '${ref}'`);
     return 2;
   }
   let setFile: string | undefined;

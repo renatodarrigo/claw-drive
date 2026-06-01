@@ -1,10 +1,16 @@
-import { socketPath, isValidSessionId } from "../../lib/paths.js";
+import { socketPath } from "../../lib/paths.js";
 import { sendRequest } from "../../runner/socket-server.js";
+import { resolveSessionRef } from "../../lib/alias.js";
 
 export async function cmdStop(argv: string[]): Promise<number> {
-  const id = argv[0];
-  if (!id || !isValidSessionId(id)) {
+  const ref = argv[0];
+  if (!ref) {
     console.error("usage: claw-drive stop <session>");
+    return 2;
+  }
+  const id = await resolveSessionRef(ref);
+  if (id === null) {
+    console.error(`no live session for '${ref}'`);
     return 2;
   }
   try {

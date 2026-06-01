@@ -10,9 +10,17 @@ describe("parseWatchArgs — session id", () => {
     expect(r.ok).toBe(false);
   });
 
-  it("rejects malformed session id", () => {
-    const r = parseWatchArgs(["not-a-valid-id"]);
-    expect(r.ok).toBe(false);
+  it("rejects a ref that is neither a canonical id nor a valid alias shape", () => {
+    // CD-10: the positional now accepts an id OR an alias shape. A ref with a
+    // space (or a leading digit, etc.) is neither, so it's still rejected.
+    expect(parseWatchArgs(["bad id"]).ok).toBe(false);
+    expect(parseWatchArgs(["1leadingdigit"]).ok).toBe(false);
+  });
+
+  it("accepts an alias-shaped positional (resolution happens in cmdWatch)", () => {
+    const r = parseWatchArgs(["reviewer"]);
+    expect(r.ok).toBe(true);
+    if (r.ok && !r.all) expect(r.sessionId).toBe("reviewer");
   });
 
   it("accepts a valid session id", () => {

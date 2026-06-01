@@ -1,5 +1,6 @@
 import * as fs from "node:fs/promises";
 import { sessionsRoot, statePath, eventsPath, isValidSessionId } from "../../lib/paths.js";
+import { isValidAlias, resolveSessionRef } from "../../lib/alias.js";
 import {
   readState,
   isPidAlive,
@@ -102,7 +103,9 @@ export function parseStatusArgs(argv: string[]): ParsedStatusArgs {
       if (sessionId !== undefined) {
         return { ok: false, error: "at most one session id" };
       }
-      if (!isValidSessionId(a)) {
+      // CD-10: accept a canonical id OR an alias (shape only); cmdStatus
+      // resolves an alias to its id.
+      if (!isValidSessionId(a) && !isValidAlias(a)) {
         return { ok: false, error: `invalid session id: ${a}` };
       }
       sessionId = a;
@@ -486,11 +489,15 @@ export async function cmdStatus(argv: string[]): Promise<number> {
   const ids = entries.filter(isValidSessionId);
 
   if (parsed.sessionId) {
-    if (!ids.includes(parsed.sessionId)) {
+    // CD-10: resolve an alias to its canonical id (a canonical id passes
+    // through). resolveSessionRef only resolves LIVE alias holders, so fall
+    // back to the raw arg for canonical ids of stopped sessions still on disk.
+    const targetId = (await resolveSessionRef(parsed.sessionId)) ?? parsed.sessionId;
+    if (!ids.includes(targetId)) {
       console.error("session not found");
       return 1;
     }
-    const snap = await buildSnapshotForId(parsed.sessionId, nowMs);
+    const snap = await buildSnapshotForId(targetId, nowMs);
     if (snap === null) {
       console.error("session not found or unreadable");
       return 1;

@@ -1,4 +1,5 @@
 import { isValidSessionId } from "../../lib/paths.js";
+import { isValidAlias, resolveSessionRef } from "../../lib/alias.js";
 import { type Event } from "../../lib/events.js";
 import {
   extractTrailingToken,
@@ -413,11 +414,12 @@ export function parseWatchArgs(argv: string[]): ParsedWatchArgs {
     } else if (a.startsWith("--")) {
       return { ok: false, error: `unknown flag: ${a}` };
     } else {
-      // A positional token: the (single) session id.
+      // A positional token: the (single) session ref — a canonical id or a
+      // CD-10 alias. Shape-validate here; cmdWatch resolves an alias to its id.
       if (sessionId !== null) {
         return { ok: false, error: "at most one session id" };
       }
-      if (!isValidSessionId(a)) {
+      if (!isValidSessionId(a) && !isValidAlias(a)) {
         return { ok: false, error: "session id missing or malformed" };
       }
       sessionId = a;
@@ -496,6 +498,13 @@ export async function cmdWatch(argv: string[]): Promise<number> {
   if (parsed.all) {
     return cmdWatchAll(parsed);
   }
+  // CD-10: the positional may be a canonical id or an alias — resolve to the
+  // canonical id before tailing.
+  const resolvedId = await resolveSessionRef(parsed.sessionId);
+  if (resolvedId === null) {
+    console.error(`no live session for '${parsed.sessionId}'`);
+    return 2;
+  }
   // Single-session watch is now the tailer driven straight to stdout. The
   // tail loop (catch-up, cursor, fs.watch, idle ticker, filter chain,
   // session_stopped handling) lives in src/lib/session-tailer.ts so the
@@ -503,7 +512,7 @@ export async function cmdWatch(argv: string[]): Promise<number> {
   // to before.
   let watchError: string | null = null;
   const tailer = startSessionTailer({
-    sessionId: parsed.sessionId,
+    sessionId: resolvedId,
     emit: (line) => process.stdout.write(line),
     since: parsed.since,
     allowed: parsed.allowed,

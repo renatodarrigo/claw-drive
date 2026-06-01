@@ -623,9 +623,17 @@ describe("parseStatusArgs", () => {
     }
   });
 
-  it("invalid session id → error", () => {
-    const r = parseStatusArgs(["not-valid"]);
-    expect(r.ok).toBe(false);
+  it("a ref that is neither a canonical id nor a valid alias shape → error", () => {
+    // CD-10: the positional accepts an id OR an alias shape; a space (or a
+    // leading digit) is neither, so it's still rejected at parse time.
+    expect(parseStatusArgs(["not valid"]).ok).toBe(false);
+    expect(parseStatusArgs(["9bad"]).ok).toBe(false);
+  });
+
+  it("accepts an alias-shaped positional (resolution happens in cmdStatus)", () => {
+    const r = parseStatusArgs(["reviewer"]);
+    expect(r.ok).toBe(true);
+    if (r.ok && !r.help) expect(r.sessionId).toBe("reviewer");
   });
 
   it("--help → help action", () => {
