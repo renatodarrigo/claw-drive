@@ -68,6 +68,10 @@
         <tr><td><code>provide-output &lt;call_id&gt; [flags]</code></td><td>Relay human-run output to a deferred call.</td></tr>
       </tbody>
     </table>
+    <h2 id="runner-log">Runner log</h2>
+    <p>Each driven session writes <code>&lt;session_dir&gt;/runner.log</code> — the runner's own stdout/stderr (startup, stdout-loop, and teardown errors) plus Session B's stderr, captured in-process because the runner is spawned detached with <code>stdio:"ignore"</code>. It's where to look when a Session B won't start or dies unexpectedly.</p>
+    <p>The log is bounded by size-based rotation: <code>runner.log</code> rolls to <code>runner.log.1</code> when it would exceed <code>LOG_MAX_BYTES</code> (default 10&nbsp;MiB), keeping up to <code>LOG_KEEP</code> (default 3) generations (<code>runner.log.1</code> … <code>runner.log.&lt;KEEP&gt;</code>) and deleting the oldest. Override via the <code>CLAW_DRIVE_LOG_MAX_BYTES</code> and <code>CLAW_DRIVE_LOG_KEEP</code> environment variables; an absent or invalid value falls back to the default, so the bound is never disabled. Plain text only — no log levels, no time-based rotation.</p>
+
     <h2 id="compatibility">Compatibility</h2>
     <p>
       claw-drive 1.0 is a stability promise. The versioning follows

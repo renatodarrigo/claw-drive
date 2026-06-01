@@ -4,7 +4,6 @@ import {
   eventsPath,
   mcpConfigPath,
   readyMarkerPath,
-  runnerLogPath,
   runnerPidPath,
   settingsPath,
   socketPath,
@@ -21,6 +20,7 @@ import { scheduleDecisionTimeout } from "./decision-timeout.js";
 import { createBudgetTracker, budgetExceededReason, type BudgetTracker } from "./budget.js";
 import type { ControlRequest, ControlResponse } from "../lib/socket-protocol.js";
 import { buildDecisionContext } from "../lib/decision-context.js";
+import { installRunnerLogCapture } from "../lib/runner-log.js";
 
 /** CD-8: the most recent assistant_text in `turnId`, scanning the session's events back-to-front. */
 async function findPriorAssistantText(sessionId: string, turnId: string): Promise<string | undefined> {
@@ -551,6 +551,14 @@ async function handleRequest(
  * the approval flow.
  */
 export async function runRunner(sessionId: string): Promise<void> {
+  // CD-9: capture this (detached, stdio:"ignore") runner's own stdout/stderr
+  // into <session_dir>/runner.log as the very first action, so even the startup
+  // failures below — and the standalone entry's "runner fatal:" — are logged.
+  // close() is synchronous, so the process.once("exit") hook is a safe single
+  // teardown across every exit path (and is idempotent).
+  const logCapture = installRunnerLogCapture(sessionId);
+  process.once("exit", () => logCapture.close());
+
   const sess = await readState(statePath(sessionId));
   if (!sess) throw new Error(`no state.json at ${statePath(sessionId)}`);
 
@@ -573,10 +581,13 @@ export async function runRunner(sessionId: string): Promise<void> {
     throw new Error("failed to set up stdio pipes");
   }
 
-  // Redirect B's stderr to runner log
-  const logHandle = await fs.open(runnerLogPath(sessionId), "a");
-  const logStream = logHandle.createWriteStream();
-  b.stderr.pipe(logStream);
+  // Route B's stderr into the SAME captured runner.log. We write through the
+  // already-redirected process.stderr (the single rotating fd from CD-44)
+  // rather than opening a second independent handle, which would corrupt
+  // rotation's byte accounting.
+  b.stderr.on("data", (chunk: Buffer) => {
+    process.stderr.write(chunk);
+  });
 
   // Flip state to ready
   sess.runner_pid = process.pid;
@@ -651,11 +662,12 @@ export async function runRunner(sessionId: string): Promise<void> {
     });
   });
 
-  // Teardown (only reached when NOT in a stop_session flow)
+  // Teardown (only reached when NOT in a stop_session flow). The runner-log
+  // capture is closed by the process.once("exit") hook installed at startup, so
+  // it's torn down exactly once across every exit path.
   try { server.close(); } catch { /* */ }
   try { b.kill("SIGTERM"); } catch { /* already dead */ }
   await fs.rm(readyMarkerPath(sessionId), { force: true });
-  await logHandle.close().catch(() => {});
 }
 
 // Standalone entry for `claw-drive runner <session_id>` (wired by dispatcher in Task 26)

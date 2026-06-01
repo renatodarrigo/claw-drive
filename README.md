@@ -306,6 +306,12 @@ Both caps apply **uniformly** on every path — human, `--json`, and MCP — so 
 
 `claw-drive sessions` flags sessions as `orphaned` when the runner pid is dead but state still says running. `claw-drive prune --older-than 1h` cleans them up.
 
+### Inspecting the runner log
+
+Each driven session writes a `runner.log` in its session directory (`~/.claw-drive/sessions/<id>/runner.log`). The runner is spawned detached with `stdio:"ignore"`, so its own stdout/stderr — startup failures, stdout-loop errors, teardown errors, plus Session B's stderr — are captured there in-process rather than lost to `/dev/null`. It's the first place to look when a Session B won't start or dies unexpectedly.
+
+The log is bounded by size-based rotation: when `runner.log` would exceed **`LOG_MAX_BYTES`** (default 10 MiB) it rolls to `runner.log.1`, keeping up to **`LOG_KEEP`** (default 3) generations and deleting the oldest. Override the defaults with the `CLAW_DRIVE_LOG_MAX_BYTES` and `CLAW_DRIVE_LOG_KEEP` environment variables — an absent or invalid value falls back to the default, so the bound is never disabled. (Plain text only; no log levels or time-based rotation.)
+
 ### Stuck on an approval
 
 `claw-drive pending` shows paused calls. `claw-drive approve <call_id>` or `reject <call_id>` unsticks B. If decision times out, the default action fires automatically.
