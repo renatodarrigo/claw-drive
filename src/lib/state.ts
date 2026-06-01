@@ -29,6 +29,14 @@ export interface SessionState {
    * Set via `start_session({ ..., wrapper: false })`.
    */
   wrapper?: boolean;
+  /**
+   * CD-10: optional human-friendly alias for this session. Additive + optional
+   * (absent on existing state files — CD-1-safe). Set via `start --name <alias>`
+   * / `start_session({ name })`; resolvable in place of the canonical id by any
+   * session-arg call site (see src/lib/alias.ts). Constraint:
+   * /^[a-zA-Z][a-zA-Z0-9_-]{0,31}$/ and must not begin with `sess_`.
+   */
+  alias?: string;
 }
 
 export async function readState(statePath: string): Promise<SessionState | null> {
