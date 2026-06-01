@@ -28,6 +28,12 @@ export interface SessionTailerOptions {
    * When absent, emitted output is byte-identical to single-session `watch`.
    */
   tag?: string;
+  /**
+   * CD-10: when `tag` is set and the session has an alias, this is added
+   * alongside the `session_id` tag on every emitted line, so a `watch --all`
+   * consumer can attribute events by the human-friendly name too.
+   */
+  aliasTag?: string;
   /** Called if the events file cannot be watched (e.g. it vanished). */
   onWatchError?: (message: string) => void;
 }
@@ -52,7 +58,7 @@ export interface SessionTailerHandle {
  * the caller (single-session `cmdWatch` or the multiplexer), not the tailer.
  */
 export function startSessionTailer(opts: SessionTailerOptions): SessionTailerHandle {
-  const { sessionId, emit, allowed, noTokenFilter, suspectedNeedsInput, tag } = opts;
+  const { sessionId, emit, allowed, noTokenFilter, suspectedNeedsInput, tag, aliasTag } = opts;
 
   const allEvents: Event[] = [];
   const idle = newIdleState(opts.idleAfterSeconds, Date.now());
@@ -91,7 +97,14 @@ export function startSessionTailer(opts: SessionTailerOptions): SessionTailerHan
   // Without a tag the serialized line is byte-identical to single-session watch.
   const writeLine = (payload: unknown): void => {
     if (finished) return;
-    const out = tag === undefined ? payload : { session_id: tag, ...(payload as object) };
+    const out =
+      tag === undefined
+        ? payload
+        : {
+            session_id: tag,
+            ...(aliasTag !== undefined ? { alias: aliasTag } : {}),
+            ...(payload as object),
+          };
     emit(JSON.stringify(out) + "\n");
   };
 

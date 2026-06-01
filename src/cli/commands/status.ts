@@ -45,6 +45,8 @@ export interface CompletedTurnSnapshot extends TurnSnapshot {
 
 export interface SessionSnapshot {
   session_id: string;
+  /** CD-10: the session's alias, when set. */
+  alias?: string;
   status: SessionStateStatus;
   cwd: string;
   policy_label?: string;
@@ -276,6 +278,7 @@ export function buildSessionSnapshot(
 
   return {
     session_id: state.session_id,
+    ...(state.alias ? { alias: state.alias } : {}),
     status,
     cwd: state.cwd,
     policy_label,
@@ -320,8 +323,11 @@ export function renderSummaryTable(snaps: SessionSnapshot[], nowMs: number): str
   rows.push(["SESSION_ID", "STATUS", "TURNS", "PENDING", "ERRORS", "LAST_ACTIVITY", "CWD"]);
   for (const s of snaps) {
     const idShort = s.session_id.length > 20 ? s.session_id.slice(0, 19) + "…" : s.session_id;
+    // CD-10: append the alias to the id cell when present; un-aliased rows are
+    // byte-identical to before.
+    const idCell = s.alias ? `${idShort} (${s.alias})` : idShort;
     rows.push([
-      idShort,
+      idCell,
       s.status,
       String(s.turns),
       String(s.pending_decisions.length),
@@ -346,6 +352,7 @@ function ageHumanReadable(seconds: number): string {
 export function renderDetailedBlock(s: SessionSnapshot): string {
   const lines: string[] = [];
   lines.push(`Session: ${s.session_id}`);
+  if (s.alias) lines.push(`Alias:         ${s.alias}`); // CD-10
   const statusLine = s.runner_pid ? `${s.status} (pid ${s.runner_pid})` : s.status;
   lines.push(`Status:        ${statusLine}`);
   lines.push(`Cwd:           ${s.cwd}`);

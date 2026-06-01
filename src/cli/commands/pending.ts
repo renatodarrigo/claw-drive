@@ -34,7 +34,10 @@ export async function cmdPending(argv: string[]): Promise<number> {
       (e) => e.kind === "tool_decision_required" && !resolved.has((e as any).call_id)
     );
     for (const p of pending) {
-      console.log(JSON.stringify({ session_id: id, ...p }));
+      // CD-10: include the alias alongside session_id when the session has one;
+      // un-aliased lines are byte-identical (no alias key).
+      const tag = s.alias ? { session_id: id, alias: s.alias } : { session_id: id };
+      console.log(JSON.stringify({ ...tag, ...p }));
     }
   }
   return 0;
