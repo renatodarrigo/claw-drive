@@ -24,6 +24,7 @@ import { writeState, readState, isPidAlive, type SessionState } from "../lib/sta
 import { validatePolicy, type Policy } from "../lib/policy.js";
 import { sendRequest } from "../runner/socket-server.js";
 import { buildNotificationContract } from "../lib/tokens.js";
+import { isValidAlias, findLiveAliasHolder } from "../lib/alias.js";
 
 function newSessionId(): string {
   // sess_YYYYMMDDTHHMMSS_<6char>
@@ -65,6 +66,23 @@ async function handleStartSession(args: Record<string, unknown>) {
   const policy: Policy = (args.policy as Policy) ?? "bypass";
   const pv = validatePolicy(policy);
   if (!pv.ok) return err("INVALID_POLICY", (pv as { ok: false; error: string }).error);
+
+  // CD-10: validate + uniqueness-check the alias BEFORE creating any session
+  // dir/state, so an invalid or conflicting name leaves nothing behind.
+  let alias: string | undefined;
+  if (args.name !== undefined) {
+    if (typeof args.name !== "string" || !isValidAlias(args.name)) {
+      return err(
+        "INVALID_NAME",
+        "name must be 1-32 chars, start with a letter, use only letters/digits/_/-, and not begin with 'sess_'"
+      );
+    }
+    const holder = await findLiveAliasHolder(args.name);
+    if (holder) {
+      return err("NAME_IN_USE", `alias '${args.name}' is already in use by live session ${holder}`);
+    }
+    alias = args.name;
+  }
 
   const sessionId = newSessionId();
   if (!isValidSessionId(sessionId)) {
@@ -121,6 +139,9 @@ async function handleStartSession(args: Record<string, unknown>) {
   }
   if (typeof args.wrapper === "boolean") {
     state.wrapper = args.wrapper;
+  }
+  if (alias !== undefined) {
+    state.alias = alias;
   }
   await writeState(statePath(sessionId), state);
 
@@ -485,6 +506,11 @@ export async function runMcpServer(): Promise<void> {
           cwd: { type: "string" },
           policy: {},
           scenario_brief: { type: "string" },
+          name: {
+            type: "string",
+            description:
+              "Optional human-friendly alias for this session, usable in place of the canonical session_id at any session-arg tool. 1-32 chars, starts with a letter, letters/digits/_/- only, must not begin with 'sess_'. Must be unique among live sessions.",
+          },
           mcp_extra_config: { type: "object" },
           model: { type: "string" },
           decision_timeout_seconds: { type: "number" },
