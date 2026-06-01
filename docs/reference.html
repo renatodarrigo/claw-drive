@@ -31,7 +31,7 @@
     <table>
       <thead><tr><th>Tool</th><th>Purpose</th></tr></thead>
       <tbody>
-        <tr><td><code>start_session</code></td><td>Start a driven session. Returns <code>{session_id, watch_command, notification_contract}</code>. The <code>notification_contract</code> field describes the session's vocabulary, surface modes, watch flags, and idle default — drivers can read it instead of hardcoding to a specific claw-drive version. Optional <code>wrapper: false</code> opts out of the sentinel-token wrapper (B doesn't receive the system-prompt injection); when set, <code>notification_contract.wrapper_enabled</code> is <code>false</code>.</td></tr>
+        <tr><td><code>start_session</code></td><td>Start a driven session. Returns <code>{session_id, watch_command, notification_contract}</code>. The <code>notification_contract</code> field describes the session's vocabulary, surface modes, watch flags, and idle default — drivers can read it instead of hardcoding to a specific claw-drive version. Optional <code>wrapper: false</code> opts out of the sentinel-token wrapper (B doesn't receive the system-prompt injection); when set, <code>notification_contract.wrapper_enabled</code> is <code>false</code>. Optional <code>name</code> assigns a reusable alias (see <a href="#session-aliases">Session aliases</a>).</td></tr>
         <tr><td><code>stop_session</code></td><td>Reap B. Keeps the session dir for inspection.</td></tr>
         <tr><td><code>send_turn</code></td><td>Non-blocking send of a user turn to B. Returns <code>turn_id</code>.</td></tr>
         <tr><td><code>poll_turn</code></td><td>Fetch events and status for one turn. Supports long-poll.</td></tr>
@@ -56,7 +56,7 @@
         <tr><td><code>reject &lt;call_id&gt; [--reason R] [--remember]</code></td><td>Reject a paused call.</td></tr>
         <tr><td><code>defer &lt;call_id&gt; [--reason R] [--remember]</code></td><td>Defer a paused call to the human (v0.3+).</td></tr>
         <tr><td><code>send &lt;session&gt; "&lt;msg&gt;"</code></td><td>Send a user turn.</td></tr>
-        <tr><td><code>start --cwd PATH [--policy FILE] [--brief FILE]</code></td><td>Start a session from the CLI.</td></tr>
+        <tr><td><code>start --cwd PATH [--policy FILE] [--brief FILE] [--name ALIAS]</code></td><td>Start a session from the CLI. <code>--name</code> assigns a reusable alias usable in place of the canonical id at any session-arg command (see <a href="#session-aliases">Session aliases</a>).</td></tr>
         <tr><td><code>stop &lt;session&gt;</code></td><td>Reap B.</td></tr>
         <tr><td><code>interrupt &lt;session&gt; &lt;turn&gt;</code></td><td>SIGINT B.</td></tr>
         <tr><td><code>policy &lt;session&gt; [--set FILE] [--show]</code></td><td>View or replace a session's policy.</td></tr>
@@ -68,6 +68,16 @@
         <tr><td><code>provide-output &lt;call_id&gt; [flags]</code></td><td>Relay human-run output to a deferred call.</td></tr>
       </tbody>
     </table>
+    <h2 id="session-aliases">Session aliases</h2>
+    <p>A session can be given a human-friendly alias at start — <code>claw-drive start --name &lt;alias&gt;</code> (CLI) or <code>start_session({ name })</code> (MCP) — and used in place of the canonical <code>sess_…</code> id at any command or tool that takes a session argument.</p>
+    <ul>
+      <li><strong>Constraints:</strong> 1–32 chars, leading letter, then letters / digits / <code>_</code> / <code>-</code>; must not begin with <code>sess_</code>.</li>
+      <li><strong>Uniqueness:</strong> unique among live sessions. A duplicate-live alias fails at start with an error naming the conflicting <code>session_id</code>; once the holder stops or is pruned, the alias is free to reuse.</li>
+      <li><strong>Resolution:</strong> every session-arg CLI subcommand (<code>send</code>, <code>stop</code>, <code>interrupt</code>, <code>policy</code>, <code>tail</code>, <code>show</code>, single-session <code>watch</code>, single-id <code>status</code>, single-target <code>pending</code>) and MCP tool (<code>stop_session</code>, <code>send_turn</code>, <code>poll_turn</code>, <code>poll_session</code>, <code>provide_tool_output</code>, <code>update_policy</code>, <code>interrupt_turn</code>) accepts either an alias or a canonical id.</li>
+      <li><strong>Display:</strong> <code>status</code>, <code>sessions</code>, <code>pending</code>, and <code>watch --all</code> show the alias alongside the <code>session_id</code> when present.</li>
+    </ul>
+    <p>An alias lives with its session: there is no post-start rename, no cross-restart registry, and no namespacing. <code>start</code> still prints the canonical <code>session_id</code>.</p>
+
     <h2 id="runner-log">Runner log</h2>
     <p>Each driven session writes <code>&lt;session_dir&gt;/runner.log</code> — the runner's own stdout/stderr (startup, stdout-loop, and teardown errors) plus Session B's stderr, captured in-process because the runner is spawned detached with <code>stdio:"ignore"</code>. It's where to look when a Session B won't start or dies unexpectedly.</p>
     <p>The log is bounded by size-based rotation: <code>runner.log</code> rolls to <code>runner.log.1</code> when it would exceed <code>LOG_MAX_BYTES</code> (default 10&nbsp;MiB), keeping up to <code>LOG_KEEP</code> (default 3) generations (<code>runner.log.1</code> … <code>runner.log.&lt;KEEP&gt;</code>) and deleting the oldest. Override via the <code>CLAW_DRIVE_LOG_MAX_BYTES</code> and <code>CLAW_DRIVE_LOG_KEEP</code> environment variables; an absent or invalid value falls back to the default, so the bound is never disabled. Plain text only — no log levels, no time-based rotation.</p>

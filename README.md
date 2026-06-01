@@ -190,6 +190,25 @@ claw-drive watch --all
 
 For a point-in-time snapshot of the whole fleet rather than a live feed, `claw-drive status` (no argument) is the companion — a summary table of every session's state, last token, and pending-decision count.
 
+### Session aliases: `start --name`
+
+Juggling several sessions by their `sess_…` ids is copy-paste-heavy. Give a session a human-friendly **alias** at start and use it anywhere an id is accepted:
+
+```bash
+SESS=$(claw-drive start --cwd ~/code/app --policy /tmp/policy.json --name reviewer)
+claw-drive send reviewer "Review the diff on the current branch."
+claw-drive tail reviewer --follow
+```
+
+Over MCP, pass `name` to `start_session({ cwd, policy, name: "reviewer" })`.
+
+- **Constraints:** 1–32 chars, starts with a letter, then letters/digits/`_`/`-`; it must not begin with `sess_` (that's the canonical-id shape).
+- **Uniqueness:** an alias is unique among **live** sessions. Starting with an alias another live session already holds fails with an error naming the conflicting `session_id`. Once a holder stops (or is pruned), the alias is free to reuse.
+- **Resolution:** every session argument — `send`, `stop`, `interrupt`, `policy`, `tail`, `show`, single-session `watch`, single-id `status`, single-target `pending`, and the MCP session tools — accepts either an alias or a canonical id.
+- **Display:** `status`, `sessions`, `pending`, and `watch --all` show the alias alongside the `session_id` when present.
+
+`start` still prints the canonical `session_id`, so scripts that capture it are unaffected. (No post-start rename, no cross-restart registry, no namespacing — an alias lives with its session.)
+
 ## Policy
 
 A policy is either `"bypass"` (no gating) or an object. Rules are evaluated `auto_reject` → `auto_defer` → `auto_approve`; the first match wins, so a reject beats an approve. Unmatched calls escalate by default.
@@ -281,7 +300,7 @@ B's echo fires the hook → policy defers → monitor alerts A → human answers
 | `reject <call_id> [--reason R] [--remember]` | Reject a paused call. `--remember` appends to `auto_reject`. |
 | `defer <call_id> [--reason R] [--remember]` | Defer a paused call to the human. `--remember` appends to `auto_defer`. |
 | `send <session> "<msg>"` | Send a user turn |
-| `start --cwd PATH [--policy FILE] [--brief FILE]` | Start a session |
+| `start --cwd PATH [--policy FILE] [--brief FILE] [--name ALIAS]` | Start a session. `--name` gives it a reusable alias (see [Session aliases](#session-aliases-start---name)). |
 | `stop <session>` | Reap B |
 | `interrupt <session> <turn>` | SIGINT B |
 | `policy <session> [--set FILE] [--show]` | View/replace a session's policy |
