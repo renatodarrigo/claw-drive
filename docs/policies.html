@@ -168,15 +168,32 @@ claw-drive policy lint --max-severity warn ./my-policy.json   # exit 1 on any wa
     <p>Override per-session via <code>start_session</code>'s <code>decision_timeout_seconds</code> argument, or per-policy via the field above.</p>
 
     <div class="callout">
-      <strong>History note.</strong> v0.1's default was 300 seconds — small enough to auto-approve sensitive calls silently when a driver's monitor had a transient gap. v0.2 widened to 3600s.
+      <strong>Why so wide.</strong> A short timeout is a foot-gun: if a driver's monitor has a transient gap, a sensitive escalation can auto-approve silently before anyone notices. The 3600s default favours a human actually being in the loop over fast auto-resolution.
     </div>
+
+    <h2 id="budget">Session budget (circuit-breaker)</h2>
+    <p>An optional <code>budget</code> block caps a single driven run, so a session that loops, wedges, or errors in a tight cycle reaps itself instead of burning tokens and wall-clock unattended. It's a run-level circuit-breaker — orthogonal to the per-call rule lists above. <strong>Off by default:</strong> an absent <code>budget</code>, or an absent individual cap, means unlimited, so no existing session changes behaviour.</p>
+    <pre><code class="language-json">{
+  "escalate_default": true,
+  "budget": {
+    "max_tool_calls": 500,
+    "max_wall_clock_seconds": 1800,
+    "max_consecutive_errors": 8
+  }
+}</code></pre>
+    <ul>
+      <li><code>max_tool_calls</code> — total tool calls B may attempt across the run.</li>
+      <li><code>max_wall_clock_seconds</code> — elapsed time since the session started.</li>
+      <li><code>max_consecutive_errors</code> — consecutive errored tool calls; a clean turn resets the count to zero.</li>
+    </ul>
+    <p>When a cap is exceeded the runner stops the session and records <code>exit_reason: "budget_exceeded:&lt;cap&gt;"</code> — e.g. <code>budget_exceeded:max_tool_calls</code> — surfaced like any other stop through a <code>session_stopped</code> event. Caps are independent: set only the ones you want, each a positive number; an absent cap is unlimited.</p>
   </main>
   <aside class="donate">
     <p>If claw-drive is useful to you, help me buy my first house.</p>
     <a href="https://ko-fi.com/renatodarrigo" target="_blank" rel="noopener noreferrer" class="btn btn-ghost"><svg width="14" height="14" viewBox="0 0 14 14" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" style="vertical-align:-2px;margin-right:6px"><path d="M2 5h8v5a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2z" fill="none" stroke="currentColor" stroke-width="1" stroke-linejoin="round"/><path d="M10 7h2a1.5 1.5 0 0 1 0 3h-2" fill="none" stroke="currentColor" stroke-width="1"/><path d="M4 1v2M6.5 1v2M9 1v2" stroke="currentColor" stroke-width="1" stroke-linecap="round"/></svg>Support on Ko-fi</a>
   </aside>
   <footer>
-    <p class="muted">claw-drive v0.5.9 · MIT · <a href="https://github.com/renatodarrigo/claw-drive">github.com/renatodarrigo/claw-drive</a> · © <span data-year></span></p>
+    <p class="muted">claw-drive 1.0.0 · MIT · <a href="https://github.com/renatodarrigo/claw-drive">github.com/renatodarrigo/claw-drive</a> · © <span data-year></span></p>
   </footer>
   <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-core.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>

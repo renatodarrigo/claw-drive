@@ -229,6 +229,27 @@ A policy is either `"bypass"` (no gating) or an object. Rules are evaluated `aut
 
 On timeout: the `default_action` for escalated calls is `approve` (when `escalate_default: true`) or `reject` (when `escalate_default: false`). The approver script self-times-out 5s before claude's 600s hook ceiling and fails secure (exit 2 / deny).
 
+### Session budget (circuit-breaker)
+
+An optional `budget` block caps a single driven run, so a session that loops, wedges, or errors in a tight cycle reaps itself instead of burning tokens and wall-clock unattended. It's a run-level circuit-breaker — orthogonal to the per-call rule lists above. **Off by default:** an absent `budget`, or an absent individual cap, means unlimited, so no existing session changes behaviour.
+
+```json
+{
+  "escalate_default": true,
+  "budget": {
+    "max_tool_calls": 500,
+    "max_wall_clock_seconds": 1800,
+    "max_consecutive_errors": 8
+  }
+}
+```
+
+- **`max_tool_calls`** — total tool calls B may attempt across the run.
+- **`max_wall_clock_seconds`** — elapsed time since the session started.
+- **`max_consecutive_errors`** — consecutive errored tool calls; a clean turn resets the count to zero.
+
+When a cap is exceeded the runner stops the session and records `exit_reason: "budget_exceeded:<cap>"` (e.g. `budget_exceeded:max_tool_calls`), surfaced like any other stop through a `session_stopped` event. Caps are independent — set only the ones you want, each a positive number; an absent cap is unlimited.
+
 ### Linting a policy
 
 `claw-drive policy lint <file>` analyzes a whole policy for structural problems before you trust it — a complement to `policy-test`, which checks one command at a time. Default checks:
@@ -293,6 +314,7 @@ B's echo fires the hook → policy defers → monitor alerts A → human answers
 | Command | Purpose |
 |---|---|
 | `sessions` | List sessions (live + orphaned) |
+| `status [<session>] [--json]` | Fleet snapshot — one row per live session (state, last token, pending-decision count). With a session argument, just that one; `--json` for structured output. Point-in-time companion to `watch --all`. |
 | `show <session>` | State + last 20 events |
 | `tail <session> [--since N] [--follow]` | Stream events |
 | `pending [<session>]` | List awaiting-approval calls. An escalated decision carries a capped `rationale` and (for Edit/Write) a `diff`. |
@@ -370,8 +392,8 @@ Two policy templates ship in `templates/`:
 
 ## Testing
 
-- `npm run test:unit` — 570 unit tests, no real claude invocation
-- `npm run test:integration` — 8 integration tests spawning real claude (cost real tokens)
+- `npm run test:unit` — 777 unit tests, no real claude invocation
+- `npm run test:integration` — 24 integration tests spawning real claude (cost real tokens)
 - `bash scripts/self-dogfood.sh` — end-to-end acceptance smoke
 
 ## Contributing

@@ -58,10 +58,19 @@ await Monitor(watch_command);
         <tr><td><code>error</code></td><td>Runner-side error. Surface and decide whether to abort.</td></tr>
         <tr><td><code>tool_call_result</code> (with <code>is_error</code>)</td><td>A tool call B issued errored. Surface the error.</td></tr>
         <tr><td><code>session_stopped</code></td><td>Wrap up.</td></tr>
+        <tr><td><code>idle</code></td><td>Synthetic heartbeat — no surfaced event arrived within the idle window (default 600s). Break the wait: decide whether to interrupt B or keep holding. See <a href="#idle">Idle events</a>.</td></tr>
       </tbody>
     </table>
 
-    <p><code>watch</code> filters <code>events.jsonl</code> to only the eight kinds above — Session B's assistant prose, intermediate tool-call lifecycle events, and successful results stay out of A's stream.</p>
+    <p><code>watch</code> surfaces only the nine kinds above — eight filtered from <code>events.jsonl</code>, plus the synthetic <code>idle</code> heartbeat it raises itself; Session B's assistant prose, intermediate tool-call lifecycle events, and successful results stay out of A's stream.</p>
+
+    <h3 id="decision-context">What rides with a decision: rationale + diff</h3>
+    <p>A <code>tool_decision_required</code> event is more than a tool name and its args. When the runner raises the decision it attaches two context fields, so whoever resolves the gate can judge it in place rather than blind:</p>
+    <ul>
+      <li><strong><code>rationale</code></strong> — Session B's own words: the assistant text from the same turn that immediately preceded the call. Head-truncated to 1000 characters with a marker.</li>
+      <li><strong><code>diff</code></strong> — for <code>Edit</code> and <code>Write</code> only, a unified diff of the change B wants to make (<code>Edit</code> diffs <code>old_string</code>→<code>new_string</code>; <code>Write</code> diffs against the file already on disk). Head-truncated to 4&nbsp;KiB. Non-file tools carry the rationale alone.</li>
+    </ul>
+    <p>Both are computed once, at the runner, the moment the decision is raised — so they read identically wherever they surface: as fields on every awaiting-approval entry that <code>claw-drive pending</code> prints, rendered inline by <code>claw-drive status</code>, and on the <code>tool_decision_required</code> events returned by the MCP <code>poll_turn</code> / <code>poll_session</code> tools. The uniform caps keep a chatty turn or a huge file from flooding the fleet view — the full, uncapped context stays available via <code>claw-drive tail</code> / <code>show</code>.</p>
 
     <h3 id="sentinels">Sentinel tokens (the default)</h3>
     <p>Session B is auto-taught a tiny two-token contract at session start via <code>--append-system-prompt</code>:</p>
@@ -153,7 +162,7 @@ claw-drive watch &lt;id&gt; --replay
     <a href="https://ko-fi.com/renatodarrigo" target="_blank" rel="noopener noreferrer" class="btn btn-ghost"><svg width="14" height="14" viewBox="0 0 14 14" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" style="vertical-align:-2px;margin-right:6px"><path d="M2 5h8v5a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2z" fill="none" stroke="currentColor" stroke-width="1" stroke-linejoin="round"/><path d="M10 7h2a1.5 1.5 0 0 1 0 3h-2" fill="none" stroke="currentColor" stroke-width="1"/><path d="M4 1v2M6.5 1v2M9 1v2" stroke="currentColor" stroke-width="1" stroke-linecap="round"/></svg>Support on Ko-fi</a>
   </aside>
   <footer>
-    <p class="muted">claw-drive v0.5.9 · MIT · <a href="https://github.com/renatodarrigo/claw-drive">github.com/renatodarrigo/claw-drive</a> · © <span data-year></span></p>
+    <p class="muted">claw-drive 1.0.0 · MIT · <a href="https://github.com/renatodarrigo/claw-drive">github.com/renatodarrigo/claw-drive</a> · © <span data-year></span></p>
   </footer>
   <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-core.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>

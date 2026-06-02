@@ -34,8 +34,8 @@
         <tr><td><code>start_session</code></td><td>Start a driven session. Returns <code>{session_id, watch_command, notification_contract}</code>. The <code>notification_contract</code> field describes the session's vocabulary, surface modes, watch flags, and idle default — drivers can read it instead of hardcoding to a specific claw-drive version. Optional <code>wrapper: false</code> opts out of the sentinel-token wrapper (B doesn't receive the system-prompt injection); when set, <code>notification_contract.wrapper_enabled</code> is <code>false</code>. Optional <code>name</code> assigns a reusable alias (see <a href="#session-aliases">Session aliases</a>).</td></tr>
         <tr><td><code>stop_session</code></td><td>Reap B. Keeps the session dir for inspection.</td></tr>
         <tr><td><code>send_turn</code></td><td>Non-blocking send of a user turn to B. Returns <code>turn_id</code>.</td></tr>
-        <tr><td><code>poll_turn</code></td><td>Fetch events and status for one turn. Supports long-poll.</td></tr>
-        <tr><td><code>poll_session</code></td><td>Tail all events for a session. Use sparingly — MCP token cap.</td></tr>
+        <tr><td><code>poll_turn</code></td><td>Fetch events and status for one turn. Supports long-poll. A <code>tool_decision_required</code> in the result carries the decision's <code>rationale</code> + (Edit/Write) <code>diff</code>.</td></tr>
+        <tr><td><code>poll_session</code></td><td>Tail all events for a session. Use sparingly — MCP token cap. <code>tool_decision_required</code> events carry <code>rationale</code> + (Edit/Write) <code>diff</code>.</td></tr>
         <tr><td><code>list_sessions</code></td><td>List live and orphaned sessions.</td></tr>
         <tr><td><code>resolve_tool_call</code></td><td>Approve/reject a paused tool call. Optional <code>remember_as_policy</code>.</td></tr>
         <tr><td><code>update_policy</code></td><td>Replace a session's policy at runtime.</td></tr>
@@ -49,12 +49,13 @@
       <thead><tr><th>Command</th><th>Purpose</th></tr></thead>
       <tbody>
         <tr><td><code>sessions</code></td><td>List sessions (live and orphaned).</td></tr>
+        <tr><td><code>status [&lt;session&gt;] [--json]</code></td><td>Fleet snapshot — one row per live session (state, last token, pending-decision count). With a session argument, just that one. <code>--json</code> for structured output. The point-in-time companion to <code>watch --all</code>.</td></tr>
         <tr><td><code>show &lt;session&gt;</code></td><td>State plus last 20 events.</td></tr>
         <tr><td><code>tail &lt;session&gt; [--since N] [--follow]</code></td><td>Stream events from a sequence number.</td></tr>
-        <tr><td><code>pending [&lt;session&gt;]</code></td><td>List awaiting-approval calls.</td></tr>
+        <tr><td><code>pending [&lt;session&gt;]</code></td><td>List awaiting-approval calls. Each entry carries the decision's <code>rationale</code> and, for <code>Edit</code>/<code>Write</code>, a <code>diff</code>.</td></tr>
         <tr><td><code>approve &lt;call_id&gt; [--reason R] [--remember]</code></td><td>Approve a paused call.</td></tr>
         <tr><td><code>reject &lt;call_id&gt; [--reason R] [--remember]</code></td><td>Reject a paused call.</td></tr>
-        <tr><td><code>defer &lt;call_id&gt; [--reason R] [--remember]</code></td><td>Defer a paused call to the human (v0.3+).</td></tr>
+        <tr><td><code>defer &lt;call_id&gt; [--reason R] [--remember]</code></td><td>Defer a paused call to the human.</td></tr>
         <tr><td><code>send &lt;session&gt; "&lt;msg&gt;"</code></td><td>Send a user turn.</td></tr>
         <tr><td><code>start --cwd PATH [--policy FILE] [--brief FILE] [--name ALIAS]</code></td><td>Start a session from the CLI. <code>--name</code> assigns a reusable alias usable in place of the canonical id at any session-arg command (see <a href="#session-aliases">Session aliases</a>).</td></tr>
         <tr><td><code>stop &lt;session&gt;</code></td><td>Reap B.</td></tr>
@@ -105,7 +106,7 @@
         <tr>
           <td>Policy schema</td>
           <td><code>src/lib/policy.ts</code></td>
-          <td>All <code>PolicyObject</code> top-level keys (<code>auto_reject</code>, <code>auto_defer</code>, <code>auto_approve</code>, <code>escalate_default</code>, <code>decision_timeout_seconds</code>, <code>schema_version</code>), the <code>Rule</code> field set, the <code>"bypass"</code> string form, evaluation order, and <code>_</code>-prefixed metadata convention.</td>
+          <td>All <code>PolicyObject</code> top-level keys (<code>auto_reject</code>, <code>auto_defer</code>, <code>auto_approve</code>, <code>escalate_default</code>, <code>decision_timeout_seconds</code>, <code>schema_version</code>, <code>budget</code>), the <code>Rule</code> field set, the <code>"bypass"</code> string form, evaluation order, and <code>_</code>-prefixed metadata convention.</td>
         </tr>
         <tr>
           <td>MCP tools</td>
@@ -140,7 +141,7 @@
     <a href="https://ko-fi.com/renatodarrigo" target="_blank" rel="noopener noreferrer" class="btn btn-ghost"><svg width="14" height="14" viewBox="0 0 14 14" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" style="vertical-align:-2px;margin-right:6px"><path d="M2 5h8v5a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2z" fill="none" stroke="currentColor" stroke-width="1" stroke-linejoin="round"/><path d="M10 7h2a1.5 1.5 0 0 1 0 3h-2" fill="none" stroke="currentColor" stroke-width="1"/><path d="M4 1v2M6.5 1v2M9 1v2" stroke="currentColor" stroke-width="1" stroke-linecap="round"/></svg>Support on Ko-fi</a>
   </aside>
   <footer>
-    <p class="muted">claw-drive v0.5.9 · MIT · <a href="https://github.com/renatodarrigo/claw-drive">github.com/renatodarrigo/claw-drive</a> · © <span data-year></span></p>
+    <p class="muted">claw-drive 1.0.0 · MIT · <a href="https://github.com/renatodarrigo/claw-drive">github.com/renatodarrigo/claw-drive</a> · © <span data-year></span></p>
   </footer>
   <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-core.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>

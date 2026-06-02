@@ -53,6 +53,7 @@ stable.
 | `escalate_default` | `boolean` | When no rule matches, escalate (`true`, the default) or deny silently (`false`). |
 | `decision_timeout_seconds` | `number` | Per-session gate timeout. Defaults to 3600 if absent. |
 | `schema_version` | `number` | See [schema\_version](#schema_version) below. _(Introduced by the CD-1 contract-freeze work; part of the 1.0 contract, not a field that predates it.)_ |
+| `budget` | `{ max_tool_calls?, max_wall_clock_seconds?, max_consecutive_errors? }` | Run-level circuit-breaker (CD-4). All caps optional and positive; an absent cap is unlimited and an absent `budget` is off. On breach the runner stops the session with `exit_reason: "budget_exceeded:<cap>"`. |
 
 **Evaluation order** (contract as of v0.2.3, frozen):
 
@@ -276,7 +277,7 @@ surfaced activity has occurred for the configured threshold
 ### 4. CLI subcommands (`src/cli/cli.ts`)
 
 **17 subcommands** are frozen (the design doc referenced 18; the actual
-implementation at v0.5.9 has 17).
+implementation has 17).
 
 | Subcommand | Flags |
 |------------|-------|
