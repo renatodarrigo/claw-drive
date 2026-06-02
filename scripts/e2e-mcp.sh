@@ -140,7 +140,6 @@ section "CD-8 decision context (rationale + diff on the poll/pending path)"
 cat > "$ROOT/policy-ctx.json" <<'POLICY'
 {
   "auto_approve": [{ "tool": "Read" }],
-  "escalate": [{ "tool": "Edit" }, { "tool": "Write" }, { "tool": "Bash" }],
   "escalate_default": true,
   "decision_timeout_seconds": 60
 }
