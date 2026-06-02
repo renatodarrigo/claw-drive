@@ -1,18 +1,46 @@
 {
   "name": "claw-drive",
-  "version": "0.5.9",
+  "version": "1.0.0",
   "description": "Drive-as-user MCP server + CLI for Claude Code",
+  "keywords": [
+    "claude-code",
+    "mcp",
+    "drive-as-user",
+    "automation",
+    "human-in-the-loop",
+    "cli"
+  ],
+  "homepage": "https://renatodarrigo.github.io/claw-drive/",
+  "bugs": {
+    "url": "https://github.com/renatodarrigo/claw-drive/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/renatodarrigo/claw-drive.git"
+  },
+  "license": "MIT",
+  "author": "Renato D'Arrigo",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
     "claw-drive": "bin/claw-drive"
   },
+  "files": [
+    "dist",
+    "bin",
+    "templates",
+    "VERSION",
+    "CHANGELOG.md",
+    "COMPATIBILITY.md",
+    "THREAT-MODEL.md"
+  ],
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
     "test:unit": "vitest run tests/unit",
     "test:integration": "vitest run tests/integration",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1"
@@ -24,7 +52,5 @@
   },
   "engines": {
     "node": ">=20"
-  },
-  "author": "Renato D'Arrigo",
-  "license": "MIT"
+  }
 }

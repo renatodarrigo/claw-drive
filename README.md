@@ -392,8 +392,8 @@ Two policy templates ship in `templates/`:
 
 ## Testing
 
-- `npm run test:unit` — 777 unit tests, no real claude invocation
-- `npm run test:integration` — 24 integration tests spawning real claude (cost real tokens)
+- `npm run test:unit` — 782 unit tests, no real claude invocation
+- `npm run test:integration` — 25 integration tests spawning real claude (cost real tokens)
 - `bash scripts/self-dogfood.sh` — end-to-end acceptance smoke
 
 ## Contributing

@@ -1,5 +1,42 @@
 # Changelog
 
+## [1.0.0] — 2026-06-01
+
+First stable release. claw-drive 1.0 freezes the public surfaces — the policy schema, MCP tool set, event `kind` set, CLI subcommands, sentinel vocabulary, and the `notification_contract` — behind a SemVer promise: additive change within 1.x, breaking change reserved for 2.0. The full, field-level contract is in [COMPATIBILITY.md](COMPATIBILITY.md). This release consolidates the CD-1..CD-10 work delivered since 0.5.9.
+
+### Added
+
+- **Stability contract + `schema_version` (CD-1).** A written, enforced guarantee over every public surface, plus a new optional `schema_version` policy key and `COMPATIBILITY.md`.
+- **`THREAT-MODEL.md` (CD-3).** States the cooperative-not-adversarial boundary explicitly, linked from the policies page.
+- **Session budget / circuit-breaker (CD-4).** Optional `budget` policy block — `max_tool_calls`, `max_wall_clock_seconds`, `max_consecutive_errors` — that reaps a runaway run with `exit_reason: "budget_exceeded:<cap>"`. Off by default; both templates ship a documented `_budget_example`.
+- **`claw-drive policy lint <file>` (CD-5).** Static analysis of a whole policy file — regex-compile errors, shadowed/unreachable rules, overly-broad patterns, known false-positive shapes; opt-in `--check-coverage` flags uncovered danger families. `--json` / `--max-severity` for CI gating.
+- **`watch --all` + fleet `status` (CD-7).** One driver supervises many sessions: `watch --all` multiplexes every live session into one JSONL stream (additive `session_id` tag, dynamic membership); `status` (no argument) prints a point-in-time fleet snapshot.
+- **Decision context: rationale + diff (CD-8).** Every `tool_decision_required` now carries the preceding assistant `rationale` (capped ~1000 chars) and, for Edit/Write, a `diff` (capped ~4 KiB) — surfaced uniformly on `pending`, `status`, and the MCP `poll_turn` / `poll_session` tools.
+- **Per-session `runner.log` + rotation (CD-9).** The runner's stdout/stderr and Session B's stderr are captured to `<session>/runner.log` with size-based rotation (env-configurable `CLAW_DRIVE_LOG_MAX_BYTES` / `CLAW_DRIVE_LOG_KEEP`).
+- **Session aliases (CD-10).** `start --name <alias>` (CLI) / `start_session({ name })` (MCP) assign a human-friendly handle usable anywhere a session id is accepted; shown across `status`, `sessions`, `pending`, and `watch --all`.
+
+### Changed
+
+- **Sentinel silent-miss backstop (CD-6).** A no-token `turn_completed` whose final line ends in `?` is surfaced with an additive `suspected_needs_input` marker so a forgotten `[NEEDS-INPUT]` doesn't stall the driver; `--no-suspected-needs-input` opts out.
+
+### Fixed
+
+- **MCP `start_session` / `update_policy` rejected JSON-string policies.** A `policy` argument arriving as a JSON string (some clients serialize the untyped object param in transit) was rejected with "policy must be 'bypass' or an object". The server now coerces a stringified policy into an object before validating. Object and `"bypass"` policies are unchanged.
+- **Interpreter-escape hole (CD-3).** Closed the `node -e` auto-approve gap; interpreter one-liners (`python -c`, `node -e`, `perl -e`, `eval`, `sh -c`) now defer to the human instead of slipping through.
+- **Flaky decision-timeout test (CD-2).** Stabilised a timing-sensitive test.
+
+### Distribution
+
+- **First npm release** — `npm install -g claw-drive`. The curl-pipe `install.sh` remains fully supported.
+
+### Docs
+
+- Website, README, and `COMPATIBILITY.md` brought fully in sync with the 1.0 feature set (budget, fleet, decision context, aliases, the synthetic `idle` watch kind).
+
+### Tests
+
+- 782 unit + 25 integration.
+
 ## [0.5.9] — 2026-05-12
 
 ### Added
