@@ -12,7 +12,7 @@ import {
 import { readState, writeState, type SessionState } from "../lib/state.js";
 import * as path from "node:path";
 import { appendEvent, readEventsSince, type Event } from "../lib/events.js";
-import { policyDigest, matchPolicy, deriveRuleFromResolved, validatePolicy, type DecisionAction } from "../lib/policy.js";
+import { policyDigest, matchPolicy, deriveRuleFromResolved, validatePolicy, coercePolicy, type DecisionAction, type Policy } from "../lib/policy.js";
 import { parseClaudeLine } from "./stream-parser.js";
 import { startSocketServer } from "./socket-server.js";
 import { buildClaudeArgs } from "./runner-args.js";
@@ -412,7 +412,8 @@ async function handleRequest(
     }
 
     case "update_policy": {
-      const v = validatePolicy(req.policy);
+      const policy = coercePolicy(req.policy);
+      const v = validatePolicy(policy);
       if (!v.ok) {
         return {
           id: req.id,
@@ -421,7 +422,7 @@ async function handleRequest(
           message: v.error,
         };
       }
-      ctx.state.policy = req.policy;
+      ctx.state.policy = policy as Policy;
       await writeState(statePath(ctx.sessionId), ctx.state);
       return { id: req.id, ok: true };
     }

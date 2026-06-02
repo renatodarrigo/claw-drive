@@ -3,6 +3,7 @@ import {
   matchPolicy,
   deriveRuleFromResolved,
   validatePolicy,
+  coercePolicy,
   POLICY_SCHEMA_VERSION,
   type Policy,
   type Rule,
@@ -1224,4 +1225,34 @@ describe("CD-4 — _budget_example in shipped templates (documented, not enabled
       expect(validatePolicy(tpl)).toEqual({ ok: true });
     });
   }
+});
+
+describe("coercePolicy", () => {
+  it("parses a JSON-string object into an object that validates", () => {
+    const str = '{"auto_approve":[{"tool":"Read"}]}';
+    const coerced = coercePolicy(str);
+    expect(coerced).toEqual({ auto_approve: [{ tool: "Read" }] });
+    expect(validatePolicy(coerced)).toEqual({ ok: true });
+  });
+
+  it('leaves the literal "bypass" string unchanged', () => {
+    expect(coercePolicy("bypass")).toBe("bypass");
+    expect(validatePolicy(coercePolicy("bypass"))).toEqual({ ok: true });
+  });
+
+  it("returns an already-parsed object unchanged (identity)", () => {
+    const obj = { auto_approve: [{ tool: "Read" }], escalate_default: true };
+    expect(coercePolicy(obj)).toBe(obj);
+  });
+
+  it("returns a malformed JSON string as-is so validatePolicy still rejects it", () => {
+    const bad = "{not json";
+    expect(coercePolicy(bad)).toBe(bad);
+    expect(validatePolicy(coercePolicy(bad)).ok).toBe(false);
+  });
+
+  it("returns a non-object string unchanged so validatePolicy rejects it", () => {
+    expect(coercePolicy("hello")).toBe("hello");
+    expect(validatePolicy(coercePolicy("hello")).ok).toBe(false);
+  });
 });

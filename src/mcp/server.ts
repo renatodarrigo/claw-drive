@@ -21,7 +21,7 @@ import {
 } from "../lib/paths.js";
 import { readEventsSince, type Event } from "../lib/events.js";
 import { writeState, readState, isPidAlive, type SessionState } from "../lib/state.js";
-import { validatePolicy, type Policy } from "../lib/policy.js";
+import { validatePolicy, coercePolicy, type Policy } from "../lib/policy.js";
 import { sendRequest } from "../runner/socket-server.js";
 import { buildNotificationContract } from "../lib/tokens.js";
 import { isValidAlias, findLiveAliasHolder, resolveSessionRef } from "../lib/alias.js";
@@ -74,7 +74,7 @@ async function handleStartSession(args: Record<string, unknown>) {
   }
   if (!isInsideHome(cwd)) return err("INVALID_CWD", "cwd must be inside $HOME");
 
-  const policy: Policy = (args.policy as Policy) ?? "bypass";
+  const policy: Policy = (coercePolicy(args.policy) as Policy) ?? "bypass";
   const pv = validatePolicy(policy);
   if (!pv.ok) return err("INVALID_POLICY", (pv as { ok: false; error: string }).error);
 
@@ -455,13 +455,14 @@ async function handleUpdatePolicy(args: Record<string, any>) {
   if (sessionId === null) {
     return err("SESSION_NOT_FOUND", "invalid session_id");
   }
-  const pv = validatePolicy(args.policy);
+  const policy = coercePolicy(args.policy);
+  const pv = validatePolicy(policy);
   if (!pv.ok) return err("INVALID_POLICY", (pv as any).error);
   try {
     const resp = await sendRequest(socketPath(sessionId), {
       id: "up_" + Date.now(),
       op: "update_policy",
-      policy: args.policy,
+      policy: policy as Policy,
     });
     if (!resp.ok) return err(resp.error, resp.message);
     return ok({ ok: true });
