@@ -248,6 +248,23 @@ export function validatePolicy(p: unknown): { ok: true } | { ok: false; error: s
   return { ok: true };
 }
 
+/**
+ * Coerce a policy arg that may arrive as a JSON string (some MCP clients
+ * serialize untyped object params to strings) into an object. Leaves
+ * "bypass" and already-object values untouched; on parse failure returns
+ * the raw value so validatePolicy produces the normal error.
+ */
+export function coercePolicy(raw: unknown): unknown {
+  if (typeof raw === "string" && raw !== "bypass" && raw.trim().startsWith("{")) {
+    try {
+      return JSON.parse(raw);
+    } catch {
+      /* fall through to raw */
+    }
+  }
+  return raw;
+}
+
 export function policyDigest(policy: Policy): string {
   // Stable-ish digest for events; not cryptographic.
   const s = JSON.stringify(policy);
