@@ -25,10 +25,6 @@ First stable release. claw-drive 1.0 freezes the public surfaces — the policy 
 - **Interpreter-escape hole (CD-3).** Closed the `node -e` auto-approve gap; interpreter one-liners (`python -c`, `node -e`, `perl -e`, `eval`, `sh -c`) now defer to the human instead of slipping through.
 - **Flaky decision-timeout test (CD-2).** Stabilised a timing-sensitive test.
 
-### Distribution
-
-- **First npm release** — `npm install -g claw-drive`. The curl-pipe `install.sh` remains fully supported.
-
 ### Docs
 
 - Website, README, and `COMPATIBILITY.md` brought fully in sync with the 1.0 feature set (budget, fleet, decision context, aliases, the synthetic `idle` watch kind).
