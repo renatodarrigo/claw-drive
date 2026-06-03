@@ -67,8 +67,11 @@ const POINTERS = `LEARN MORE
 const GROUP_ORDER = ["lifecycle", "observe", "decide", "policy", "maintenance"] as const satisfies readonly CommandGroup[];
 // Compile-time exhaustiveness: every CommandGroup must appear in GROUP_ORDER, so a new
 // group can't silently drop its commands from the rendered guide.
-type _AllGroupsOrdered = CommandGroup extends (typeof GROUP_ORDER)[number] ? true : never;
-const _allGroupsOrdered: _AllGroupsOrdered = true;
+// Tuple-wrapped so the check is non-distributive: if any CommandGroup is missing from
+// GROUP_ORDER, Exclude<> is non-never and this resolves to `false`, failing compilation.
+const _allGroupsOrdered: [Exclude<CommandGroup, (typeof GROUP_ORDER)[number]>] extends [never]
+  ? true
+  : false = true;
 void _allGroupsOrdered;
 const GROUP_TITLES: Record<CommandGroup, string> = {
   lifecycle: "Session lifecycle",

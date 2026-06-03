@@ -12,7 +12,7 @@
     {
       "name": "claw-drive",
       "source": "./plugin",
-      "description": "Slash commands for driving Claude Code from Claude Code: /claw-drive-init, /claw-drive-start, /claw-drive-resolve. Pairs with the claw-drive CLI; install via curl -fsSL https://raw.githubusercontent.com/renatodarrigo/claw-drive/main/install.sh | bash.",
+      "description": "Slash commands for driving Claude Code from Claude Code: /claw-drive-init, /claw-drive-start, /claw-drive-resolve, /claw-drive-help. Pairs with the claw-drive CLI; install via curl -fsSL https://raw.githubusercontent.com/renatodarrigo/claw-drive/main/install.sh | bash.",
       "version": "1.1.0",
       "author": {
         "name": "Renato D'Arrigo",
