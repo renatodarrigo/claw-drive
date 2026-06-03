@@ -64,7 +64,9 @@ export const MCP_TOOL_DEFS: McpToolDef[] = [
   {
     name: "poll_turn",
     description:
-      "Fetch events + derived status for a specific turn. Use wait_ms>0 to long-poll.",
+      "Fetch events + derived status for a specific turn. Use wait_ms>0 to long-poll. " +
+      "Any tool_decision_required events carry decision context — `rationale` (B's capped preceding " +
+      "reasoning) and, for Edit/Write, a capped `diff` — so you can resolve without extra fetches.",
     inputSchema: {
       type: "object",
       properties: {
@@ -79,7 +81,9 @@ export const MCP_TOOL_DEFS: McpToolDef[] = [
   {
     name: "poll_session",
     description:
-      "Tail events for a session and return current session status. Use wait_ms>0 to long-poll.",
+      "Tail events for a session and return current session status. Use wait_ms>0 to long-poll. " +
+      "Any tool_decision_required events carry decision context — `rationale` (B's capped preceding " +
+      "reasoning) and, for Edit/Write, a capped `diff` — so you can resolve without extra fetches.",
     inputSchema: {
       type: "object",
       properties: {

@@ -9,6 +9,7 @@
 ### Changed
 - MCP tool definitions are now a single source (`src/mcp/tool-defs.ts`) consumed by both the server and the help guide; CLI commands are a single source (`src/cli/registry.ts`) driving both dispatch and the guide. The CD-1 contract guard pins both via direct import instead of source-scanning.
 - A bare `claw-drive` (no args) now exits 0 (clean help request) instead of 1.
+- `poll_turn` / `poll_session` MCP descriptions now note the CD-8 decision context (`rationale` + `diff`) carried on `tool_decision_required` events.
 
 ## [1.0.0] — 2026-06-01
 
