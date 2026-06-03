@@ -2,43 +2,10 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
-import { cmdSessions } from "./commands/sessions.js";
-import { cmdShow } from "./commands/show.js";
-import { cmdTail } from "./commands/tail.js";
-import { cmdPending } from "./commands/pending.js";
-import { cmdApprove } from "./commands/approve.js";
-import { cmdReject } from "./commands/reject.js";
-import { cmdDefer } from "./commands/defer.js";
-import { cmdSend } from "./commands/send.js";
-import { cmdStart } from "./commands/start.js";
-import { cmdStop } from "./commands/stop.js";
-import { cmdInterrupt } from "./commands/interrupt.js";
-import { cmdPolicy } from "./commands/policy.js";
-import { cmdPrune } from "./commands/prune.js";
-import { cmdWatch } from "./commands/watch.js";
-import { cmdProvideOutput } from "./commands/provide-output.js";
-import { cmdPolicyTest } from "./commands/policy-test.js";
-import { cmdStatus } from "./commands/status.js";
+import { COMMANDS } from "./registry.js";
 
-const commands: Record<string, (argv: string[]) => Promise<number>> = {
-  sessions: cmdSessions,
-  show: cmdShow,
-  tail: cmdTail,
-  pending: cmdPending,
-  approve: cmdApprove,
-  reject: cmdReject,
-  defer: cmdDefer,
-  send: cmdSend,
-  start: cmdStart,
-  stop: cmdStop,
-  interrupt: cmdInterrupt,
-  policy: cmdPolicy,
-  "policy-test": cmdPolicyTest,
-  status: cmdStatus,
-  prune: cmdPrune,
-  watch: cmdWatch,
-  "provide-output": cmdProvideOutput,
-};
+const dispatch: Record<string, (argv: string[]) => Promise<number>> =
+  Object.fromEntries(COMMANDS.map((c) => [c.name, c.handler]));
 
 export async function runCli(argv: string[]): Promise<void> {
   const cmd = argv[0];
@@ -50,7 +17,7 @@ export async function runCli(argv: string[]): Promise<void> {
     console.log(getVersion());
     process.exit(0);
   }
-  const handler = commands[cmd];
+  const handler = dispatch[cmd];
   if (!handler) {
     console.error(`unknown command: ${cmd}`);
     printUsage();
