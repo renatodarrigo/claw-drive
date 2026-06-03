@@ -48,6 +48,7 @@
     <table>
       <thead><tr><th>Command</th><th>Purpose</th></tr></thead>
       <tbody>
+        <tr><td><code>help</code></td><td>Print the full capability map: the Session A/B model, the driving loop, the policy/gate/budget model, the sentinel vocabulary, fleet view, and every CLI command and MCP tool. <code>--help</code>, <code>-h</code>, and a bare <code>claw-drive</code> print the same guide.</td></tr>
         <tr><td><code>sessions</code></td><td>List sessions (live and orphaned).</td></tr>
         <tr><td><code>status [&lt;session&gt;] [--json]</code></td><td>Fleet snapshot — one row per live session (state, last token, pending-decision count). With a session argument, just that one. <code>--json</code> for structured output. The point-in-time companion to <code>watch --all</code>.</td></tr>
         <tr><td><code>show &lt;session&gt;</code></td><td>State plus last 20 events.</td></tr>
