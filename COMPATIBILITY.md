@@ -103,7 +103,7 @@ impossible-today values. No existing valid policy becomes invalid.
 
 ---
 
-### 2. MCP tools (`src/mcp/server.ts`)
+### 2. MCP tools (`src/mcp/tool-defs.ts`, served by `src/mcp/server.ts`)
 
 The server exposes exactly **10 tools**. The tool names, required inputs, and
 response shapes listed here are frozen.
@@ -274,7 +274,7 @@ surfaced activity has occurred for the configured threshold
 
 ---
 
-### 4. CLI subcommands (`src/cli/cli.ts`)
+### 4. CLI subcommands (`src/cli/registry.ts`, dispatched by `src/cli/cli.ts`)
 
 **17 subcommands** are frozen (the design doc referenced 18; the actual
 implementation has 17).
@@ -304,7 +304,8 @@ implementation has 17).
 | Flag | Description |
 |------|-------------|
 | `--version` / `-v` | Print the installed version and exit. |
-| `--help` / `-h` | Print usage and exit. |
+| `--help` / `-h` | Print the capability map and exit. |
+| `help` (and a bare `claw-drive`) | Print the capability map and exit. |
 
 ---
 
