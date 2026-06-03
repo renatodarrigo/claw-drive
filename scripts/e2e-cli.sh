@@ -46,6 +46,15 @@ expect_stdout_contains "--help mentions prune"    "prune"     "$BIN" --help
 expect_stdout_contains "--help mentions watch"    "watch"     "$BIN" --help
 expect_stdout_contains "--help mentions provide-output" "provide-output" "$BIN" --help
 
+section "help (capability map)"
+expect_exit            "help verb exits 0"                  0 "$BIN" help
+expect_exit            "no-arg exits 0"                     0 "$BIN"
+expect_stdout_contains "help lists MCP tool start_session"  "start_session" "$BIN" help
+expect_stdout_contains "help has MCP TOOLS section"         "MCP TOOLS"     "$BIN" help
+expect_stdout_contains "help has MENTAL MODEL section"      "MENTAL MODEL"  "$BIN" help
+expect_exit            "unknown command exits 2"            2 "$BIN" not-a-real-command
+expect_stdout_contains "unknown command points to help"     "claw-drive help" "$BIN" not-a-real-command
+
 section "empty-state listings"
 expect_exit "sessions on empty home"  0 "$BIN" sessions
 expect_exit "pending on empty home"   0 "$BIN" pending

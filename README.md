@@ -313,6 +313,7 @@ B's echo fires the hook → policy defers → monitor alerts A → human answers
 
 | Command | Purpose |
 |---|---|
+| `help` | Print the full capability map (concepts + every command + every MCP tool). Same output as `--help`, `-h`, and a bare `claw-drive`. |
 | `sessions` | List sessions (live + orphaned) |
 | `status [<session>] [--json]` | Fleet snapshot — one row per live session (state, last token, pending-decision count). With a session argument, just that one; `--json` for structured output. Point-in-time companion to `watch --all`. |
 | `show <session>` | State + last 20 events |

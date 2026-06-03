@@ -71,3 +71,7 @@ The user has invoked this skill to register claw-drive in the current project. T
 - Install the CLI binary. That's `curl … | bash`.
 - Start a driven session. Use `/claw-drive-start`.
 - Modify any other field in `.mcp.json`. Existing `mcpServers` entries are preserved.
+
+## First time using claw-drive?
+
+Now that claw-drive is registered in this project, if you haven't already, run `/claw-drive-help` to build your mental model of what it can do — the Session A/B model, the driving loop, the policy/gate model, and every CLI command and MCP tool — before driving a session.

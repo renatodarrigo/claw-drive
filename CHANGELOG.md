@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.1.0] — 2026-06-03
+
+### Added
+- `claw-drive help` — a comprehensive capability map for the driving agent (Session A): the Session A/B model, the driving loop, the policy/gate/budget model, the sentinel vocabulary, fleet view, plus every CLI command (with usage) and every MCP tool (with description). `--help`, `-h`, and a bare `claw-drive` now print this guide and exit 0.
+- `/claw-drive-help` plugin skill that runs `claw-drive help`; `/claw-drive-init` now points first-time users to it.
+
+### Changed
+- MCP tool definitions are now a single source (`src/mcp/tool-defs.ts`) consumed by both the server and the help guide; CLI commands are a single source (`src/cli/registry.ts`) driving both dispatch and the guide. The CD-1 contract guard pins both via direct import instead of source-scanning.
+- A bare `claw-drive` (no args) now exits 0 (clean help request) instead of 1.
+
 ## [1.0.0] — 2026-06-01
 
 First stable release. claw-drive 1.0 freezes the public surfaces — the policy schema, MCP tool set, event `kind` set, CLI subcommands, sentinel vocabulary, and the `notification_contract` — behind a SemVer promise: additive change within 1.x, breaking change reserved for 2.0. The full, field-level contract is in [COMPATIBILITY.md](COMPATIBILITY.md). This release consolidates the CD-1..CD-10 work delivered since 0.5.9.

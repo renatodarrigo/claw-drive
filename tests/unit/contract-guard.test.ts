@@ -6,10 +6,9 @@
  * or sentinel token fails CI — and ADDING one fails until the expected set here is
  * updated in the same commit (additive-with-intent).
  *
- * Where a surface is exported as a runtime value (VOCAB, VALID_WATCH_KINDS) we
- * import and compare it directly. Where it is not a runtime value (MCP tool names
- * live in server.ts, the full event-kind union lives in events.ts as a type, CLI
- * subcommands are a dispatch switch in cli.ts) we parse the source file and assert
+ * Where a surface is exported as a runtime value (VOCAB, VALID_WATCH_KINDS,
+ * MCP_TOOL_DEFS, COMMANDS) we import and compare it directly. The full event-kind
+ * union lives in events.ts only as a type, so we parse that source file and assert
  * the extracted set equals the expected set. Source parsing is deliberately strict:
  * a rename changes the extracted string; a removal drops it; an addition adds an
  * unexpected member — all three diverge from the frozen set below.
@@ -20,12 +19,14 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { VOCAB } from "../../src/lib/tokens.js";
 import { VALID_WATCH_KINDS } from "../../src/cli/commands/watch.js";
+import { MCP_TOOL_DEFS } from "../../src/mcp/tool-defs.js";
+import { COMMANDS } from "../../src/cli/registry.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..", "..");
 const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf-8");
 
-describe("CD-13 contract guard — MCP tools (src/mcp/server.ts)", () => {
+describe("CD-13 contract guard — MCP tools (src/mcp/tool-defs.ts)", () => {
   // The 10 frozen MCP tools (COMPATIBILITY.md §2).
   const EXPECTED_MCP_TOOLS = new Set([
     "start_session",
@@ -41,22 +42,7 @@ describe("CD-13 contract guard — MCP tools (src/mcp/server.ts)", () => {
   ]);
 
   it("the server registers exactly the frozen tool set", () => {
-    const src = read("src/mcp/server.ts");
-    // Tool definitions in the `tools` array each carry a `name: "<tool>",` line.
-    // Scope extraction to the tools-array region (between `const tools` and the
-    // ListTools handler) so unrelated `name:` keys can't leak in.
-    // `const tools` declares the array; the ListTools handler that consumes it
-    // (`server.setRequestHandler(ListToolsRequestSchema, ...)`) marks the end of
-    // the array region. Search for the handler AFTER `start` — the bare symbol
-    // also appears on the import line near the top of the file.
-    const start = src.indexOf("const tools");
-    expect(start).toBeGreaterThan(-1);
-    const end = src.indexOf("setRequestHandler(ListToolsRequestSchema", start);
-    expect(end).toBeGreaterThan(start);
-    const region = src.slice(start, end);
-    const found = new Set(
-      [...region.matchAll(/name:\s*"([a-z_]+)"/g)].map((m) => m[1])
-    );
+    const found = new Set(MCP_TOOL_DEFS.map((t) => t.name));
     expect(found).toEqual(EXPECTED_MCP_TOOLS);
   });
 });
@@ -112,7 +98,7 @@ describe("CD-13 contract guard — watch-surfaced kinds (VALID_WATCH_KINDS)", ()
   });
 });
 
-describe("CD-13 contract guard — CLI subcommands (src/cli/cli.ts)", () => {
+describe("CD-13 contract guard — CLI subcommands (src/cli/registry.ts)", () => {
   // The 17 frozen CLI subcommands (COMPATIBILITY.md §4).
   const EXPECTED_CLI_SUBCOMMANDS = new Set([
     "sessions",
@@ -134,20 +120,8 @@ describe("CD-13 contract guard — CLI subcommands (src/cli/cli.ts)", () => {
     "provide-output",
   ]);
 
-  it("the commands dispatch table holds exactly the frozen subcommands", () => {
-    const src = read("src/cli/cli.ts");
-    // Subcommands are the keys of the `const commands` record (each value is a
-    // `cmd*` handler). Scope to that object literal and extract each key — bare
-    // (`sessions:`) or quoted (`"policy-test":`) — that maps to a cmd* function.
-    // A rename/removal/addition of a handler diverges from the frozen set.
-    const start = src.indexOf("const commands");
-    expect(start).toBeGreaterThan(-1);
-    const end = src.indexOf("};", start);
-    expect(end).toBeGreaterThan(start);
-    const region = src.slice(start, end);
-    const found = new Set(
-      [...region.matchAll(/["']?([a-z][a-z-]*)["']?\s*:\s*cmd[A-Z]/g)].map((m) => m[1])
-    );
+  it("the commands registry holds exactly the frozen subcommands", () => {
+    const found = new Set(COMMANDS.map((c) => c.name));
     expect(found).toEqual(EXPECTED_CLI_SUBCOMMANDS);
   });
 });
