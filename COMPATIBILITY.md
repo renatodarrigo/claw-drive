@@ -194,7 +194,10 @@ Approve or reject a paused tool call by `call_id`.
 
 **Required inputs:** `call_id: string`, `action: "approve" | "reject"`, `reason: string`
 
-**Optional input:** `remember_as_policy: boolean`
+**Optional inputs:** `remember_as_policy: boolean`, `preview_only: boolean`, `remembered_rule: Rule`
+
+- `preview_only` — return `{ would_remember, list, source, bypass? }` for the rule that would be remembered; the call is **not** resolved and policy is **not** mutated.
+- `remembered_rule` — append this explicit (edited) rule instead of the derived one. Validated; an invalid rule returns `BAD_RULE` and resolves nothing.
 
 **Response:** `{ "ok": true }`
 
@@ -286,9 +289,9 @@ implementation has 17).
 | `tail <session>` | `--since N`, `--follow` / `-f` |
 | `watch <session>` | `--since N`, `--replay`, `--only KIND[,KIND]...`, `--decision-only`, `--no-token-filter`, `--idle-after SECONDS` |
 | `pending [<session>]` | _(none)_ |
-| `approve <call_id>` | `--reason R`, `--remember` |
-| `reject <call_id>` | `--reason R`, `--remember` |
-| `defer <call_id>` | `--reason R`, `--remember` |
+| `approve <call_id>` | `--reason R`, `--remember`, `--remember-as JSON`, `--preview`, `--json` |
+| `reject <call_id>` | `--reason R`, `--remember`, `--remember-as JSON`, `--preview`, `--json` |
+| `defer <call_id>` | `--reason R`, `--remember`, `--remember-as JSON`, `--preview`, `--json` |
 | `send <session> "<message>"` | _(none)_ |
 | `start` | `--cwd PATH` (required), `--policy FILE`, `--brief FILE`, `--no-wrapper` |
 | `stop <session>` | _(none)_ |
