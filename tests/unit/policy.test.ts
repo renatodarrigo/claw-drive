@@ -4,6 +4,10 @@ import {
   deriveRuleFromResolved,
   validatePolicy,
   coercePolicy,
+  validateRule,
+  coerceRule,
+  planResolveRemember,
+  listForAction,
   POLICY_SCHEMA_VERSION,
   type Policy,
   type Rule,
@@ -1254,5 +1258,144 @@ describe("coercePolicy", () => {
   it("returns a non-object string unchanged so validatePolicy rejects it", () => {
     expect(coercePolicy("hello")).toBe("hello");
     expect(validatePolicy(coercePolicy("hello")).ok).toBe(false);
+  });
+});
+
+describe("validateRule", () => {
+  it("accepts a well-formed Bash rule", () => {
+    expect(validateRule({ tool: "Bash", bash_command_matches: "^git push " })).toEqual({ ok: true });
+  });
+
+  it("accepts a well-formed arg_matches rule with severity + name", () => {
+    expect(
+      validateRule({ name: "x", tool: "Read", arg_matches: { file_path: "^/etc/" }, severity: "high" })
+    ).toEqual({ ok: true });
+  });
+
+  it("rejects a non-object", () => {
+    expect(validateRule("nope").ok).toBe(false);
+    expect(validateRule(null).ok).toBe(false);
+    expect(validateRule([]).ok).toBe(false);
+  });
+
+  it("rejects an empty / missing tool", () => {
+    expect(validateRule({ tool: "" }).ok).toBe(false);
+    expect(validateRule({ bash_command_matches: "^x" }).ok).toBe(false);
+  });
+
+  it("rejects an unknown rule key", () => {
+    const r = validateRule({ tool: "Bash", typo: 1 });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/unknown rule key 'typo'/);
+  });
+
+  it("rejects an uncompilable bash_command_matches regex", () => {
+    const r = validateRule({ tool: "Bash", bash_command_matches: "(" });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/invalid regex/);
+  });
+
+  it("rejects an uncompilable arg_matches regex (the gap validatePolicy has)", () => {
+    const r = validateRule({ tool: "Read", arg_matches: { file_path: "(" } });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/arg_matches\.file_path invalid regex/);
+  });
+
+  it("rejects a bad severity", () => {
+    expect(validateRule({ tool: "Bash", severity: "critical" }).ok).toBe(false);
+  });
+
+  it("rejects a non-string bash_command_matches", () => {
+    expect(validateRule({ tool: "Bash", bash_command_matches: 99 }).ok).toBe(false);
+  });
+
+  it("rejects a non-string arg_matches value", () => {
+    expect(validateRule({ tool: "Read", arg_matches: { file_path: 42 } }).ok).toBe(false);
+  });
+
+  it("rejects arg_matches that is an array", () => {
+    expect(validateRule({ tool: "Bash", arg_matches: ["^x"] }).ok).toBe(false);
+  });
+
+  it("accepts a valid /.../ tool regex", () => {
+    expect(validateRule({ tool: "/^Bash$/" })).toEqual({ ok: true });
+  });
+
+  it("rejects a /.../ tool with an uncompilable regex", () => {
+    const r = validateRule({ tool: "/[/" });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/rule\.tool invalid regex/);
+  });
+});
+
+describe("coerceRule", () => {
+  it("parses a JSON-string rule into an object", () => {
+    expect(coerceRule('{"tool":"Bash"}')).toEqual({ tool: "Bash" });
+  });
+  it("leaves an object untouched", () => {
+    const o = { tool: "Bash" };
+    expect(coerceRule(o)).toBe(o);
+  });
+  it("returns the raw value on parse failure", () => {
+    expect(coerceRule("not json")).toBe("not json");
+  });
+});
+
+describe("planResolveRemember", () => {
+  const base = { tool: "Bash", args: { command: "git push origin main" } };
+  const obj = { auto_approve: [], escalate_default: true };
+
+  it("preview with no provided rule returns the derived rule, no mutation intent", () => {
+    const p = planResolveRemember({ ...base, action: "approve", previewOnly: true, policy: obj });
+    expect(p).toEqual({
+      mode: "preview",
+      rule: { tool: "Bash", bash_command_matches: "^git ", name: "remembered: approve git" },
+      list: "auto_approve",
+      source: "derived",
+      bypass: false,
+    });
+  });
+
+  it("preview with a provided rule echoes it as source=provided", () => {
+    const provided = { tool: "Bash", bash_command_matches: "^git push " };
+    const p = planResolveRemember({
+      ...base, action: "approve", previewOnly: true, rememberedRule: provided, policy: obj,
+    });
+    expect(p).toMatchObject({ mode: "preview", rule: provided, source: "provided", list: "auto_approve" });
+  });
+
+  it("preview marks bypass policy", () => {
+    const p = planResolveRemember({ ...base, action: "approve", previewOnly: true, policy: "bypass" });
+    expect(p).toMatchObject({ mode: "preview", bypass: true });
+  });
+
+  it("an invalid provided rule returns BAD_RULE (preview or commit)", () => {
+    const bad = { tool: "Bash", bash_command_matches: "(" };
+    expect(planResolveRemember({ ...base, action: "approve", previewOnly: true, rememberedRule: bad, policy: obj }).mode).toBe("error");
+    expect(planResolveRemember({ ...base, action: "reject", rememberedRule: bad, policy: obj }).mode).toBe("error");
+  });
+
+  it("commit with remember_as_policy appends the derived rule to the action's list", () => {
+    const p = planResolveRemember({ ...base, action: "defer", rememberAsPolicy: true, policy: obj });
+    expect(p).toMatchObject({ mode: "commit", list: "auto_defer" });
+    if (p.mode === "commit") expect(p.appendRule?.bash_command_matches).toBe("^git ");
+  });
+
+  it("commit with a provided rule appends it verbatim (coerced from JSON string)", () => {
+    const p = planResolveRemember({
+      ...base, action: "approve", rememberedRule: '{"tool":"Bash","bash_command_matches":"^git push "}', policy: obj,
+    });
+    expect(p).toMatchObject({ mode: "commit", list: "auto_approve" });
+    if (p.mode === "commit") expect(p.appendRule).toEqual({ tool: "Bash", bash_command_matches: "^git push " });
+  });
+
+  it("commit with no remember flags appends nothing (today's default)", () => {
+    const p = planResolveRemember({ ...base, action: "approve", policy: obj });
+    expect(p).toEqual({ mode: "commit", appendRule: null, list: "auto_approve" });
+  });
+
+  it("commit under bypass appends nothing even with remember_as_policy", () => {
+    const p = planResolveRemember({ ...base, action: "approve", rememberAsPolicy: true, policy: "bypass" });
+    expect(p).toEqual({ mode: "commit", appendRule: null, list: "auto_approve" });
   });
 });

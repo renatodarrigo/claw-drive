@@ -1,4 +1,4 @@
-import type { DecisionAction, Policy } from "./policy.js";
+import type { DecisionAction, Policy, Rule } from "./policy.js";
 
 /**
  * The PreToolUse hook JSON payload claude pipes to the approver's stdin.
@@ -26,6 +26,8 @@ export type ControlRequest =
       action: DecisionAction;
       reason: string;
       remember_as_policy?: boolean;
+      preview_only?: boolean;
+      remembered_rule?: Rule;
     }
   | { id: string; op: "update_policy"; policy: Policy }
   | { id: string; op: "interrupt_turn"; turn_id: string }

@@ -98,4 +98,18 @@ describe("socket-protocol", () => {
     const decoded = decodeMessage(encodeMessage(req).trimEnd());
     expect(decoded).toEqual(req);
   });
+
+  it("encodes/decodes resolve_tool_call with preview_only + remembered_rule", () => {
+    const req = {
+      id: "1",
+      op: "resolve_tool_call" as const,
+      call_id: "c1",
+      action: "approve" as const,
+      reason: "r",
+      preview_only: true,
+      remembered_rule: { tool: "Bash", bash_command_matches: "^git push " },
+    };
+    const round = decodeMessage(encodeMessage(req));
+    expect(round).toEqual(req);
+  });
 });

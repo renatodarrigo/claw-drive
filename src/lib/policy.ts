@@ -165,6 +165,132 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+const RULE_KEYS = new Set(["name", "tool", "bash_command_matches", "arg_matches", "severity"]);
+
+/**
+ * Stricter per-rule validation for hand-authored rules (the --remember-as /
+ * remembered_rule edit path). Unlike validatePolicy's inline rule check, this
+ * also compiles arg_matches regexes, checks severity, and rejects unknown keys.
+ */
+export function validateRule(r: unknown): { ok: true } | { ok: false; error: string } {
+  if (typeof r !== "object" || r === null || Array.isArray(r)) {
+    return { ok: false, error: "rule must be an object" };
+  }
+  const obj = r as Record<string, unknown>;
+  for (const k of Object.keys(obj)) {
+    if (!RULE_KEYS.has(k)) return { ok: false, error: `unknown rule key '${k}'` };
+  }
+  if (typeof obj.tool !== "string" || obj.tool.length === 0) {
+    return { ok: false, error: "rule.tool must be a non-empty string" };
+  }
+  if (obj.tool.startsWith("/") && obj.tool.endsWith("/") && obj.tool.length >= 2) {
+    try {
+      new RegExp(obj.tool.slice(1, -1));
+    } catch (e) {
+      return { ok: false, error: `rule.tool invalid regex: ${String(e)}` };
+    }
+  }
+  if (obj.name !== undefined && typeof obj.name !== "string") {
+    return { ok: false, error: "rule.name must be a string" };
+  }
+  if (obj.bash_command_matches !== undefined) {
+    if (typeof obj.bash_command_matches !== "string") {
+      return { ok: false, error: "rule.bash_command_matches must be a string" };
+    }
+    try {
+      new RegExp(obj.bash_command_matches);
+    } catch (e) {
+      return { ok: false, error: `rule.bash_command_matches invalid regex: ${String(e)}` };
+    }
+  }
+  if (obj.arg_matches !== undefined) {
+    if (typeof obj.arg_matches !== "object" || obj.arg_matches === null || Array.isArray(obj.arg_matches)) {
+      return { ok: false, error: "rule.arg_matches must be an object" };
+    }
+    for (const [k, v] of Object.entries(obj.arg_matches as Record<string, unknown>)) {
+      if (typeof v !== "string") {
+        return { ok: false, error: `rule.arg_matches.${k} must be a string` };
+      }
+      try {
+        new RegExp(v);
+      } catch (e) {
+        return { ok: false, error: `rule.arg_matches.${k} invalid regex: ${String(e)}` };
+      }
+    }
+  }
+  if (obj.severity !== undefined && (typeof obj.severity !== "string" || !["low", "medium", "high"].includes(obj.severity))) {
+    return { ok: false, error: "rule.severity must be one of low|medium|high" };
+  }
+  return { ok: true };
+}
+
+/**
+ * Coerce a rule that may arrive as a JSON string (some MCP clients serialize
+ * untyped object params to strings — same hazard coercePolicy handles). Returns
+ * the parsed object, or the raw value unchanged when it is not a JSON object.
+ */
+export function coerceRule(raw: unknown): unknown {
+  if (typeof raw === "string" && raw.trim().startsWith("{")) {
+    try {
+      return JSON.parse(raw);
+    } catch {
+      /* fall through to raw */
+    }
+  }
+  return raw;
+}
+
+export type ListName = "auto_approve" | "auto_defer" | "auto_reject";
+
+export function listForAction(action: DecisionAction): ListName {
+  return action === "approve" ? "auto_approve" : action === "defer" ? "auto_defer" : "auto_reject";
+}
+
+export interface RememberInput {
+  action: DecisionAction;
+  previewOnly?: boolean;
+  rememberAsPolicy?: boolean;
+  rememberedRule?: unknown;
+  tool: string;
+  args: Record<string, unknown>;
+  policy: Policy;
+}
+
+export type RememberPlan =
+  | { mode: "preview"; rule: Rule; list: ListName; source: "derived" | "provided"; bypass: boolean }
+  | { mode: "error"; code: "BAD_RULE"; message: string }
+  | { mode: "commit"; appendRule: Rule | null; list: ListName };
+
+/**
+ * Pure decision for a resolve_tool_call that may preview and/or remember a rule.
+ * The runner performs IO based on the returned plan; this function never mutates.
+ */
+export function planResolveRemember(input: RememberInput): RememberPlan {
+  const list = listForAction(input.action);
+  const isBypass = input.policy === "bypass";
+
+  let provided: Rule | null = null;
+  if (input.rememberedRule !== undefined) {
+    const coerced = coerceRule(input.rememberedRule);
+    const v = validateRule(coerced);
+    if (!v.ok) return { mode: "error", code: "BAD_RULE", message: v.error };
+    provided = coerced as Rule;
+  }
+
+  if (input.previewOnly) {
+    const rule = provided ?? deriveRuleFromResolved(input.action, input.tool, input.args);
+    return { mode: "preview", rule, list, source: provided ? "provided" : "derived", bypass: isBypass };
+  }
+
+  // Commit. Remember is a no-op under bypass (no lists to append to).
+  if (isBypass) return { mode: "commit", appendRule: null, list };
+  if (provided) return { mode: "commit", appendRule: provided, list };
+  if (input.rememberAsPolicy) {
+    return { mode: "commit", appendRule: deriveRuleFromResolved(input.action, input.tool, input.args), list };
+  }
+  return { mode: "commit", appendRule: null, list };
+}
+
 export function validatePolicy(p: unknown): { ok: true } | { ok: false; error: string } {
   if (p === "bypass") return { ok: true };
   if (typeof p !== "object" || p === null)
