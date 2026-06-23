@@ -22,7 +22,12 @@ const usage = (action: string) =>
 export function parseResolveArgs(action: DecisionAction, argv: string[]): ParsedResolve {
   const callId = argv[0];
   if (!callId || callId.startsWith("--")) return { ok: false, error: usage(action) };
-  let reason = `${action}d via CLI`;
+  const pastTense: Record<DecisionAction, string> = {
+    approve: "approved",
+    reject: "rejected",
+    defer: "deferred",
+  };
+  let reason = `${pastTense[action]} via CLI`;
   let preview = false;
   let json = false;
   let remember = false;
@@ -106,9 +111,10 @@ export async function resolveCmd(action: DecisionAction, argv: string[]): Promis
       });
       if (resp.ok) {
         const result = (resp as { result?: Record<string, unknown> }).result;
-        if (parsed.preview && result) {
-          if (parsed.json) console.log(JSON.stringify(result));
-          else console.log(renderPreviewHuman(result as Parameters<typeof renderPreviewHuman>[0]));
+        if (parsed.preview) {
+          if (parsed.json) console.log(JSON.stringify(result ?? {}));
+          else if (result) console.log(renderPreviewHuman(result as Parameters<typeof renderPreviewHuman>[0]));
+          else console.log(JSON.stringify(result ?? { ok: true }));
         } else {
           console.log(JSON.stringify({ session_id: id, ok: true }));
         }

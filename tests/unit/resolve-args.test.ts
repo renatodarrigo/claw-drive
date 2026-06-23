@@ -41,6 +41,18 @@ describe("parseResolveArgs", () => {
   it("rejects an unknown flag", () => {
     expect(parseResolveArgs("approve", ["c1", "--nope"]).ok).toBe(false);
   });
+
+  it("rejects a first arg that is a flag, not a call_id", () => {
+    expect(parseResolveArgs("approve", ["--nope"]).ok).toBe(false);
+  });
+
+  it("parses --remember alone", () => {
+    const r = parseResolveArgs("approve", ["c1", "--remember"]);
+    expect(r).toEqual({
+      ok: true, callId: "c1", reason: "approved via CLI",
+      preview: false, json: false, remember: true, rememberedRule: null,
+    });
+  });
 });
 
 describe("renderPreviewHuman", () => {
@@ -59,5 +71,12 @@ describe("renderPreviewHuman", () => {
     });
     expect(out).toContain("Read where file_path matches ^/etc/passwd$");
     expect(out).toContain('policy is "bypass"');
+  });
+
+  it("renders a tool-wide fallback rule", () => {
+    const out = renderPreviewHuman({
+      would_remember: { tool: "Edit" }, list: "auto_approve", source: "derived",
+    });
+    expect(out).toContain("Edit (tool-wide)");
   });
 });
