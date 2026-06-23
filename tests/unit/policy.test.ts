@@ -4,6 +4,8 @@ import {
   deriveRuleFromResolved,
   validatePolicy,
   coercePolicy,
+  validateRule,
+  coerceRule,
   POLICY_SCHEMA_VERSION,
   type Policy,
   type Rule,
@@ -1254,5 +1256,63 @@ describe("coercePolicy", () => {
   it("returns a non-object string unchanged so validatePolicy rejects it", () => {
     expect(coercePolicy("hello")).toBe("hello");
     expect(validatePolicy(coercePolicy("hello")).ok).toBe(false);
+  });
+});
+
+describe("validateRule", () => {
+  it("accepts a well-formed Bash rule", () => {
+    expect(validateRule({ tool: "Bash", bash_command_matches: "^git push " })).toEqual({ ok: true });
+  });
+
+  it("accepts a well-formed arg_matches rule with severity + name", () => {
+    expect(
+      validateRule({ name: "x", tool: "Read", arg_matches: { file_path: "^/etc/" }, severity: "high" })
+    ).toEqual({ ok: true });
+  });
+
+  it("rejects a non-object", () => {
+    expect(validateRule("nope").ok).toBe(false);
+    expect(validateRule(null).ok).toBe(false);
+    expect(validateRule([]).ok).toBe(false);
+  });
+
+  it("rejects an empty / missing tool", () => {
+    expect(validateRule({ tool: "" }).ok).toBe(false);
+    expect(validateRule({ bash_command_matches: "^x" }).ok).toBe(false);
+  });
+
+  it("rejects an unknown rule key", () => {
+    const r = validateRule({ tool: "Bash", typo: 1 });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/unknown rule key 'typo'/);
+  });
+
+  it("rejects an uncompilable bash_command_matches regex", () => {
+    const r = validateRule({ tool: "Bash", bash_command_matches: "(" });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/invalid regex/);
+  });
+
+  it("rejects an uncompilable arg_matches regex (the gap validatePolicy has)", () => {
+    const r = validateRule({ tool: "Read", arg_matches: { file_path: "(" } });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/arg_matches\.file_path invalid regex/);
+  });
+
+  it("rejects a bad severity", () => {
+    expect(validateRule({ tool: "Bash", severity: "critical" }).ok).toBe(false);
+  });
+});
+
+describe("coerceRule", () => {
+  it("parses a JSON-string rule into an object", () => {
+    expect(coerceRule('{"tool":"Bash"}')).toEqual({ tool: "Bash" });
+  });
+  it("leaves an object untouched", () => {
+    const o = { tool: "Bash" };
+    expect(coerceRule(o)).toBe(o);
+  });
+  it("returns the raw value on parse failure", () => {
+    expect(coerceRule("not json")).toBe("not json");
   });
 });

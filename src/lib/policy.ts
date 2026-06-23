@@ -165,6 +165,74 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+const RULE_KEYS = new Set(["name", "tool", "bash_command_matches", "arg_matches", "severity"]);
+
+/**
+ * Stricter per-rule validation for hand-authored rules (the --remember-as /
+ * remembered_rule edit path). Unlike validatePolicy's inline rule check, this
+ * also compiles arg_matches regexes, checks severity, and rejects unknown keys.
+ */
+export function validateRule(r: unknown): { ok: true } | { ok: false; error: string } {
+  if (typeof r !== "object" || r === null || Array.isArray(r)) {
+    return { ok: false, error: "rule must be an object" };
+  }
+  const obj = r as Record<string, unknown>;
+  for (const k of Object.keys(obj)) {
+    if (!RULE_KEYS.has(k)) return { ok: false, error: `unknown rule key '${k}'` };
+  }
+  if (typeof obj.tool !== "string" || obj.tool.length === 0) {
+    return { ok: false, error: "rule.tool must be a non-empty string" };
+  }
+  if (obj.name !== undefined && typeof obj.name !== "string") {
+    return { ok: false, error: "rule.name must be a string" };
+  }
+  if (obj.bash_command_matches !== undefined) {
+    if (typeof obj.bash_command_matches !== "string") {
+      return { ok: false, error: "rule.bash_command_matches must be a string" };
+    }
+    try {
+      new RegExp(obj.bash_command_matches);
+    } catch (e) {
+      return { ok: false, error: `rule.bash_command_matches invalid regex: ${String(e)}` };
+    }
+  }
+  if (obj.arg_matches !== undefined) {
+    if (typeof obj.arg_matches !== "object" || obj.arg_matches === null || Array.isArray(obj.arg_matches)) {
+      return { ok: false, error: "rule.arg_matches must be an object" };
+    }
+    for (const [k, v] of Object.entries(obj.arg_matches as Record<string, unknown>)) {
+      if (typeof v !== "string") {
+        return { ok: false, error: `rule.arg_matches.${k} must be a string` };
+      }
+      try {
+        new RegExp(v);
+      } catch (e) {
+        return { ok: false, error: `rule.arg_matches.${k} invalid regex: ${String(e)}` };
+      }
+    }
+  }
+  if (obj.severity !== undefined && !["low", "medium", "high"].includes(obj.severity as string)) {
+    return { ok: false, error: "rule.severity must be one of low|medium|high" };
+  }
+  return { ok: true };
+}
+
+/**
+ * Coerce a rule that may arrive as a JSON string (some MCP clients serialize
+ * untyped object params to strings — same hazard coercePolicy handles). Returns
+ * the parsed object, or the raw value unchanged when it is not a JSON object.
+ */
+export function coerceRule(raw: unknown): unknown {
+  if (typeof raw === "string" && raw.trim().startsWith("{")) {
+    try {
+      return JSON.parse(raw);
+    } catch {
+      /* fall through to raw */
+    }
+  }
+  return raw;
+}
+
 export function validatePolicy(p: unknown): { ok: true } | { ok: false; error: string } {
   if (p === "bypass") return { ok: true };
   if (typeof p !== "object" || p === null)
