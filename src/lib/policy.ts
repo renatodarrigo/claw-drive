@@ -320,6 +320,13 @@ export function validatePolicy(p: unknown): { ok: true } | { ok: false; error: s
       const r = rule as Record<string, unknown>;
       if (typeof r.tool !== "string")
         return { ok: false, error: `${listKey}[${i}].tool must be a string` };
+      if (r.tool.startsWith("/") && r.tool.endsWith("/") && r.tool.length >= 2) {
+        try {
+          new RegExp(r.tool.slice(1, -1));
+        } catch (e) {
+          return { ok: false, error: `${listKey}[${i}].tool invalid regex: ${String(e)}` };
+        }
+      }
       if (r.bash_command_matches !== undefined) {
         if (typeof r.bash_command_matches !== "string")
           return { ok: false, error: `${listKey}[${i}].bash_command_matches must be a string` };
