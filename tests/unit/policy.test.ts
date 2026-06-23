@@ -279,6 +279,15 @@ describe("validatePolicy", () => {
     expect(r.ok).toBe(false);
   });
 
+  it("invalid regex in a /.../ tool is rejected", () => {
+    const r = validatePolicy({ auto_approve: [{ tool: "/[/" }] });
+    expect(r.ok).toBe(false);
+  });
+
+  it("accepts a valid /.../ tool regex", () => {
+    expect(validatePolicy({ auto_approve: [{ tool: "/^Bash$/" }] })).toEqual({ ok: true });
+  });
+
   it("auto_defer is a valid top-level key", () => {
     expect(validatePolicy({ auto_defer: [{ tool: "Bash", bash_command_matches: "^sudo " }] })).toEqual({ ok: true });
   });
