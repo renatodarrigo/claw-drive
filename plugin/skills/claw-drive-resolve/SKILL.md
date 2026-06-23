@@ -1,6 +1,6 @@
 ---
 name: claw-drive-resolve
-description: Resolve a paused tool call in a driven session. Usage — /claw-drive-resolve <call_id> <action> [--remember] [--reason <text>] [--stdout <text>] [--exit <n>]. Action is one of approve, reject, defer. For defer-with-output (the human ran the command locally and is feeding the result back), pass --stdout and --exit to use provide_tool_output instead of resolve_tool_call.
+description: Resolve a paused tool call in a driven session. Usage — /claw-drive-resolve <call_id> <action> [--remember | --remember-as <json>] [--preview] [--reason <text>] [--stdout <text>] [--exit <n>]. Action is one of approve, reject, defer. --preview shows the rule --remember would derive without resolving; --remember-as commits an explicit rule. For defer-with-output (the human ran the command locally and is feeding the result back), pass --stdout and --exit to use provide_tool_output instead of resolve_tool_call.
 ---
 
 # Claw-drive — resolve
@@ -15,6 +15,8 @@ The user has invoked this skill to resolve a tool call that's paused waiting for
 
    Optional:
    - `--remember` — derive a policy rule from this decision and append it to the session's live policy. Narrow-by-default for non-Bash tools (matches only the exact arg shape).
+   - `--preview` — read-only: show the rule `--remember` would derive (and the list it would join) without resolving the call or changing the policy. Use it to check scope before committing.
+   - `--remember-as <json>` — append an explicit rule (a `Rule` object) instead of the auto-derived one — e.g. to tighten an over-broad Bash prefix. Mutually exclusive with `--remember`.
    - `--reason <text>` — recorded in the audit event, surfaced in `pending` listings.
    - `--stdout <text>` and `--exit <n>` — for defer-with-output: the human ran the command locally and is feeding the result back to B. When these are present, use `provide_tool_output` instead of `resolve_tool_call`.
 
@@ -34,9 +36,12 @@ The user has invoked this skill to resolve a tool call that's paused waiting for
      "call_id": "<call_id>",
      "action": "<action>",
      "reason": "<reason or null>",
-     "remember_as_policy": <true if --remember else false>
+     "remember_as_policy": <true if --remember else false>,
+     "preview_only": <true if --preview else omit>,
+     "remembered_rule": <the Rule object from --remember-as, else omit>
    }
    ```
+   With `preview_only: true` the response carries `result.would_remember` (the rule that would be appended) and `result.list` — show it to the user and stop; the call stays paused and the policy is unchanged. With `remembered_rule` set, that rule is appended verbatim (an invalid rule returns `BAD_RULE` and resolves nothing). Send at most one of `remember_as_policy` / `remembered_rule`.
 
    **B. `defer` with stdout/exit:** This is the defer-round-trip flow — the human ran the command locally and is feeding the output back. Call MCP `provide_tool_output`:
    ```json
@@ -58,4 +63,5 @@ The user has invoked this skill to resolve a tool call that's paused waiting for
 ## Notes
 
 - **`--remember` is opinionated.** For non-Bash tools (Edit, Write, Read, Glob, Grep, Agent), the derived rule scopes on the identifying arg (file_path / pattern / subagent_type) — not tool-wide. To create a tool-wide rule, edit the policy directly via `update_policy`.
+- **Preview broad Bash remembers.** Bash derivation keys on the command's first token (`git push …` → `^git `), which can be broader than intended. Run `--preview` first; if it's too broad, commit a tightened rule with `--remember-as` instead.
 - **No partial output.** If the human's command produced output you can't include verbatim, summarise, but the round-trip is most valuable when the actual stdout is fed back so B can react to it.

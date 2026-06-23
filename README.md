@@ -304,7 +304,7 @@ B's echo fires the hook → policy defers → monitor alerts A → human answers
 | `poll_turn` | Fetch events + status for a turn (optional long-poll) |
 | `poll_session` | Tail all events for a session |
 | `list_sessions` | List live + orphaned sessions |
-| `resolve_tool_call` | Approve/reject a paused tool call; optionally remember as policy |
+| `resolve_tool_call` | Approve/reject a paused tool call; optionally remember as policy, preview the derived rule, or append an explicit one |
 | `update_policy` | Replace a session's policy |
 | `interrupt_turn` | SIGINT B to cancel the current turn |
 | `provide_tool_output` | Inject human-run command output back into B's conversation; auto-resolves pending defer if needed |

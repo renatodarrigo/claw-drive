@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.2.0] — 2026-06-23
+
+### Added
+- **Preview and edit a remembered rule before it lands.** `approve` / `reject` / `defer` gain `--preview` — a read-only call that prints the policy rule `--remember` would derive (and the list it would join) without resolving the call or mutating the policy. `--remember-as '<json>'` commits an explicit, hand-tightened rule instead of the auto-derived one; the rule is validated before it is appended. `--json` prints the preview as machine-readable output.
+- The same capability over MCP: `resolve_tool_call` accepts optional `preview_only` (returns `{ would_remember, list, source, bypass? }` and mutates nothing) and `remembered_rule` (append an explicit rule; an invalid rule returns `BAD_RULE` and resolves nothing). Additive — no new tool, event `kind`, or subcommand; the frozen 1.x contract is intact.
+- `/claw-drive-resolve` now guides the preview-then-commit flow: `--preview` to see the derived rule, `--remember-as` to commit a tightened one.
+
+### Fixed
+- `validatePolicy` now rejects a `/.../`-delimited `tool` whose regex does not compile, matching how it already treats `bash_command_matches`. Previously such a rule passed validation and threw at match time (and crashed `policy lint`'s redundancy pass).
+- The CLI default reason for `reject` / `defer` now reads "rejected" / "deferred" (was "rejectd" / "deferd").
+
 ## [1.1.0] — 2026-06-03
 
 ### Added
