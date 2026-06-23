@@ -6,6 +6,8 @@ import {
   coercePolicy,
   validateRule,
   coerceRule,
+  planResolveRemember,
+  listForAction,
   POLICY_SCHEMA_VERSION,
   type Policy,
   type Rule,
@@ -1326,5 +1328,64 @@ describe("coerceRule", () => {
   });
   it("returns the raw value on parse failure", () => {
     expect(coerceRule("not json")).toBe("not json");
+  });
+});
+
+describe("planResolveRemember", () => {
+  const base = { tool: "Bash", args: { command: "git push origin main" } };
+  const obj = { auto_approve: [], escalate_default: true };
+
+  it("preview with no provided rule returns the derived rule, no mutation intent", () => {
+    const p = planResolveRemember({ ...base, action: "approve", previewOnly: true, policy: obj });
+    expect(p).toEqual({
+      mode: "preview",
+      rule: { tool: "Bash", bash_command_matches: "^git ", name: "remembered: approve git" },
+      list: "auto_approve",
+      source: "derived",
+      bypass: false,
+    });
+  });
+
+  it("preview with a provided rule echoes it as source=provided", () => {
+    const provided = { tool: "Bash", bash_command_matches: "^git push " };
+    const p = planResolveRemember({
+      ...base, action: "approve", previewOnly: true, rememberedRule: provided, policy: obj,
+    });
+    expect(p).toMatchObject({ mode: "preview", rule: provided, source: "provided", list: "auto_approve" });
+  });
+
+  it("preview marks bypass policy", () => {
+    const p = planResolveRemember({ ...base, action: "approve", previewOnly: true, policy: "bypass" });
+    expect(p).toMatchObject({ mode: "preview", bypass: true });
+  });
+
+  it("an invalid provided rule returns BAD_RULE (preview or commit)", () => {
+    const bad = { tool: "Bash", bash_command_matches: "(" };
+    expect(planResolveRemember({ ...base, action: "approve", previewOnly: true, rememberedRule: bad, policy: obj }).mode).toBe("error");
+    expect(planResolveRemember({ ...base, action: "reject", rememberedRule: bad, policy: obj }).mode).toBe("error");
+  });
+
+  it("commit with remember_as_policy appends the derived rule to the action's list", () => {
+    const p = planResolveRemember({ ...base, action: "defer", rememberAsPolicy: true, policy: obj });
+    expect(p).toMatchObject({ mode: "commit", list: "auto_defer" });
+    if (p.mode === "commit") expect(p.appendRule?.bash_command_matches).toBe("^git ");
+  });
+
+  it("commit with a provided rule appends it verbatim (coerced from JSON string)", () => {
+    const p = planResolveRemember({
+      ...base, action: "approve", rememberedRule: '{"tool":"Bash","bash_command_matches":"^git push "}', policy: obj,
+    });
+    expect(p).toMatchObject({ mode: "commit", list: "auto_approve" });
+    if (p.mode === "commit") expect(p.appendRule).toEqual({ tool: "Bash", bash_command_matches: "^git push " });
+  });
+
+  it("commit with no remember flags appends nothing (today's default)", () => {
+    const p = planResolveRemember({ ...base, action: "approve", policy: obj });
+    expect(p).toEqual({ mode: "commit", appendRule: null, list: "auto_approve" });
+  });
+
+  it("commit under bypass appends nothing even with remember_as_policy", () => {
+    const p = planResolveRemember({ ...base, action: "approve", rememberAsPolicy: true, policy: "bypass" });
+    expect(p).toEqual({ mode: "commit", appendRule: null, list: "auto_approve" });
   });
 });

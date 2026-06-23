@@ -233,6 +233,57 @@ export function coerceRule(raw: unknown): unknown {
   return raw;
 }
 
+export type ListName = "auto_approve" | "auto_defer" | "auto_reject";
+
+export function listForAction(action: DecisionAction): ListName {
+  return action === "approve" ? "auto_approve" : action === "defer" ? "auto_defer" : "auto_reject";
+}
+
+export interface RememberInput {
+  action: DecisionAction;
+  previewOnly?: boolean;
+  rememberAsPolicy?: boolean;
+  rememberedRule?: unknown;
+  tool: string;
+  args: Record<string, unknown>;
+  policy: Policy;
+}
+
+export type RememberPlan =
+  | { mode: "preview"; rule: Rule; list: ListName; source: "derived" | "provided"; bypass: boolean }
+  | { mode: "error"; code: "BAD_RULE"; message: string }
+  | { mode: "commit"; appendRule: Rule | null; list: ListName };
+
+/**
+ * Pure decision for a resolve_tool_call that may preview and/or remember a rule.
+ * The runner performs IO based on the returned plan; this function never mutates.
+ */
+export function planResolveRemember(input: RememberInput): RememberPlan {
+  const list = listForAction(input.action);
+  const isBypass = input.policy === "bypass";
+
+  let provided: Rule | null = null;
+  if (input.rememberedRule !== undefined) {
+    const coerced = coerceRule(input.rememberedRule);
+    const v = validateRule(coerced);
+    if (!v.ok) return { mode: "error", code: "BAD_RULE", message: v.error };
+    provided = coerced as Rule;
+  }
+
+  if (input.previewOnly) {
+    const rule = provided ?? deriveRuleFromResolved(input.action, input.tool, input.args);
+    return { mode: "preview", rule, list, source: provided ? "provided" : "derived", bypass: isBypass };
+  }
+
+  // Commit. Remember is a no-op under bypass (no lists to append to).
+  if (isBypass) return { mode: "commit", appendRule: null, list };
+  if (provided) return { mode: "commit", appendRule: provided, list };
+  if (input.rememberAsPolicy) {
+    return { mode: "commit", appendRule: deriveRuleFromResolved(input.action, input.tool, input.args), list };
+  }
+  return { mode: "commit", appendRule: null, list };
+}
+
 export function validatePolicy(p: unknown): { ok: true } | { ok: false; error: string } {
   if (p === "bypass") return { ok: true };
   if (typeof p !== "object" || p === null)
