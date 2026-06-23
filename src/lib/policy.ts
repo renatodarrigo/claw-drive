@@ -211,7 +211,7 @@ export function validateRule(r: unknown): { ok: true } | { ok: false; error: str
       }
     }
   }
-  if (obj.severity !== undefined && !["low", "medium", "high"].includes(obj.severity as string)) {
+  if (obj.severity !== undefined && (typeof obj.severity !== "string" || !["low", "medium", "high"].includes(obj.severity))) {
     return { ok: false, error: "rule.severity must be one of low|medium|high" };
   }
   return { ok: true };

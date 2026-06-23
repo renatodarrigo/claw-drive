@@ -1302,6 +1302,18 @@ describe("validateRule", () => {
   it("rejects a bad severity", () => {
     expect(validateRule({ tool: "Bash", severity: "critical" }).ok).toBe(false);
   });
+
+  it("rejects a non-string bash_command_matches", () => {
+    expect(validateRule({ tool: "Bash", bash_command_matches: 99 }).ok).toBe(false);
+  });
+
+  it("rejects a non-string arg_matches value", () => {
+    expect(validateRule({ tool: "Read", arg_matches: { file_path: 42 } }).ok).toBe(false);
+  });
+
+  it("rejects arg_matches that is an array", () => {
+    expect(validateRule({ tool: "Bash", arg_matches: ["^x"] }).ok).toBe(false);
+  });
 });
 
 describe("coerceRule", () => {
