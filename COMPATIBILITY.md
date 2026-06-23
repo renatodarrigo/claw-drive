@@ -199,7 +199,7 @@ Approve or reject a paused tool call by `call_id`.
 - `preview_only` — return `{ would_remember, list, source, bypass? }` for the rule that would be remembered; the call is **not** resolved and policy is **not** mutated.
 - `remembered_rule` — append this explicit (edited) rule instead of the derived one. Validated; an invalid rule returns `BAD_RULE` and resolves nothing.
 
-**Response:** `{ "ok": true }`
+**Response:** `{ "ok": true }` — or, when `preview_only: true`: `{ "ok": true, "result": { "would_remember", "list", "source", "bypass"? } }`
 
 #### `provide_tool_output`
 

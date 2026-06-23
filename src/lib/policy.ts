@@ -183,6 +183,13 @@ export function validateRule(r: unknown): { ok: true } | { ok: false; error: str
   if (typeof obj.tool !== "string" || obj.tool.length === 0) {
     return { ok: false, error: "rule.tool must be a non-empty string" };
   }
+  if (obj.tool.startsWith("/") && obj.tool.endsWith("/") && obj.tool.length >= 2) {
+    try {
+      new RegExp(obj.tool.slice(1, -1));
+    } catch (e) {
+      return { ok: false, error: `rule.tool invalid regex: ${String(e)}` };
+    }
+  }
   if (obj.name !== undefined && typeof obj.name !== "string") {
     return { ok: false, error: "rule.name must be a string" };
   }

@@ -1316,6 +1316,16 @@ describe("validateRule", () => {
   it("rejects arg_matches that is an array", () => {
     expect(validateRule({ tool: "Bash", arg_matches: ["^x"] }).ok).toBe(false);
   });
+
+  it("accepts a valid /.../ tool regex", () => {
+    expect(validateRule({ tool: "/^Bash$/" })).toEqual({ ok: true });
+  });
+
+  it("rejects a /.../ tool with an uncompilable regex", () => {
+    const r = validateRule({ tool: "/[/" });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/rule\.tool invalid regex/);
+  });
 });
 
 describe("coerceRule", () => {
