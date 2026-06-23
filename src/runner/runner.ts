@@ -12,7 +12,7 @@ import {
 import { readState, writeState, type SessionState } from "../lib/state.js";
 import * as path from "node:path";
 import { appendEvent, readEventsSince, type Event } from "../lib/events.js";
-import { policyDigest, matchPolicy, deriveRuleFromResolved, validatePolicy, coercePolicy, type DecisionAction, type Policy } from "../lib/policy.js";
+import { policyDigest, matchPolicy, validatePolicy, coercePolicy, planResolveRemember, type DecisionAction, type Policy, type PolicyObject } from "../lib/policy.js";
 import { parseClaudeLine } from "./stream-parser.js";
 import { startSocketServer } from "./socket-server.js";
 import { buildClaudeArgs } from "./runner-args.js";
@@ -358,6 +358,35 @@ async function handleRequest(
           message: "call_id not awaiting resolution",
         };
       }
+
+      const plan = planResolveRemember({
+        action: req.action,
+        previewOnly: req.preview_only,
+        rememberAsPolicy: req.remember_as_policy,
+        rememberedRule: req.remembered_rule,
+        tool: pending.tool,
+        args: pending.args as Record<string, unknown>,
+        policy: ctx.state.policy,
+      });
+
+      if (plan.mode === "error") {
+        return { id: req.id, ok: false, error: plan.code, message: plan.message };
+      }
+
+      if (plan.mode === "preview") {
+        return {
+          id: req.id,
+          ok: true,
+          result: {
+            would_remember: plan.rule,
+            list: plan.list,
+            source: plan.source,
+            ...(plan.bypass ? { bypass: true } : {}),
+          },
+        };
+      }
+
+      // plan.mode === "commit" — resolve the call for real.
       ctx.pendingApprovals.delete(req.call_id);
 
       await emitEvent(ctx, {
@@ -369,22 +398,11 @@ async function handleRequest(
         resolved_by: "user_mcp",
       } as Omit<Event, "seq" | "at">);
 
-      if (req.remember_as_policy) {
-        const rule = deriveRuleFromResolved(
-          req.action,
-          pending.tool,
-          pending.args as Record<string, unknown>
-        );
-        const p = ctx.state.policy;
-        if (p !== "bypass") {
-          const list =
-            req.action === "approve" ? "auto_approve" :
-            req.action === "defer" ? "auto_defer" :
-            "auto_reject";
-          const updated = { ...p, [list]: [...(p[list] ?? []), rule] };
-          ctx.state.policy = updated;
-          await writeState(statePath(ctx.sessionId), ctx.state);
-        }
+      if (plan.appendRule) {
+        const p = ctx.state.policy as PolicyObject;
+        const updated = { ...p, [plan.list]: [...(p[plan.list] ?? []), plan.appendRule] };
+        ctx.state.policy = updated;
+        await writeState(statePath(ctx.sessionId), ctx.state);
       }
 
       if (req.action === "defer") {
