@@ -106,7 +106,7 @@ export const MCP_TOOL_DEFS: McpToolDef[] = [
   {
     name: "resolve_tool_call",
     description:
-      "Approve or reject a paused tool call by call_id. Scans live sessions; first session holding the call_id wins. Set remember_as_policy to append the resolved decision as a new Rule.",
+      "Approve or reject a paused tool call by call_id. Scans live sessions; first session holding the call_id wins. Set remember_as_policy to append the resolved decision as a new Rule. Set preview_only to return the rule that would be remembered without resolving or mutating. Set remembered_rule to append an explicit (edited) rule instead of the derived one.",
     inputSchema: {
       type: "object",
       properties: {
@@ -114,6 +114,8 @@ export const MCP_TOOL_DEFS: McpToolDef[] = [
         action: { enum: ["approve", "reject"] },
         reason: { type: "string" },
         remember_as_policy: { type: "boolean" },
+        preview_only: { type: "boolean" },
+        remembered_rule: { type: "object" },
       },
       required: ["call_id", "action", "reason"],
     },

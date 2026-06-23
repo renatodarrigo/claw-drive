@@ -407,8 +407,13 @@ async function handleResolveToolCall(args: Record<string, any>) {
         action: args.action,
         reason: args.reason,
         remember_as_policy: Boolean(args.remember_as_policy),
+        preview_only: Boolean(args.preview_only),
+        remembered_rule: args.remembered_rule,
       });
-      if (resp.ok) return ok({ ok: true });
+      if (resp.ok) {
+        const result = (resp as { result?: Record<string, unknown> }).result;
+        return ok(result ?? { ok: true });
+      }
       if (resp.error === "NOT_PENDING") continue; // try next session
       return err(resp.error, resp.message);
     } catch {
