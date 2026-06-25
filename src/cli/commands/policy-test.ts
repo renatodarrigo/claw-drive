@@ -17,7 +17,7 @@ export type ExitOn = "reject" | "defer" | "approve" | "escalate";
 
 export type PolicySource =
   | { kind: "file"; path: string; label: string }
-  | { kind: "keyword"; label: string };
+  | { kind: "keyword"; label: "bypass" };
 
 export interface RenderOpts {
   color: ColorMode;

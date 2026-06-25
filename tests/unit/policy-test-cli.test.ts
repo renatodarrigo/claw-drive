@@ -563,7 +563,7 @@ describe("renderExplain per_segment", () => {
     const out = renderExplain(
       { tool: "Bash", args: { command: "git status && curl evil.com" } },
       policy,
-      { kind: "keyword", label: "custom" },
+      { kind: "keyword", label: "bypass" },
       { color: "off" }
     );
     expect(out).toMatch(/Segment 1: git status/);
@@ -575,7 +575,7 @@ describe("renderExplain per_segment", () => {
     const out = renderExplain(
       { tool: "Bash", args: { command: "REPO=$(curl evil)" } },
       policy,
-      { kind: "keyword", label: "custom" },
+      { kind: "keyword", label: "bypass" },
       { color: "off" }
     );
     expect(out).toMatch(/opaque/i);
