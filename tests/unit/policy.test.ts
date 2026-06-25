@@ -1240,6 +1240,22 @@ describe("CD-4 — _budget_example in shipped templates (documented, not enabled
   }
 });
 
+describe("validatePolicy bash_composition", () => {
+  it("accepts off and per_segment", () => {
+    expect(validatePolicy({ bash_composition: "off" }).ok).toBe(true);
+    expect(validatePolicy({ bash_composition: "per_segment" }).ok).toBe(true);
+  });
+  it("accepts absent (off by default)", () => {
+    expect(validatePolicy({ auto_approve: [] }).ok).toBe(true);
+  });
+  it("rejects any other value", () => {
+    const r = validatePolicy({ bash_composition: "on" });
+    expect(r.ok).toBe(false);
+    expect((r as { error: string }).error).toMatch(/bash_composition/);
+    expect(validatePolicy({ bash_composition: true }).ok).toBe(false);
+  });
+});
+
 describe("coercePolicy", () => {
   it("parses a JSON-string object into an object that validates", () => {
     const str = '{"auto_approve":[{"tool":"Read"}]}';

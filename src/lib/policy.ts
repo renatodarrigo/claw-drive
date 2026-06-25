@@ -39,6 +39,13 @@ export interface PolicyObject {
     max_wall_clock_seconds?: number;
     max_consecutive_errors?: number;
   };
+  /**
+   * Optional per-segment Bash composition mode. Absent ⇒ "off" (today's
+   * whole-string matching, no behaviour change). When "per_segment", a Bash
+   * call is split at top-level shell operators and each segment is evaluated
+   * independently; the strictest segment's decision wins. See COMPATIBILITY.md.
+   */
+  bash_composition?: "off" | "per_segment";
 }
 
 export type Policy = "bypass" | PolicyObject;
@@ -304,6 +311,7 @@ export function validatePolicy(p: unknown): { ok: true } | { ok: false; error: s
     "decision_timeout_seconds",
     "schema_version",
     "budget",
+    "bash_composition",
   ]);
   for (const key of Object.keys(obj)) {
     if (key.startsWith("_")) continue; // metadata comment; ignored by validator
@@ -376,6 +384,11 @@ export function validatePolicy(p: unknown): { ok: true } | { ok: false; error: s
       if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) {
         return { ok: false, error: `budget.${field} must be a positive number` };
       }
+    }
+  }
+  if (obj.bash_composition !== undefined) {
+    if (obj.bash_composition !== "off" && obj.bash_composition !== "per_segment") {
+      return { ok: false, error: 'bash_composition must be "off" or "per_segment"' };
     }
   }
   return { ok: true };
