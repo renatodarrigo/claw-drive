@@ -1,3 +1,5 @@
+import { analyzeComposition } from "./bash-composition.js";
+
 export type Severity = "low" | "medium" | "high";
 export type DecisionAction = "approve" | "reject" | "defer";
 
@@ -8,6 +10,9 @@ export type DecisionAction = "approve" | "reject" | "defer";
  * accepted, and any other value is rejected. See COMPATIBILITY.md.
  */
 export const POLICY_SCHEMA_VERSION = 1;
+
+const BASH_COMPOSITION_OPAQUE = "bash_composition: opaque";
+const BASH_COMPOSITION_MALFORMED = "bash_composition: malformed";
 
 export interface Rule {
   name?: string;
@@ -68,11 +73,22 @@ export type MatchDecision =
 export function matchPolicy(policy: Policy, call: ToolCall): MatchDecision {
   if (policy === "bypass") return { decision: "approve_silent" };
 
-  // Evaluation order: auto_reject > auto_defer > auto_approve > escalate_default.
-  // Rationale (v0.2.3): a command that matches both an approve rule and a
-  // reject rule — e.g. `git status; rm -rf /tmp` matching `^git ` + `\brm -rf\b`
-  // — should be rejected, not silently approved. Asymmetric risk: a false-reject
-  // is a human prompt, a false-approve is a bypass.
+  if (policy.bash_composition === "per_segment" && call.tool === "Bash") {
+    const command = String((call.args as { command?: unknown }).command ?? "");
+    const a = analyzeComposition(command);
+    if (a.opaque) return rejectComposition(BASH_COMPOSITION_OPAQUE);
+    if (a.malformed) return rejectComposition(BASH_COMPOSITION_MALFORMED);
+    if (a.segments.length > 1) return combineSegments(policy, a.segments);
+    // single segment ⇒ fall through (identical to whole-string matching)
+  }
+
+  return evaluateSimpleCall(policy, call);
+}
+
+// Today's matchPolicy semantics for one simple command. Evaluation order:
+// auto_reject > auto_defer > auto_approve > escalate_default (see the v0.2.3
+// rationale: a command matching both approve and reject should be rejected).
+function evaluateSimpleCall(policy: PolicyObject, call: ToolCall): MatchDecision {
   for (const rule of policy.auto_reject ?? []) {
     if (ruleMatches(rule, call)) {
       return {
@@ -101,6 +117,28 @@ export function matchPolicy(policy: Policy, call: ToolCall): MatchDecision {
     return { decision: "escalate", default_action: "approve", severity: "medium" };
   }
   return { decision: "deny_silent" };
+}
+
+function rejectComposition(name: string): MatchDecision {
+  return { decision: "deny_silent", matched_rule: { tool: "Bash", name } };
+}
+
+// Strictest-wins precedence: a higher rank is more restrictive.
+function rank(d: MatchDecision): number {
+  if (d.decision === "escalate" && d.default_action === "reject") return 5;
+  if (d.decision === "deny_silent") return 4;
+  if (d.decision === "escalate" && d.default_action === "defer") return 3;
+  if (d.decision === "escalate" && d.default_action === "approve") return 2;
+  return 1; // approve_silent
+}
+
+function combineSegments(policy: PolicyObject, segments: string[]): MatchDecision {
+  let worst = evaluateSimpleCall(policy, { tool: "Bash", args: { command: segments[0] } });
+  for (let k = 1; k < segments.length; k++) {
+    const d = evaluateSimpleCall(policy, { tool: "Bash", args: { command: segments[k] } });
+    if (rank(d) > rank(worst)) worst = d;
+  }
+  return worst;
 }
 
 function ruleMatches(rule: Rule, call: ToolCall): boolean {
