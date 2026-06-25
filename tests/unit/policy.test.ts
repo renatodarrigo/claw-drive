@@ -8,6 +8,7 @@ import {
   coerceRule,
   planResolveRemember,
   listForAction,
+  compositionDenyMessage,
   POLICY_SCHEMA_VERSION,
   type Policy,
   type Rule,
@@ -1473,5 +1474,18 @@ describe("planResolveRemember", () => {
   it("commit under bypass appends nothing even with remember_as_policy", () => {
     const p = planResolveRemember({ ...base, action: "approve", rememberAsPolicy: true, policy: "bypass" });
     expect(p).toEqual({ mode: "commit", appendRule: null, list: "auto_approve" });
+  });
+});
+
+describe("compositionDenyMessage", () => {
+  it("returns a teaching message for opaque", () => {
+    expect(compositionDenyMessage("bash_composition: opaque")).toMatch(/one command per Bash call/i);
+  });
+  it("returns a teaching message for malformed", () => {
+    expect(compositionDenyMessage("bash_composition: malformed")).toMatch(/own Bash call/i);
+  });
+  it("returns null for any other (or absent) reason", () => {
+    expect(compositionDenyMessage("escalate_default=false")).toBeNull();
+    expect(compositionDenyMessage(undefined)).toBeNull();
   });
 });

@@ -12,7 +12,7 @@ import {
 import { readState, writeState, type SessionState } from "../lib/state.js";
 import * as path from "node:path";
 import { appendEvent, readEventsSince, type Event } from "../lib/events.js";
-import { policyDigest, matchPolicy, validatePolicy, coercePolicy, planResolveRemember, type DecisionAction, type Policy, type PolicyObject } from "../lib/policy.js";
+import { policyDigest, matchPolicy, validatePolicy, coercePolicy, planResolveRemember, compositionDenyMessage, type DecisionAction, type Policy, type PolicyObject } from "../lib/policy.js";
 import { parseClaudeLine } from "./stream-parser.js";
 import { startSocketServer } from "./socket-server.js";
 import { buildClaudeArgs } from "./runner-args.js";
@@ -273,18 +273,20 @@ async function handleRequest(
       }
 
       if (decision.decision === "deny_silent") {
+        const ruleName = decision.matched_rule?.name;
+        const teach = compositionDenyMessage(ruleName);
         await emitEvent(ctx, {
           kind: "tool_decision_resolved",
           turn_id: turnId,
           call_id,
           action: "reject",
-          reason: "escalate_default=false",
+          reason: ruleName ?? "escalate_default=false",
           resolved_by: "policy",
         } as Omit<Event, "seq" | "at">);
         return {
           id: req.id,
           ok: true,
-          result: { behavior: "deny", message: "denied by policy" },
+          result: { behavior: "deny", message: teach ?? "denied by policy" },
         };
       }
 

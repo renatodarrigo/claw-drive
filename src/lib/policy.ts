@@ -123,6 +123,22 @@ function rejectComposition(name: string): MatchDecision {
   return { decision: "deny_silent", matched_rule: { tool: "Bash", name } };
 }
 
+/**
+ * The deny message the runner shows Session B when a per_segment policy rejects
+ * an opaque or malformed Bash call. Returns null for any non-composition deny
+ * (the runner falls back to its generic message). Keyed on the synthetic rule
+ * name set by rejectComposition().
+ */
+export function compositionDenyMessage(matchedRuleName: string | undefined): string | null {
+  if (matchedRuleName === BASH_COMPOSITION_OPAQUE) {
+    return "claw-drive evaluates one command per Bash call. This call contains a construct it can't inspect piece-by-piece (command-substitution $(…)/backticks, a here-doc, or process substitution). Run the inner command(s) as separate Bash calls and pass their output.";
+  }
+  if (matchedRuleName === BASH_COMPOSITION_MALFORMED) {
+    return "Malformed or empty command segment. Re-issue each command as its own Bash call.";
+  }
+  return null;
+}
+
 // Strictest-wins precedence: a higher rank is more restrictive.
 function rank(d: MatchDecision): number {
   if (d.decision === "escalate" && d.default_action === "reject") return 5;
