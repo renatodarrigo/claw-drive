@@ -11,8 +11,8 @@ export type DecisionAction = "approve" | "reject" | "defer";
  */
 export const POLICY_SCHEMA_VERSION = 1;
 
-const BASH_COMPOSITION_OPAQUE = "bash_composition: opaque";
-const BASH_COMPOSITION_MALFORMED = "bash_composition: malformed";
+export const BASH_COMPOSITION_OPAQUE = "bash_composition: opaque";
+export const BASH_COMPOSITION_MALFORMED = "bash_composition: malformed";
 
 export interface Rule {
   name?: string;
