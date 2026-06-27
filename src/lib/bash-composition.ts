@@ -19,6 +19,11 @@ export function analyzeComposition(command: string): CompositionAnalysis {
   const segments: string[] = [];
   let buf = "";
   let opaque = false;
+  // Tracks whether the most recent split was a CONNECTOR (&&, ||, |, |&), which
+  // joins two commands and so needs a right operand, versus a TERMINATOR (;, &,
+  // newline), which completes a command. Determines whether a trailing empty
+  // segment is malformed (missing operand) or benign (e.g. `npm run dev &`).
+  let lastWasConnector = false;
   let inSingle = false;
   let inDouble = false;
   let i = 0;
@@ -68,11 +73,12 @@ export function analyzeComposition(command: string): CompositionAnalysis {
     }
     if (c === "`") { opaque = true; buf += c; i += 1; continue; }
 
-    // Two-char split operators (longest match first).
-    if (c2 === "&&" || c2 === "||" || c2 === "|&") { flush(); i += 2; continue; }
+    // Two-char split operators (longest match first). All are connectors.
+    if (c2 === "&&" || c2 === "||" || c2 === "|&") { lastWasConnector = true; flush(); i += 2; continue; }
 
-    // One-char separators.
-    if (c === ";" || c === "|" || c === "\n") { flush(); i += 1; continue; }
+    // One-char separators. The pipe is a connector; ; and newline terminate.
+    if (c === "|") { lastWasConnector = true; flush(); i += 1; continue; }
+    if (c === ";" || c === "\n") { lastWasConnector = false; flush(); i += 1; continue; }
 
     // '&' splits only as a true background operator, not as part of a redirect
     // (2>&1, >&2, &>file).
@@ -82,13 +88,22 @@ export function analyzeComposition(command: string): CompositionAnalysis {
       if (prev === ">" || prev === "<" || next === ">") {
         buf += c; i += 1; continue;
       }
-      flush(); i += 1; continue;
+      lastWasConnector = false; flush(); i += 1; continue;
     }
 
     buf += c;
     i += 1;
   }
-  flush();
+  // Final segment. A trailing TERMINATOR (;, &, newline) completes the command,
+  // so an empty tail is benign and dropped. A trailing CONNECTOR (&&, ||, |, |&)
+  // leaves a missing right operand → keep the empty segment so the malformed
+  // check fires. An entirely empty/whitespace command stays malformed too.
+  const tail = buf.trim();
+  if (tail.length > 0) {
+    segments.push(tail);
+  } else if (lastWasConnector || segments.length === 0) {
+    segments.push("");
+  }
 
   const malformed = segments.some((s) => s.length === 0);
   return { segments, opaque, malformed };

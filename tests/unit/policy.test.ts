@@ -1411,6 +1411,17 @@ describe("matchPolicy per_segment", () => {
     expect(r.matched_rule?.name).toBe("bash_composition: malformed");
   });
 
+  it("a trailing background & is NOT a malformed deny (npm run dev &)", () => {
+    // Regression: a lone trailing terminator (& or ;) completes the command; it
+    // must not be denied as a malformed composition. The single logical command
+    // falls through to whole-command eval — here unmatched ⇒ escalate_default.
+    const r = matchPolicy(base, { tool: "Bash", args: { command: "npm run dev &" } });
+    expect(r.decision).not.toBe("deny_silent");
+    expect(r.matched_rule?.name).not.toBe("bash_composition: malformed");
+    expect(r.decision).toBe("escalate");
+    expect((r as { default_action: string }).default_action).toBe("approve");
+  });
+
   it("a single non-chained command is identical to whole-string matching", () => {
     const r = matchPolicy(base, { tool: "Bash", args: { command: "git status" } });
     expect(r.decision).toBe("approve_silent");

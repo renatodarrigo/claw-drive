@@ -56,9 +56,31 @@ describe("analyzeComposition", () => {
     expect(analyzeComposition("cat < in.txt").segments).toEqual(["cat < in.txt"]);
   });
 
-  it("empty/leading/trailing/double operators are malformed", () => {
+  it("empty/leading/double operators, and trailing connectors, are malformed", () => {
     expect(analyzeComposition("git status &&").malformed).toBe(true);
     expect(analyzeComposition("| foo").malformed).toBe(true);
     expect(analyzeComposition("ls ;; ls").malformed).toBe(true);
+    // Trailing CONNECTORS leave a missing right operand → still malformed.
+    expect(analyzeComposition("git status ||").malformed).toBe(true);
+    expect(analyzeComposition("cat x |").malformed).toBe(true);
+    // Entirely empty / whitespace-only stays malformed.
+    expect(analyzeComposition("").malformed).toBe(true);
+    expect(analyzeComposition("   ").malformed).toBe(true);
+  });
+
+  it("a trailing TERMINATOR (; or &) completes the command — not malformed", () => {
+    // Regression: the starter ships per_segment ON, and `npm run dev &` was
+    // being denied as "malformed" because the trailing background `&` left an
+    // empty final segment. A terminator completes a command; drop the empty tail.
+    const amp = analyzeComposition("npm run dev &");
+    expect(amp.malformed).toBe(false);
+    expect(amp.segments).toEqual(["npm run dev"]);
+
+    const semi = analyzeComposition("git status ;");
+    expect(semi.malformed).toBe(false);
+    expect(semi.segments).toEqual(["git status"]);
+
+    // A terminator BETWEEN two commands still splits both (unchanged).
+    expect(analyzeComposition("echo a & echo b").segments).toEqual(["echo a", "echo b"]);
   });
 });
