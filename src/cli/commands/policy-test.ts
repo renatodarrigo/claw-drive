@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { analyzeComposition } from "../../lib/bash-composition.js";
 import {
   matchPolicy,
   validatePolicy,
@@ -265,52 +266,108 @@ export function renderExplain(
   lines.push(`Eval order: auto_reject → auto_defer → auto_approve → escalate_default`);
 
   const obj = policy as PolicyObject;
-  const matchedFlag = { found: false };
-  let matchedList: ListName | undefined;
-  let matchedRule: Rule | undefined;
 
+  if (obj.bash_composition === "per_segment" && call.tool === "Bash") {
+    const command = call.args.command ?? "";
+    const a = analyzeComposition(command);
+    if (a.opaque || a.malformed) {
+      lines.push("");
+      lines.push(
+        colorize(
+          `  bash_composition=per_segment: ${a.opaque ? "opaque construct (command-substitution / here-doc)" : "malformed / empty segment"} → reject (rules not walked)`,
+          opts.color,
+          ANSI.dim
+        )
+      );
+      lines.push("");
+      lines.push(verdictLine(matchPolicy(policy, call)));
+      return lines.join("\n");
+    }
+    if (a.segments.length > 1) {
+      lines.push(
+        colorize(
+          `  bash_composition=per_segment: ${a.segments.length} segments — decision is the stricter of the whole-command and per-segment readings (auto-approval requires every segment)`,
+          opts.color,
+          ANSI.dim
+        )
+      );
+      // Whole-command broad pass: reject/defer rules that span operators fire here.
+      lines.push("");
+      lines.push("Whole command — auto_reject / auto_defer (matched broadly):");
+      let wholeFound = false;
+      for (const listName of ["auto_reject", "auto_defer"] as const) {
+        const rules = obj[listName] ?? [];
+        lines.push(`[${listName}] (${rules.length} ${rules.length === 1 ? "rule" : "rules"})`);
+        if (rules.length === 0) {
+          lines.push(colorize("  (empty)", opts.color, ANSI.dim));
+          continue;
+        }
+        for (const rule of rules) {
+          const matches = !wholeFound && ruleMatchesCall(rule, call);
+          const tick = matches ? colorize("✓", opts.color, ANSI.green) : colorize("✗", opts.color, ANSI.dim);
+          const name = rule.name ?? "(unnamed)";
+          lines.push(`  ${tick} ${matches ? name : colorize(name, opts.color, ANSI.dim)}`);
+          if (matches) wholeFound = true;
+        }
+      }
+      a.segments.forEach((seg, idx) => {
+        lines.push("");
+        lines.push(`Segment ${idx + 1}: ${seg}`);
+        lines.push(...walkRules(obj, { tool: "Bash", args: { command: seg } }, opts));
+      });
+      lines.push("");
+      lines.push(verdictLine(matchPolicy(policy, call)));
+      return lines.join("\n");
+    }
+    // single segment ⇒ fall through to the normal whole-command walk
+  }
+
+  lines.push(...walkRules(obj, call, opts));
+  lines.push("");
+  lines.push(verdictLine(matchPolicy(policy, call)));
+  return lines.join("\n");
+}
+
+// Render the ✓/✗ rule walk for one call (first matching rule across the three
+// ordered lists wins the ✓).
+function walkRules(
+  obj: PolicyObject,
+  call: { tool: string; args: Record<string, string> },
+  opts: RenderOpts
+): string[] {
+  const lines: string[] = [];
+  let found = false;
   for (const list of ["auto_reject", "auto_defer", "auto_approve"] as const) {
     const rules = obj[list] ?? [];
-    lines.push(``);
+    lines.push("");
     lines.push(`[${list}] (${rules.length} ${rules.length === 1 ? "rule" : "rules"})`);
     if (rules.length === 0) {
-      lines.push(colorize(`  (empty)`, opts.color, ANSI.dim));
+      lines.push(colorize("  (empty)", opts.color, ANSI.dim));
       continue;
     }
     for (const rule of rules) {
-      const matches = !matchedFlag.found && ruleMatchesCall(rule, call);
-      const tick = matches
-        ? colorize("✓", opts.color, ANSI.green)
-        : colorize("✗", opts.color, ANSI.dim);
+      const matches = !found && ruleMatchesCall(rule, call);
+      const tick = matches ? colorize("✓", opts.color, ANSI.green) : colorize("✗", opts.color, ANSI.dim);
       const name = rule.name ?? "(unnamed)";
       const styled = matches ? name : colorize(name, opts.color, ANSI.dim);
       lines.push(`  ${tick} ${styled}`);
-      if (matches && !matchedFlag.found) {
-        matchedFlag.found = true;
-        matchedList = list;
-        matchedRule = rule;
-      }
+      if (matches) found = true;
     }
   }
+  return lines;
+}
 
-  lines.push(``);
-  if (matchedFlag.found && matchedList && matchedRule) {
-    if (matchedList === "auto_approve") {
-      lines.push(`=> approve_silent`);
-    } else {
-      const action = matchedList === "auto_reject" ? "reject" : "defer";
-      const sev = matchedRule.severity ?? "high";
-      lines.push(`=> escalate, default_action=${action}, severity=${sev}`);
-    }
-  } else {
-    const escalate = obj.escalate_default ?? true;
-    if (escalate) {
-      lines.push(`=> escalate, default_action=approve, severity=medium  (escalate_default)`);
-    } else {
-      lines.push(`=> deny_silent  (escalate_default=false)`);
-    }
+// Authoritative verdict line, rendered from matchPolicy's decision so --explain
+// never disagrees with the runner. Text matches the previous inline format.
+function verdictLine(d: MatchDecision): string {
+  if (d.decision === "approve_silent") return "=> approve_silent";
+  if (d.decision === "deny_silent") {
+    return `=> deny_silent  (${d.matched_rule?.name ?? "escalate_default=false"})`;
   }
-  return lines.join("\n");
+  if (d.default_action === "approve") {
+    return `=> escalate, default_action=approve, severity=${d.severity}  (escalate_default)`;
+  }
+  return `=> escalate, default_action=${d.default_action}, severity=${d.severity}`;
 }
 
 function ruleMatchesCall(
@@ -375,18 +432,12 @@ function getRepoRoot(): string {
   return resolve(dirname(here), "..", "..", "..");
 }
 
-function findMatchedListAndRule(
-  policy: Policy,
-  call: { tool: string; args: Record<string, string> }
-): { list: ListName | undefined; rule: Rule | undefined } {
-  if (policy === "bypass") return { list: undefined, rule: undefined };
-  const obj = policy;
-  for (const list of ["auto_reject", "auto_defer", "auto_approve"] as const) {
-    for (const rule of obj[list] ?? []) {
-      if (ruleMatchesCall(rule, call)) return { list, rule };
-    }
+function listContainingRule(policy: Policy, rule: Rule | undefined): ListName | undefined {
+  if (rule === undefined || policy === "bypass") return undefined;
+  for (const ln of ["auto_reject", "auto_defer", "auto_approve"] as const) {
+    if ((policy[ln] ?? []).includes(rule)) return ln;
   }
-  return { list: undefined, rule: undefined };
+  return undefined;
 }
 
 function printUsage(): void {
@@ -442,13 +493,10 @@ export async function cmdPolicyTest(argv: string[]): Promise<number> {
 
   const call = { tool: parsed.tool, args: parsed.args };
   const result = matchPolicy(resolved.policy, call);
-  const { list, rule } = findMatchedListAndRule(resolved.policy, call);
+  const matchedRule = (result as { matched_rule?: Rule }).matched_rule;
+  const list = listContainingRule(resolved.policy, matchedRule);
 
-  // Tests assert the result.matched_rule — make sure render uses what we found.
-  // matchPolicy already sets matched_rule, but we also have list separately for rendering.
   const renderResult: MatchDecision = result;
-  // Sanity check (both should be the same rule):
-  void rule;
 
   let color: ColorMode = parsed.color;
   if (color === "auto") {

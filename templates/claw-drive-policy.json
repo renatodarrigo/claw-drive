@@ -53,6 +53,7 @@
 
   "escalate_default": true,
   "decision_timeout_seconds": 3600,
+  "bash_composition": "per_segment",
 
   "_budget_example": {
     "_comment": "Run-level circuit-breaker (CD-4). RENAME this key to \"budget\" to enable it — it is OFF by default. All fields optional; an absent field is unlimited. On breach the runner reaps the session (SIGTERM then SIGKILL) with exit_reason budget_exceeded:<cap>.",

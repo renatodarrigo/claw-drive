@@ -1,3 +1,5 @@
+import { analyzeComposition } from "./bash-composition.js";
+
 export type Severity = "low" | "medium" | "high";
 export type DecisionAction = "approve" | "reject" | "defer";
 
@@ -8,6 +10,9 @@ export type DecisionAction = "approve" | "reject" | "defer";
  * accepted, and any other value is rejected. See COMPATIBILITY.md.
  */
 export const POLICY_SCHEMA_VERSION = 1;
+
+export const BASH_COMPOSITION_OPAQUE = "bash_composition: opaque";
+export const BASH_COMPOSITION_MALFORMED = "bash_composition: malformed";
 
 export interface Rule {
   name?: string;
@@ -39,6 +44,13 @@ export interface PolicyObject {
     max_wall_clock_seconds?: number;
     max_consecutive_errors?: number;
   };
+  /**
+   * Optional per-segment Bash composition mode. Absent ⇒ "off" (today's
+   * whole-string matching, no behaviour change). When "per_segment", a Bash
+   * call is split at top-level shell operators and each segment is evaluated
+   * independently; the strictest segment's decision wins. See COMPATIBILITY.md.
+   */
+  bash_composition?: "off" | "per_segment";
 }
 
 export type Policy = "bypass" | PolicyObject;
@@ -61,11 +73,34 @@ export type MatchDecision =
 export function matchPolicy(policy: Policy, call: ToolCall): MatchDecision {
   if (policy === "bypass") return { decision: "approve_silent" };
 
-  // Evaluation order: auto_reject > auto_defer > auto_approve > escalate_default.
-  // Rationale (v0.2.3): a command that matches both an approve rule and a
-  // reject rule — e.g. `git status; rm -rf /tmp` matching `^git ` + `\brm -rf\b`
-  // — should be rejected, not silently approved. Asymmetric risk: a false-reject
-  // is a human prompt, a false-approve is a bypass.
+  if (policy.bash_composition === "per_segment" && call.tool === "Bash") {
+    const command = String((call.args as { command?: unknown }).command ?? "");
+    const a = analyzeComposition(command);
+    if (a.opaque) return rejectComposition(BASH_COMPOSITION_OPAQUE);
+    if (a.malformed) return rejectComposition(BASH_COMPOSITION_MALFORMED);
+    if (a.segments.length > 1) {
+      // The decision is the STRICTER of the whole-command reading and the
+      // per-segment reading. Approval is narrow (combineSegments requires every
+      // segment to match auto_approve — the smuggle fix), but reject/defer/deny
+      // stay broad: a rule defeated by splitting (curl ... | bash, or a defer
+      // rule spanning &&) still fires on the whole command and wins. Whole-command
+      // APPROVE is rank 1, so it never overrides a stricter per-segment signal —
+      // the smuggle stays closed. Net: per_segment never decides less strictly
+      // than the un-split command would.
+      const whole = evaluateSimpleCall(policy, call);
+      const seg = combineSegments(policy, a.segments);
+      return rank(seg) >= rank(whole) ? seg : whole;
+    }
+    // single segment ⇒ fall through (identical to whole-string matching)
+  }
+
+  return evaluateSimpleCall(policy, call);
+}
+
+// Today's matchPolicy semantics for one simple command. Evaluation order:
+// auto_reject > auto_defer > auto_approve > escalate_default (see the v0.2.3
+// rationale: a command matching both approve and reject should be rejected).
+function evaluateSimpleCall(policy: PolicyObject, call: ToolCall): MatchDecision {
   for (const rule of policy.auto_reject ?? []) {
     if (ruleMatches(rule, call)) {
       return {
@@ -94,6 +129,44 @@ export function matchPolicy(policy: Policy, call: ToolCall): MatchDecision {
     return { decision: "escalate", default_action: "approve", severity: "medium" };
   }
   return { decision: "deny_silent" };
+}
+
+function rejectComposition(name: string): MatchDecision {
+  return { decision: "deny_silent", matched_rule: { tool: "Bash", name } };
+}
+
+/**
+ * The deny message the runner shows Session B when a per_segment policy rejects
+ * an opaque or malformed Bash call. Returns null for any non-composition deny
+ * (the runner falls back to its generic message). Keyed on the synthetic rule
+ * name set by rejectComposition().
+ */
+export function compositionDenyMessage(matchedRuleName: string | undefined): string | null {
+  if (matchedRuleName === BASH_COMPOSITION_OPAQUE) {
+    return "claw-drive evaluates one command per Bash call. This call contains a construct it can't inspect piece-by-piece (command-substitution $(…)/backticks, a here-doc, or process substitution). Run the inner command(s) as separate Bash calls and pass their output.";
+  }
+  if (matchedRuleName === BASH_COMPOSITION_MALFORMED) {
+    return "Malformed or empty command segment. Re-issue each command as its own Bash call.";
+  }
+  return null;
+}
+
+// Strictest-wins precedence: a higher rank is more restrictive.
+function rank(d: MatchDecision): number {
+  if (d.decision === "escalate" && d.default_action === "reject") return 5;
+  if (d.decision === "deny_silent") return 4;
+  if (d.decision === "escalate" && d.default_action === "defer") return 3;
+  if (d.decision === "escalate" && d.default_action === "approve") return 2;
+  return 1; // approve_silent
+}
+
+function combineSegments(policy: PolicyObject, segments: string[]): MatchDecision {
+  let worst = evaluateSimpleCall(policy, { tool: "Bash", args: { command: segments[0] } });
+  for (let k = 1; k < segments.length; k++) {
+    const d = evaluateSimpleCall(policy, { tool: "Bash", args: { command: segments[k] } });
+    if (rank(d) > rank(worst)) worst = d;
+  }
+  return worst;
 }
 
 function ruleMatches(rule: Rule, call: ToolCall): boolean {
@@ -304,6 +377,7 @@ export function validatePolicy(p: unknown): { ok: true } | { ok: false; error: s
     "decision_timeout_seconds",
     "schema_version",
     "budget",
+    "bash_composition",
   ]);
   for (const key of Object.keys(obj)) {
     if (key.startsWith("_")) continue; // metadata comment; ignored by validator
@@ -376,6 +450,11 @@ export function validatePolicy(p: unknown): { ok: true } | { ok: false; error: s
       if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) {
         return { ok: false, error: `budget.${field} must be a positive number` };
       }
+    }
+  }
+  if (obj.bash_composition !== undefined) {
+    if (obj.bash_composition !== "off" && obj.bash_composition !== "per_segment") {
+      return { ok: false, error: 'bash_composition must be "off" or "per_segment"' };
     }
   }
   return { ok: true };
