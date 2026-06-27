@@ -79,21 +79,17 @@ export function matchPolicy(policy: Policy, call: ToolCall): MatchDecision {
     if (a.opaque) return rejectComposition(BASH_COMPOSITION_OPAQUE);
     if (a.malformed) return rejectComposition(BASH_COMPOSITION_MALFORMED);
     if (a.segments.length > 1) {
-      // Rejection is broad: a reject rule keyed on compound structure
-      // (e.g. `curl ... | bash`) must still fire even though splitting on `|`
-      // hides the pipe from any single segment. Approval stays narrow
-      // (combineSegments requires every segment to approve).
-      for (const rule of policy.auto_reject ?? []) {
-        if (ruleMatches(rule, call)) {
-          return {
-            decision: "escalate",
-            default_action: "reject",
-            severity: rule.severity ?? "high",
-            matched_rule: rule,
-          };
-        }
-      }
-      return combineSegments(policy, a.segments);
+      // The decision is the STRICTER of the whole-command reading and the
+      // per-segment reading. Approval is narrow (combineSegments requires every
+      // segment to match auto_approve — the smuggle fix), but reject/defer/deny
+      // stay broad: a rule defeated by splitting (curl ... | bash, or a defer
+      // rule spanning &&) still fires on the whole command and wins. Whole-command
+      // APPROVE is rank 1, so it never overrides a stricter per-segment signal —
+      // the smuggle stays closed. Net: per_segment never decides less strictly
+      // than the un-split command would.
+      const whole = evaluateSimpleCall(policy, call);
+      const seg = combineSegments(policy, a.segments);
+      return rank(seg) >= rank(whole) ? seg : whole;
     }
     // single segment ⇒ fall through (identical to whole-string matching)
   }

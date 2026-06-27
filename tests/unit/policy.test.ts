@@ -1443,6 +1443,17 @@ describe("matchPolicy per_segment", () => {
     expect(r.decision).toBe("escalate");
     expect((r as { default_action: string }).default_action).toBe("reject");
   });
+
+  it("defer is broad too: a compound-spanning auto_defer rule fires on the whole command", () => {
+    const p = {
+      bash_composition: "per_segment" as const,
+      auto_approve: [{ tool: "Bash", bash_command_matches: "^git " }],
+      auto_defer: [{ tool: "Bash", bash_command_matches: "status.*log" }],
+    };
+    const r = matchPolicy(p, { tool: "Bash", args: { command: "git status && git log" } });
+    expect(r.decision).toBe("escalate");
+    if (r.decision === "escalate") expect(r.default_action).toBe("defer");
+  });
 });
 
 describe("coerceRule", () => {
