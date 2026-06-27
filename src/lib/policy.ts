@@ -78,7 +78,23 @@ export function matchPolicy(policy: Policy, call: ToolCall): MatchDecision {
     const a = analyzeComposition(command);
     if (a.opaque) return rejectComposition(BASH_COMPOSITION_OPAQUE);
     if (a.malformed) return rejectComposition(BASH_COMPOSITION_MALFORMED);
-    if (a.segments.length > 1) return combineSegments(policy, a.segments);
+    if (a.segments.length > 1) {
+      // Rejection is broad: a reject rule keyed on compound structure
+      // (e.g. `curl ... | bash`) must still fire even though splitting on `|`
+      // hides the pipe from any single segment. Approval stays narrow
+      // (combineSegments requires every segment to approve).
+      for (const rule of policy.auto_reject ?? []) {
+        if (ruleMatches(rule, call)) {
+          return {
+            decision: "escalate",
+            default_action: "reject",
+            severity: rule.severity ?? "high",
+            matched_rule: rule,
+          };
+        }
+      }
+      return combineSegments(policy, a.segments);
+    }
     // single segment ⇒ fall through (identical to whole-string matching)
   }
 

@@ -54,7 +54,7 @@ stable.
 | `decision_timeout_seconds` | `number` | Per-session gate timeout. Defaults to 3600 if absent. |
 | `schema_version` | `number` | See [schema\_version](#schema_version) below. _(Introduced by the CD-1 contract-freeze work; part of the 1.0 contract, not a field that predates it.)_ |
 | `budget` | `{ max_tool_calls?, max_wall_clock_seconds?, max_consecutive_errors? }` | Run-level circuit-breaker (CD-4). All caps optional and positive; an absent cap is unlimited and an absent `budget` is off. On breach the runner stops the session with `exit_reason: "budget_exceeded:<cap>"`. |
-| `bash_composition` | `"off" \| "per_segment"` | Absent ⇒ off. When `per_segment`, a Bash call is split at top-level shell operators and each segment is evaluated independently against the rules; the strictest segment's decision wins. Opaque constructs (command-substitution, here-docs/here-strings) and malformed chains are rejected with a teaching message. Additive; absent reproduces today's whole-string matching. |
+| `bash_composition` | `"off" \| "per_segment"` | Absent ⇒ off. When `per_segment`, a Bash call is split at top-level shell operators: `auto_approve` must match **every** segment (closes the benign-prefix smuggle), while `auto_reject` is matched against the whole command **and** each segment (so pipe-spanning reject rules like `curl … \| bash` still fire). Opaque constructs (command-substitution, here-docs/here-strings) and malformed chains are rejected with a teaching message. Additive; absent reproduces today's whole-string matching, and `per_segment` is strictly safer than it. |
 
 **Evaluation order** (contract as of v0.2.3, frozen):
 
