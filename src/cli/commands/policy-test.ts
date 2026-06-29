@@ -284,16 +284,19 @@ export function renderExplain(
       return lines.join("\n");
     }
     if (a.segments.length > 1) {
+      // The whole-command reading (matchPolicy's `whole`) is the same policy with
+      // composition off — i.e. the concatenated command matched as one string.
+      const offPolicy = { ...obj, bash_composition: "off" as const };
       lines.push(
         colorize(
-          `  bash_composition=per_segment: ${a.segments.length} segments — decision is the stricter of the whole-command and per-segment readings (auto-approval requires every segment)`,
+          `  bash_composition=per_segment: ${a.segments.length} segments — decision is the stricter of the whole-command and per-segment readings (auto-approval requires every segment; ties resolve to the per-segment reading)`,
           opts.color,
           ANSI.dim
         )
       );
       // Whole-command broad pass: reject/defer rules that span operators fire here.
       lines.push("");
-      lines.push("Whole command — auto_reject / auto_defer (matched broadly):");
+      lines.push("Whole command (as a single string) — auto_reject / auto_defer match broadly:");
       let wholeFound = false;
       for (const listName of ["auto_reject", "auto_defer"] as const) {
         const rules = obj[listName] ?? [];
@@ -310,10 +313,20 @@ export function renderExplain(
           if (matches) wholeFound = true;
         }
       }
+      // The whole-command reading's overall outcome — including the auto_approve /
+      // escalate_default it falls to when the concatenation matches no rule (the
+      // case that makes an all-segments-approve chain still escalate).
+      lines.push(
+        colorize(`  → whole-command reading: ${readingSummary(matchPolicy(offPolicy, call))}`, opts.color, ANSI.dim)
+      );
       a.segments.forEach((seg, idx) => {
+        const segCall = { tool: "Bash", args: { command: seg } };
         lines.push("");
         lines.push(`Segment ${idx + 1}: ${seg}`);
-        lines.push(...walkRules(obj, { tool: "Bash", args: { command: seg } }, opts));
+        lines.push(...walkRules(obj, segCall, opts));
+        lines.push(
+          colorize(`  → segment reading: ${readingSummary(matchPolicy(offPolicy, segCall))}`, opts.color, ANSI.dim)
+        );
       });
       lines.push("");
       lines.push(verdictLine(matchPolicy(policy, call)));
@@ -367,7 +380,24 @@ function verdictLine(d: MatchDecision): string {
   if (d.default_action === "approve") {
     return `=> escalate, default_action=approve, severity=${d.severity}  (escalate_default)`;
   }
-  return `=> escalate, default_action=${d.default_action}, severity=${d.severity}`;
+  return `=> escalate, default_action=${d.default_action}, severity=${d.severity}  (${d.matched_rule?.name ?? "unnamed"})`;
+}
+
+// Compact one-line summary of a single decision, used to surface the
+// whole-command reading and each per-segment reading in per_segment --explain
+// (so the "stricter of the two wins" verdict is self-evident — including the
+// escalate_default case where no rule matches the concatenated command).
+function readingSummary(d: MatchDecision): string {
+  if (d.decision === "approve_silent") {
+    return d.matched_rule?.name ? `approve_silent (${d.matched_rule.name})` : "approve_silent";
+  }
+  if (d.decision === "deny_silent") {
+    return `deny_silent (${d.matched_rule?.name ?? "escalate_default=false"})`;
+  }
+  if (d.default_action === "approve") {
+    return `escalate → approve, severity=${d.severity} (escalate_default)`;
+  }
+  return `escalate → ${d.default_action}, severity=${d.severity} (${d.matched_rule?.name ?? "unnamed"})`;
 }
 
 function ruleMatchesCall(
