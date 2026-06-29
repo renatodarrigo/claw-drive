@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.1] — 2026-06-29
+
+### Fixed
+- `policy-test --explain` now renders the full decision for a composite (multi-segment) Bash command under `bash_composition: "per_segment"`: it prints the **whole-command reading** and a **per-segment reading** for each segment, so a chain whose every segment is individually approved but which still escalates — because the concatenated command matches no rule and falls to `escalate_default` — is self-explanatory rather than appearing to contradict the per-segment ✓ marks. On a rank tie between the two readings the per-segment reading is authoritative, which the header now states, and the verdict line names the matched rule on an escalate. Diagnostic output only; policy decisions are unchanged.
+
 ## [1.3.0] — 2026-06-26
 
 ### Added
