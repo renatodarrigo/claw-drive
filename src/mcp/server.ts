@@ -4,43 +4,30 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { spawn } from "node:child_process";
 import * as fs from "node:fs/promises";
 import {
-  approverBinPath,
+  clawDriveBinPath,
   eventsPath,
   isInsideHome,
   isValidSessionId,
-  mcpConfigPath,
-  readyMarkerPath,
   sessionDir,
   sessionsRoot,
-  settingsPath,
   socketPath,
   statePath,
 } from "../lib/paths.js";
 import { readEventsSince, type Event } from "../lib/events.js";
-import { writeState, readState, isPidAlive, type SessionState } from "../lib/state.js";
+import { readState, isPidAlive } from "../lib/state.js";
 import { validatePolicy, coercePolicy, type Policy } from "../lib/policy.js";
 import { sendRequest } from "../runner/socket-server.js";
 import { buildNotificationContract } from "../lib/tokens.js";
 import { isValidAlias, findLiveAliasHolder, resolveSessionRef } from "../lib/alias.js";
 import { MCP_TOOL_DEFS } from "./tool-defs.js";
-
-function newSessionId(): string {
-  // sess_YYYYMMDDTHHMMSS_<6char>
-  const now = new Date();
-  const ts =
-    now.getUTCFullYear().toString() +
-    String(now.getUTCMonth() + 1).padStart(2, "0") +
-    String(now.getUTCDate()).padStart(2, "0") +
-    "T" +
-    String(now.getUTCHours()).padStart(2, "0") +
-    String(now.getUTCMinutes()).padStart(2, "0") +
-    String(now.getUTCSeconds()).padStart(2, "0");
-  const nonce = Math.random().toString(36).slice(2, 8);
-  return `sess_${ts}_${nonce}`;
-}
+import {
+  newSessionId,
+  scaffoldSessionDir,
+  spawnRunnerDetached,
+  waitForReady,
+} from "../lib/spawn-session.js";
 
 function err(code: string, message: string) {
   return {
@@ -100,113 +87,36 @@ async function handleStartSession(args: Record<string, unknown>) {
   if (!isValidSessionId(sessionId)) {
     return err("SESSION_NOT_FOUND", "generated session_id failed validation");
   }
-  const dir = sessionDir(sessionId);
-  await fs.mkdir(dir, { recursive: true });
-
-  // Write mcp.json — just the caller-provided extras, or an empty mcpServers.
-  // The approver is registered via settings.json (PreToolUse hook), not MCP.
   const extra = (args.mcp_extra_config as Record<string, unknown>) ?? {};
-  const mcpConfig = {
-    mcpServers: (extra.mcpServers as Record<string, unknown>) ?? {},
-  };
-  await fs.writeFile(mcpConfigPath(sessionId), JSON.stringify(mcpConfig, null, 2));
-
-  // Write settings.json — registers the PreToolUse hook with a 600s timeout.
-  // Matcher "*" covers every tool.
-  const approverCmd = `${approverBinPath()} ${sessionId}`;
-  const settings = {
-    hooks: {
-      PreToolUse: [
-        {
-          matcher: "*",
-          hooks: [
-            {
-              type: "command",
-              command: approverCmd,
-              timeout: 600,
-            },
-          ],
-        },
-      ],
-    },
-  };
-  await fs.writeFile(settingsPath(sessionId), JSON.stringify(settings, null, 2));
-
-  const state: SessionState = {
-    session_id: sessionId,
-    status: "starting",
+  await scaffoldSessionDir({
+    sessionId,
     cwd,
     policy,
-    decision_timeout_seconds: (args.decision_timeout_seconds as number) ?? 3600,
+    decisionTimeoutSeconds: (args.decision_timeout_seconds as number) ?? 3600,
     model: (args.model as string | null) ?? null,
-    runner_pid: null,
-    started_at: new Date().toISOString(),
-    last_event_at: null,
-    turns: 0,
-    exit_code: null,
-    exit_reason: null,
-  };
-  if (typeof args.scenario_brief === "string") {
-    (state as SessionState & { scenario_brief?: string }).scenario_brief = args.scenario_brief;
-  }
-  if (typeof args.wrapper === "boolean") {
-    state.wrapper = args.wrapper;
-  }
-  if (alias !== undefined) {
-    state.alias = alias;
-  }
-  await writeState(statePath(sessionId), state);
-
-  // Spawn the runner detached. The runner binary is our own dispatcher.
-  // It will be wired in Task 26; for now, invoke `node <dist>/index.js runner <id>`
-  // via a local resolver.
-  const selfBin = resolveSelfBinPath();
-  const child = spawn(selfBin, ["runner", sessionId], {
-    detached: true,
-    stdio: "ignore",
+    scenarioBrief: typeof args.scenario_brief === "string" ? args.scenario_brief : undefined,
+    wrapper: typeof args.wrapper === "boolean" ? args.wrapper : undefined,
+    alias,
+    mcpServers: (extra.mcpServers as Record<string, unknown>) ?? {},
   });
-  child.unref();
-
-  // Wait for the runner's ready marker up to 5s
-  const deadline = Date.now() + 5000;
-  while (Date.now() < deadline) {
-    try {
-      await fs.access(readyMarkerPath(sessionId));
-      const selfBinAbs = resolveSelfBinPath();
-      const watch_command = {
-        command: selfBinAbs,
-        args: ["watch", sessionId],
-        description: `notable events from claw-drive session ${sessionId}`,
-        timeout_ms: 3_600_000,
-        persistent: true,
-      };
-      // Note: notification_contract.watch_command is a string form
-      // ("<bin> watch <id>") — machine-readable for non-Monitor consumers.
-      // The top-level watch_command above is the pre-existing Monitor
-      // payload shape and is preserved for backward compatibility.
-      const notification_contract = buildNotificationContract({
-        watchCommand: `${selfBinAbs} watch ${sessionId}`,
-        wrapperEnabled: args.wrapper !== false,
-      });
-      return ok({
-        session_id: sessionId,
-        watch_command,
-        notification_contract,
-      });
-    } catch {
-      await new Promise((r) => setTimeout(r, 50));
-    }
+  spawnRunnerDetached(sessionId);
+  if (await waitForReady(sessionId)) {
+    const selfBinAbs = clawDriveBinPath();
+    const watch_command = {
+      command: selfBinAbs,
+      args: ["watch", sessionId],
+      description: `notable events from claw-drive session ${sessionId}`,
+      timeout_ms: 3_600_000,
+      persistent: true,
+    };
+    const notification_contract = buildNotificationContract({
+      watchCommand: `${selfBinAbs} watch ${sessionId}`,
+      wrapperEnabled: args.wrapper !== false,
+    });
+    return ok({ session_id: sessionId, watch_command, notification_contract });
   }
-  // Cleanup on timeout
-  await fs.rm(dir, { recursive: true, force: true });
+  await fs.rm(sessionDir(sessionId), { recursive: true, force: true });
   return err("START_FAILED", "runner did not become ready within 5s");
-}
-
-/** Resolve the absolute path to the installed `bin/claw-drive` dispatcher. */
-function resolveSelfBinPath(): string {
-  // Our dist layout: <pkg>/dist/mcp/server.js; <pkg>/bin/claw-drive
-  const url = new URL("../../bin/claw-drive", import.meta.url);
-  return url.pathname;
 }
 
 async function handleStopSession(args: Record<string, unknown>) {

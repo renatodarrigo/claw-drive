@@ -79,6 +79,17 @@ export function approverBinPath(): string {
   return path.join(pkgRoot, "bin", "claw-drive-approver");
 }
 
+/**
+ * Absolute path to bin/claw-drive (the dispatcher). Env override
+ * CLAW_DRIVE_BIN first (tests / nonstandard installs), else package-relative:
+ * this file compiles to <pkg>/dist/lib/paths.js, so ../../bin/claw-drive.
+ */
+export function clawDriveBinPath(): string {
+  if (process.env.CLAW_DRIVE_BIN) return process.env.CLAW_DRIVE_BIN;
+  const here = fileURLToPath(import.meta.url);
+  return path.join(path.dirname(here), "..", "..", "bin", "claw-drive");
+}
+
 const SESSION_ID_RE = /^sess_[A-Za-z0-9_-]{1,64}$/;
 
 export function isValidSessionId(id: string): boolean {
