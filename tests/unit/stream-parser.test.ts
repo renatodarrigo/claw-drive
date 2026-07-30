@@ -158,3 +158,65 @@ describe("stream-parser", () => {
     expect(parseClaudeLine("string", "turn_1").events).toEqual([]);
   });
 });
+
+describe("stream-parser context-rotation usage side-channel", () => {
+  const usage = {
+    input_tokens: 10,
+    cache_creation_input_tokens: 34122,
+    cache_read_input_tokens: 163428,
+    output_tokens: 4,
+  };
+
+  it("reports main_context_tokens for a main-loop assistant line", () => {
+    const out = parseClaudeLine(
+      {
+        type: "assistant",
+        parent_tool_use_id: null,
+        message: { role: "assistant", usage, content: [{ type: "text", text: "ok" }] },
+      },
+      "turn_1"
+    );
+    expect(out.main_context_tokens).toBe(10 + 34122 + 163428);
+    expect(out.events).toHaveLength(1); // text event still produced
+  });
+
+  it("ignores usage on subagent lines (parent_tool_use_id set)", () => {
+    const out = parseClaudeLine(
+      {
+        type: "assistant",
+        parent_tool_use_id: "toolu_abc",
+        message: { role: "assistant", usage, content: [{ type: "text", text: "sub" }] },
+      },
+      "turn_1"
+    );
+    expect(out.main_context_tokens).toBeUndefined();
+  });
+
+  it("treats absent/malformed usage as no reading, never zero", () => {
+    const noUsage = parseClaudeLine(
+      { type: "assistant", parent_tool_use_id: null, message: { role: "assistant", content: [] } },
+      "turn_1"
+    );
+    expect(noUsage.main_context_tokens).toBeUndefined();
+    const emptyUsage = parseClaudeLine(
+      { type: "assistant", parent_tool_use_id: null, message: { role: "assistant", usage: {}, content: [] } },
+      "turn_1"
+    );
+    expect(emptyUsage.main_context_tokens).toBeUndefined();
+  });
+
+  it("flags a compact_boundary system line", () => {
+    const out = parseClaudeLine(
+      { type: "system", subtype: "compact_boundary", compact_metadata: { trigger: "auto" } },
+      "turn_1"
+    );
+    expect(out.events).toEqual([]);
+    expect(out.compact_boundary).toBe(true);
+  });
+
+  it("other system subtypes still produce nothing", () => {
+    const out = parseClaudeLine({ type: "system", subtype: "thinking_tokens" }, "turn_1");
+    expect(out.events).toEqual([]);
+    expect(out.compact_boundary).toBeUndefined();
+  });
+});
