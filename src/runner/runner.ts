@@ -1062,43 +1062,47 @@ export async function runRunner(sessionId: string): Promise<void> {
   await new Promise<void>((resolve) => {
     process.on("SIGTERM", () => resolve());
     process.on("SIGINT", () => resolve());
-    b.on("exit", (code) => {
+    b.on("exit", (code, signal) => {
       // stop_session and rotate own their teardown; this branch is the
       // UNEXPECTED death path (Context rotation: crash → best-effort distillation).
       if (ctx.stopping) return;
       void (async () => {
-        sess.exit_code = code;
-        sess.status = "stopped";
-        sess.exit_reason = `crashed:${code === null ? "signal" : code}`;
-        let handover_path: string | undefined;
-        if (rotationConfigOf(sess.policy)) {
-          try {
-            const { events } = await readEventsSince(eventsPath(sessionId), 0);
-            const brief =
-              sess.original_brief ??
-              (sess as unknown as { scenario_brief?: string }).scenario_brief ??
-              "";
-            const text = await runDistiller({
-              model: sess.model,
-              prompt: buildDistillerPrompt({ digest: buildCrashDigest(events), originalBrief: brief }),
-            });
-            if (text) {
-              await fs.writeFile(crashHandoverPath(sessionId), text);
-              handover_path = crashHandoverPath(sessionId);
-            }
-          } catch { /* best-effort — never block teardown on distillation */ }
+        try {
+          sess.exit_code = code;
+          sess.status = "stopped";
+          sess.exit_reason = `crashed:${code ?? signal ?? "unknown"}`;
+          let handover_path: string | undefined;
+          if (rotationConfigOf(sess.policy)) {
+            try {
+              const { events } = await readEventsSince(eventsPath(sessionId), 0);
+              const brief =
+                sess.original_brief ??
+                (sess as unknown as { scenario_brief?: string }).scenario_brief ??
+                "";
+              const text = await runDistiller({
+                model: sess.model,
+                prompt: buildDistillerPrompt({ digest: buildCrashDigest(events), originalBrief: brief }),
+              });
+              if (text) {
+                await fs.writeFile(crashHandoverPath(sessionId), text);
+                handover_path = crashHandoverPath(sessionId);
+              }
+            } catch { /* best-effort — never block teardown on distillation */ }
+          }
+          sess.last_event_at = new Date().toISOString();
+          await writeState(statePath(sessionId), sess);
+          ctx.seq += 1;
+          await appendEvent(eventsPath(sessionId), {
+            seq: ctx.seq,
+            at: new Date().toISOString(),
+            kind: "session_stopped",
+            reason: sess.exit_reason,
+            exit_code: code,
+            ...(handover_path ? { handover_path } : {}),
+          } as Event);
+        } finally {
+          resolve();
         }
-        await writeState(statePath(sessionId), sess);
-        ctx.seq += 1;
-        await appendEvent(eventsPath(sessionId), {
-          seq: ctx.seq,
-          at: new Date().toISOString(),
-          kind: "session_stopped",
-          reason: sess.exit_reason,
-          exit_code: code,
-          ...(handover_path ? { handover_path } : {}),
-        } as Event);
-        resolve();
       })();
     });
   });

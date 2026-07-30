@@ -110,6 +110,8 @@ export function runDistiller(opts: {
       finish(null);
     }, opts.timeoutMs ?? 180_000);
     child.stdout!.on("data", (c: Buffer) => (out += c.toString("utf-8")));
+    child.stdout!.on("error", () => finish(null));
+    child.stdin!.on("error", () => finish(null));
     child.on("error", () => finish(null));
     child.on("close", () => finish(extractHandover(out)));
     child.stdin!.write(opts.prompt);
