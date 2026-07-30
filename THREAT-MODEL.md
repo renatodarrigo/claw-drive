@@ -26,7 +26,7 @@ Rotation hands a session off to a fresh successor via a handover document that S
 
 The one piece of rotation machinery that isn't B-authored — the runner-prepended, verbatim ORIGINAL MISSION section stitched onto every successor's brief — exists to bound **drift**, not to defend against **injection**. Its job is keeping a multi-generation lineage anchored to the task you actually gave it, instead of telescoping through each generation's paraphrase of the one before. It is not a security control: under this threat model B is cooperative, so there is no adversary for it to repel.
 
-Crash recovery's distiller runs a one-shot, minimal-mode `claude -p` call that loads no settings sources and runs from a neutral cwd, so it has neither hooks nor project memory (`CLAUDE.md`). It cannot re-enter claw-drive's own approver hook or otherwise recurse into the gated tool surface — structurally, not just by policy — so reconstructing a handover from a dead session's event log cannot become a path back into tool execution.
+Crash recovery's distiller runs a one-shot, minimal-mode `claude -p` call that loads no settings sources, has no tools at all, and runs from a neutral cwd, so it has neither hooks, project memory (`CLAUDE.md`), nor anything to call. It cannot re-enter claw-drive's own approver hook, recurse into the gated tool surface, or invoke a tool in the first place — structurally, not just by policy — so reconstructing a handover from a dead session's event log cannot become a path back into tool execution.
 
 ## If you need to contain an adversarial agent
 

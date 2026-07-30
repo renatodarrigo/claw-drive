@@ -1,10 +1,11 @@
 /**
  * context-rotation crash distillation: turn a dead session's events.jsonl tail into a
  * crash-handover via a one-shot, minimal-mode `claude -p` call. Isolation is achieved
- * by loading no settings sources (`--setting-sources ""` — no hooks, no approver) and
- * running from a neutral cwd (no project CLAUDE.md auto-discovery) — cheap,
- * deterministic, and structurally incapable of recursing into claw-drive's own
- * approver hook.
+ * by loading no settings sources (`--setting-sources ""` — no hooks, no approver),
+ * disabling all built-in tools (`--tools ""` — the distiller only summarizes; it never
+ * needs to act), and running from a neutral cwd (no project CLAUDE.md auto-discovery)
+ * — cheap, deterministic, and structurally incapable of recursing into claw-drive's
+ * own approver hook or calling any tool at all (not merely ungated — absent).
  *
  * `--bare` was rejected for this call: per `claude --help`, `--bare`'s auth is
  * strictly `ANTHROPIC_API_KEY` or an `apiKeyHelper` — OAuth and keychain are never
@@ -108,7 +109,8 @@ export function runDistiller(opts: {
   cwd?: string;
 }): Promise<string | null> {
   return new Promise((resolve) => {
-    const args = ["-p", "--no-session-persistence", "--setting-sources", ""];
+    // needs no tools; disabling them removes the ungated surface and their schema cost
+    const args = ["-p", "--no-session-persistence", "--setting-sources", "", "--tools", ""];
     if (opts.model) args.push("--model", opts.model);
     let child;
     try {

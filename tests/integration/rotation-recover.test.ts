@@ -26,6 +26,15 @@ describe("context-rotation recover from a hard death (REAL claude, costs tokens)
       process.kill(state.runner_pid, "SIGKILL");
       await new Promise((r) => setTimeout(r, 2000));
 
+      // Pin that it's recover's own distiller — not some leftover runner-side
+      // write — that produces the crash-handover: it must not exist yet at
+      // this point. (The CLI only prints the new session id on success, so
+      // there's no `distilled: true` field to read from stdout; this
+      // before/after existence check is the observable that pins it instead.)
+      await expect(
+        fs.readFile(path.join(t.clawDriveRoot, "sessions", id, "crash-handover.md"), "utf-8")
+      ).rejects.toMatchObject({ code: "ENOENT" });
+
       const rec = await runCliBlocking(t.binPath, t.env, ["recover", id]);
       expect(rec.code).toBe(0);
       const newId = rec.stdout.trim();
