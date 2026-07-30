@@ -521,3 +521,25 @@ init → idempotent session-id capture). Forward-compat held; nothing breaks.
 - Native compaction is runner-detectable via `compact_boundary` — cheap
   observability for "rotation was configured but compaction won the race."
 
+### `--bare` auth is API-key-only, not OAuth (addendum, 2026-07-30)
+
+Probed against claude **2.1.220** while diagnosing a real
+`rotation-recover.test.ts` failure. `claude -p --bare ...` fails
+`Not logged in · Please run /login` under this machine's subscription (OAuth)
+auth — reproducible every time, from a fully authenticated normal session,
+with `ANTHROPIC_API_KEY` unset. `claude --help` confirms this is by design:
+`--bare`'s "Anthropic auth is strictly ANTHROPIC_API_KEY or apiKeyHelper via
+--settings (OAuth and keychain are never read)". Isolated via direct probes:
+`claude -p --no-session-persistence "..."` (no `--bare`) succeeds;
+`claude -p --bare "..."` (no `--no-session-persistence`) still fails
+identically — so it is specifically the `--bare` flag, not the invocation
+shape or the account.
+
+For the same hook/plugin/CLAUDE.md isolation without the auth restriction, use
+`-p --no-session-persistence --setting-sources ""` from a neutral cwd (a
+directory with no `CLAUDE.md`/`.claude/` of its own): an empty
+`--setting-sources` loads no user/project/local settings (so no hooks, no
+approver), and the neutral cwd suppresses project-memory auto-discovery.
+claw-drive's crash distiller (`src/lib/distill.ts`) uses this combination
+instead of `--bare` for exactly this reason.
+

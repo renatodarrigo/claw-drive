@@ -1082,6 +1082,9 @@ export async function runRunner(sessionId: string): Promise<void> {
               const text = await runDistiller({
                 model: sess.model,
                 prompt: buildDistillerPrompt({ digest: buildCrashDigest(events), originalBrief: brief }),
+                // Neutral cwd: the (crashing) session's own dir always exists and
+                // holds no CLAUDE.md / .claude/ of its own (see runDistiller's doc comment).
+                cwd: sessionDir(sessionId),
               });
               if (text) {
                 await fs.writeFile(crashHandoverPath(sessionId), text);

@@ -1,9 +1,20 @@
 /**
  * context-rotation crash distillation: turn a dead session's events.jsonl tail into a
- * crash-handover via a one-shot `claude -p --bare` call. --bare skips hooks,
- * plugins and CLAUDE.md — cheap, deterministic, and structurally incapable of
- * recursing into claw-drive's own approver hook. Everything here is
- * best-effort: runDistiller never throws, it returns null.
+ * crash-handover via a one-shot, minimal-mode `claude -p` call. Isolation is achieved
+ * by loading no settings sources (`--setting-sources ""` — no hooks, no approver) and
+ * running from a neutral cwd (no project CLAUDE.md auto-discovery) — cheap,
+ * deterministic, and structurally incapable of recursing into claw-drive's own
+ * approver hook.
+ *
+ * `--bare` was rejected for this call: per `claude --help`, `--bare`'s auth is
+ * strictly `ANTHROPIC_API_KEY` or an `apiKeyHelper` — OAuth and keychain are never
+ * read — so it cannot authenticate at all under subscription auth (empirically
+ * confirmed 2026-07-30 on claude 2.1.220: `claude -p --bare ...` fails "Not logged
+ * in" even from a fully-authenticated normal session with no `ANTHROPIC_API_KEY`
+ * set). `--setting-sources ""` gives the same hook/plugin/CLAUDE.md isolation
+ * without that auth restriction.
+ *
+ * Everything here is best-effort: runDistiller never throws, it returns null.
  */
 import { spawn } from "node:child_process";
 import type { Event } from "./events.js";
@@ -86,13 +97,22 @@ export function runDistiller(opts: {
   model: string | null;
   prompt: string;
   timeoutMs?: number;
+  /**
+   * Working directory for the one-shot claude process. Callers should pass a
+   * neutral directory — one with no CLAUDE.md / .claude/ of its own — since
+   * `--setting-sources ""` already suppresses settings-file hooks/plugins but
+   * project-memory (CLAUDE.md) discovery is driven by cwd. A dead session's
+   * own session dir is a good choice: it always exists and holds neither.
+   * Absent: inherits the caller's own cwd.
+   */
+  cwd?: string;
 }): Promise<string | null> {
   return new Promise((resolve) => {
-    const args = ["-p", "--bare", "--no-session-persistence"];
+    const args = ["-p", "--no-session-persistence", "--setting-sources", ""];
     if (opts.model) args.push("--model", opts.model);
     let child;
     try {
-      child = spawn("claude", args, { stdio: ["pipe", "pipe", "ignore"] });
+      child = spawn("claude", args, { stdio: ["pipe", "pipe", "ignore"], cwd: opts.cwd });
     } catch {
       resolve(null);
       return;
