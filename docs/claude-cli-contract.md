@@ -447,3 +447,77 @@ Recommended pattern:
 The `permissionDecisionReason` string is surfaced to the model in the tool
 result error, so it can be used to convey denial context back to the session.
 
+---
+
+## Context-limit behavior (probe 3, context-rotation step 0)
+
+Probed 2026-07-29 against claude **2.1.220**, model `claude-haiku-4-5-20251001`
+(200k window), via `scripts/probe-context-limit.sh`. Raw capture:
+`tests/fixtures/stream-json/context-limit.jsonl` (109 lines). Method: one
+persistent `-p` stream-json session fed ~34k-token padding turns; context
+measured per turn as the result `usage` input-side sum
+(`input_tokens + cache_creation_input_tokens + cache_read_input_tokens`).
+
+### Headline: `-p` stream-json auto-compacts at the wall, marked, and survives
+
+    turn 1: ctx=26,196    (bootstrap in an empty dir, this machine's global config)
+    turn 2: ctx=61,062
+    ...
+    turn 6: ctx=197,560   (98.8% of the 200k window — no compaction yet)
+    turn 7: ctx=58,845    ← auto-compact fired during this turn
+    turn 8: ctx=59,063    (post-check: session fully alive)
+
+No `error_*` result subtype and no process death was ever observed. The
+session continued normally after compaction.
+
+### Compaction is explicit in the stream
+
+Three markers bracket it, in order:
+
+1. `{"type":"system","subtype":"status","status":"compacting",...}`
+2. `{"type":"system","subtype":"compact_boundary","compact_metadata":{"trigger":"auto","pre_tokens":236713,"post_tokens":41266,"cumulative_dropped_tokens":195447,"duration_ms":9337,"preserved_segment":{...},"preserved_messages":{...}},"logical_parent_uuid":"..."}`
+3. `{"type":"system","subtype":"status","status":null,"compact_result":"success",...}`
+
+`trigger:"auto"` with `pre_tokens` **above** the model window (236,713 > 200k)
+shows the CLI compacts just-in-time on its own estimate of the outgoing
+request, not at a safety-margin threshold — real API context reached 98.8% of
+the window uncompacted. Compaction took ~9.3s.
+
+After the boundary, the compact summary is injected as a **`user`-typed event
+with an array `content` carrying a `text` block** ("This session is being
+continued from a previous conversation that ran out of context. …") — a
+second shape for `user` events beyond the tool_result-only shape documented
+in probe 1. The summary measured ≈ **3.1k tokens** (turn-7 `cache_creation`
+37,219 minus the ~34.1k pad).
+
+### New/changed stream shapes vs 2.1.117
+
+- `system:thinking_tokens` — frequent (`estimated_tokens`,
+  `estimated_tokens_delta`); progress noise.
+- `system:status` — compaction bracketing (above).
+- `system:compact_boundary` — full compaction metadata (above).
+- `system:init` is re-emitted **per user turn** in persistent stream mode
+  (probe 1 observed it once; same `session_id`/`model` each time).
+- `usage` gained `cache_creation.{ephemeral_5m,ephemeral_1h}_input_tokens`,
+  `service_tier`, `inference_geo`.
+
+claw-drive's stream parser silently ignores all of these (unknown system
+subtypes → dropped; text-block `user` events → no events emitted; repeated
+init → idempotent session-id capture). Forward-compat held; nothing breaks.
+
+### context-rotation implications
+
+- The "B lives on toward auto-compact" fallback story is **confirmed** —
+  refused/failed rotations degrade gracefully, never fatally.
+- The usage-extraction path is confirmed: main-loop assistant lines carry
+  `parent_tool_use_id: null` + `message.usage` with the three input-side
+  fields.
+- Rotation always gets its chance: native compaction only intervenes at
+  ~99% of the window, so any sane threshold (default 120k) has ~75k tokens
+  of runway — a ≤2.5k-token handover turn fits trivially.
+- Bootstrap in an *empty* dir measured ~26k under a hook-heavy global
+  config → the policy-lint "threshold too low" floor should be **40k**, not
+  the 20k first written in the context-rotation spec.
+- Native compaction is runner-detectable via `compact_boundary` — cheap
+  observability for "rotation was configured but compaction won the race."
+
