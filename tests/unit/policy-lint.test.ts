@@ -125,6 +125,25 @@ describe("lintPolicy — clean policy + ordering", () => {
   });
 });
 
+describe("lintPolicy context-rotation rotation threshold floor", () => {
+  it("warns when threshold_tokens is below 40000", () => {
+    const findings = lintPolicy({ rotation: { threshold_tokens: 20000 } } as PolicyObject);
+    const hit = findings.find((f) => f.code === "rotation-threshold-low");
+    expect(hit).toBeDefined();
+    expect(hit!.severity).toBe("warn");
+    expect(hit!.message).toContain("40");
+  });
+
+  it("stays silent at or above 40000, and with no rotation block", () => {
+    expect(
+      lintPolicy({ rotation: { threshold_tokens: 40000 } } as PolicyObject).some(
+        (f) => f.code === "rotation-threshold-low"
+      )
+    ).toBe(false);
+    expect(lintPolicy({}).some((f) => f.code === "rotation-threshold-low")).toBe(false);
+  });
+});
+
 describe("lintPolicy — both shipped templates lint clean (no findings)", () => {
   const __dirname = nodePath.dirname(fileURLToPath(import.meta.url));
   const load = (name: string): PolicyObject =>
