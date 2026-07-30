@@ -95,14 +95,16 @@ export interface RunnerContext {
   /** context-rotation rotation tracking. lastContextTokens: latest main-loop usage reading
    * (null until the first assistant line with usage). completedTurns counts
    * turn_completed events. turnInFlight flips on send/provide and off on
-   * turn_completed/turn_failed. bootstrapExceeded latches when the FIRST
-   * completed turn is already over threshold. rotating guards re-entry and
+   * turn_completed/turn_failed. firstTurnContextTokens is the context reading
+   * of the FIRST completed turn (null until then); the bootstrap gate
+   * recomputes it against the CURRENT threshold so a live update_policy raise
+   * takes effect without a restart. rotating guards re-entry and
    * suppresses threshold re-fires during the handover turn. turnWaiters lets
    * the rotate choreography await a specific turn's completion. */
   lastContextTokens: number | null;
   completedTurns: number;
   turnInFlight: boolean;
-  bootstrapExceeded: boolean;
+  firstTurnContextTokens: number | null;
   rotating: boolean;
   turnWaiters: Map<string, (outcome: "completed" | "failed") => void>;
 }
@@ -260,9 +262,10 @@ async function runStdoutLoop(ctx: RunnerContext): Promise<void> {
 /**
  * context-rotation turn-boundary bookkeeping, run after each parsed event is emitted:
  * maintains turnInFlight / completedTurns / turnWaiters, persists
- * context_tokens, latches the bootstrap guard, and re-fires
- * context_threshold_reached on every completed turn while above threshold
- * (suppressed during the rotate choreography's own handover turn).
+ * context_tokens, records the first completed turn's reading for the
+ * bootstrap gate, and re-fires context_threshold_reached on every completed
+ * turn while above threshold (suppressed during the rotate choreography's
+ * own handover turn).
  */
 async function afterEventBookkeeping(ctx: RunnerContext, ev: Event): Promise<void> {
   if (ev.kind !== "turn_completed" && ev.kind !== "turn_failed") return;
@@ -281,12 +284,18 @@ async function afterEventBookkeeping(ctx: RunnerContext, ev: Event): Promise<voi
     ctx.state.context_tokens = ctx.lastContextTokens;
     await writeState(statePath(ctx.sessionId), ctx.state);
   }
+  if (ctx.completedTurns === 1) {
+    // Store the reading unconditionally — whether or not it's over
+    // threshold, and regardless of whether rotation is configured yet (a
+    // later update_policy may add a rotation block, and the bootstrap gate
+    // still needs this turn's reading to check against it). The gate is
+    // what judges the reading against the — possibly since-raised —
+    // threshold, not this bookkeeping step.
+    ctx.firstTurnContextTokens = ctx.lastContextTokens;
+  }
   const cfg = rotationConfigOf(ctx.state.policy);
   if (!cfg) return;
   const over = isOverThreshold(cfg, ctx.lastContextTokens);
-  if (over && ctx.completedTurns === 1) {
-    ctx.bootstrapExceeded = true;
-  }
   if (over && !ctx.rotating) {
     await emitEvent(ctx, {
       kind: "context_threshold_reached",
@@ -636,7 +645,7 @@ export async function handleRequest(
         turnInFlight: ctx.turnInFlight,
         pendingCallIds: [...ctx.pendingApprovals.keys()],
         generation: ctx.state.generation ?? 1,
-        bootstrapExceeded: ctx.bootstrapExceeded,
+        firstTurnContextTokens: ctx.firstTurnContextTokens,
       });
       if (
         blocker &&
@@ -1022,7 +1031,7 @@ export async function runRunner(sessionId: string): Promise<void> {
     lastContextTokens: null,
     completedTurns: 0,
     turnInFlight: false,
-    bootstrapExceeded: false,
+    firstTurnContextTokens: null,
     rotating: false,
     turnWaiters: new Map(),
   };

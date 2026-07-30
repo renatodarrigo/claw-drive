@@ -52,12 +52,19 @@ export function startWatchMultiplexer(opts: WatchMultiplexerOptions): WatchMulti
     if (everStarted.has(id)) return;
     everStarted.add(id);
     // CD-10: read the session's alias (if any) so the tag-line carries it
-    // alongside session_id. Best-effort — a missing/unreadable state just omits it.
+    // alongside session_id. Best-effort — a missing/unreadable state just
+    // omits it. generation is an additive passthrough read alongside it (the
+    // bare number — display formatting like "name (2)" is a human-table
+    // concern, not this machine-readable stream's).
     let aliasTag: string | undefined;
+    let generationTag: number | undefined;
     try {
-      aliasTag = (await readState(statePath(id)))?.alias;
+      const st = await readState(statePath(id));
+      aliasTag = st?.alias;
+      generationTag = st?.generation;
     } catch {
       aliasTag = undefined;
+      generationTag = undefined;
     }
     const handle = startSessionTailer({
       sessionId: id,
@@ -69,6 +76,7 @@ export function startWatchMultiplexer(opts: WatchMultiplexerOptions): WatchMulti
       idleAfterSeconds: opts.filters.idleAfterSeconds,
       tag: id,
       aliasTag,
+      generationTag,
       onWatchError: () => {
         // events file vanished between enumeration and tail — drop it.
       },

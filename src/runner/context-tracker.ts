@@ -49,7 +49,10 @@ export interface RotateGateInput {
   turnInFlight: boolean;
   pendingCallIds: string[];
   generation: number;
-  bootstrapExceeded: boolean;
+  /** Context reading of the FIRST completed turn; null until then. Compared
+   * against cfg.threshold_tokens AT CHECK TIME (not latched), so a live
+   * update_policy raise of the threshold takes effect immediately. */
+  firstTurnContextTokens: number | null;
 }
 
 /**
@@ -86,7 +89,7 @@ export function checkRotateGate(input: RotateGateInput): RotateBlocker | null {
         `Raise the cap via update_policy (0 = unlimited), or stop and re-brief a fresh lineage from the terminal handover.`,
     };
   }
-  if (input.bootstrapExceeded) {
+  if (input.firstTurnContextTokens !== null && input.firstTurnContextTokens >= input.cfg.threshold_tokens) {
     return {
       code: "BOOTSTRAP_EXCEEDS_THRESHOLD",
       message:

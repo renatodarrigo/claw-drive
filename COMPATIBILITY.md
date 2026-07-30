@@ -364,7 +364,7 @@ surfaced activity has occurred for the configured threshold
 | `policy <session>` | `--set FILE`, `--show` |
 | `policy-test '<command>'` | `--tool TOOL`, `--arg KEY=VALUE`, `--policy SPEC`, `--explain`, `--json`, `--exit-on DECISION`, `--no-color`, `--help` / `-h` |
 | `status [<session>]` | `--json`, `--help` / `-h` |
-| `prune` | `--older-than DURATION` |
+| `prune` | `--older-than DURATION`, `--force` |
 | `provide-output <call_id>` | `--stdout S`, `--stderr S`, `--exit N`, `--extra S`, `--from-file PATH` |
 
 **Global flags** (handled before subcommand dispatch):

@@ -41,7 +41,7 @@ describe("checkRotateGate", () => {
     turnInFlight: false,
     pendingCallIds: [] as string[],
     generation: 1,
-    bootstrapExceeded: false,
+    firstTurnContextTokens: null as number | null,
   };
   it("passes a clean gate", () => {
     expect(checkRotateGate(base)).toBeNull();
@@ -65,7 +65,7 @@ describe("checkRotateGate", () => {
     ).toBeNull();
   });
   it("blocks when bootstrap already exceeded the threshold", () => {
-    expect(checkRotateGate({ ...base, bootstrapExceeded: true })?.code).toBe(
+    expect(checkRotateGate({ ...base, firstTurnContextTokens: 100_000 })?.code).toBe(
       "BOOTSTRAP_EXCEEDS_THRESHOLD"
     );
   });
@@ -75,8 +75,16 @@ describe("checkRotateGate", () => {
       turnInFlight: true,
       pendingCallIds: ["x"],
       generation: 10,
-      bootstrapExceeded: true,
+      firstTurnContextTokens: 100_000,
     });
     expect(b?.code).toBe("TURN_IN_FLIGHT");
+  });
+  it("bootstrap gate recomputes against the CURRENT threshold: a live update_policy raise clears the refusal without a restart", () => {
+    const input = { ...base, firstTurnContextTokens: 100_000 };
+    expect(checkRotateGate(input)?.code).toBe("BOOTSTRAP_EXCEEDS_THRESHOLD");
+    // Same firstTurnContextTokens reading; only cfg.threshold_tokens moves
+    // (as a live update_policy would do) — now above the reading.
+    const raised = { ...input, cfg: { ...CFG, threshold_tokens: 150_000 } };
+    expect(checkRotateGate(raised)).toBeNull();
   });
 });

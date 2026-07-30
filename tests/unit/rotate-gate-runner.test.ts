@@ -32,7 +32,7 @@ function fakeCtx(overrides: Partial<RunnerContext> & { policy?: SessionState["po
     lastContextTokens: null,
     completedTurns: 0,
     turnInFlight: false,
-    bootstrapExceeded: false,
+    firstTurnContextTokens: null,
     rotating: false,
     turnWaiters: new Map(),
     ...overrides,
@@ -66,13 +66,13 @@ describe("rotate op — pre-I/O gate paths", () => {
   });
 
   it("ROTATION_IN_PROGRESS outranks a simultaneous refusal condition (no second terminal handover attempt)", async () => {
-    // Even though bootstrapExceeded would independently earn a
-    // BOOTSTRAP_EXCEEDS_THRESHOLD refusal, re-entry must win: the in-flight
-    // rotation already owns any handover-turn work, so a second caller must
-    // never fall into the refusal branch and attempt its own terminal
-    // handover turn.
+    // Even though an over-threshold firstTurnContextTokens would
+    // independently earn a BOOTSTRAP_EXCEEDS_THRESHOLD refusal, re-entry must
+    // win: the in-flight rotation already owns any handover-turn work, so a
+    // second caller must never fall into the refusal branch and attempt its
+    // own terminal handover turn.
     const resp = await handleRequest(
-      fakeCtx({ rotating: true, bootstrapExceeded: true }),
+      fakeCtx({ rotating: true, firstTurnContextTokens: 100_000 }),
       ROTATE
     );
     expect(resp).toMatchObject({ ok: false, error: "ROTATION_IN_PROGRESS" });
