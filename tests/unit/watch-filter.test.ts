@@ -139,28 +139,32 @@ describe("userFilter", () => {
 });
 
 describe("DECISION_ONLY_KINDS preset", () => {
-  it("includes the seven human-attention kinds", () => {
+  it("includes the ten human-attention kinds", () => {
     expect(DECISION_ONLY_KINDS.has("tool_decision_required")).toBe(true);
     expect(DECISION_ONLY_KINDS.has("tool_decision_resolved")).toBe(true);
     expect(DECISION_ONLY_KINDS.has("turn_failed")).toBe(true);
     expect(DECISION_ONLY_KINDS.has("error")).toBe(true);
     expect(DECISION_ONLY_KINDS.has("session_stopped")).toBe(true);
+    expect(DECISION_ONLY_KINDS.has("context_threshold_reached")).toBe(true);
+    expect(DECISION_ONLY_KINDS.has("rotation_failed")).toBe(true);
+    expect(DECISION_ONLY_KINDS.has("rotation_refused")).toBe(true);
     expect(DECISION_ONLY_KINDS.has("tool_call_result")).toBe(true);
     expect(DECISION_ONLY_KINDS.has("idle")).toBe(true);
   });
 
-  it("excludes the two info-only kinds", () => {
+  it("excludes the two info-only kinds and the informational session_rotated", () => {
     expect(DECISION_ONLY_KINDS.has("turn_completed")).toBe(false);
     expect(DECISION_ONLY_KINDS.has("tool_output_provided")).toBe(false);
+    expect(DECISION_ONLY_KINDS.has("session_rotated")).toBe(false);
   });
 
-  it("has exactly 7 entries", () => {
-    expect(DECISION_ONLY_KINDS.size).toBe(7);
+  it("has exactly 10 entries", () => {
+    expect(DECISION_ONLY_KINDS.size).toBe(10);
   });
 });
 
 describe("VALID_WATCH_KINDS", () => {
-  it("contains all 8 kinds shouldEmit can pass", () => {
+  it("contains all 12 kinds shouldEmit can pass", () => {
     expect(VALID_WATCH_KINDS.has("tool_decision_required")).toBe(true);
     expect(VALID_WATCH_KINDS.has("tool_decision_resolved")).toBe(true);
     expect(VALID_WATCH_KINDS.has("tool_output_provided")).toBe(true);
@@ -168,6 +172,10 @@ describe("VALID_WATCH_KINDS", () => {
     expect(VALID_WATCH_KINDS.has("turn_failed")).toBe(true);
     expect(VALID_WATCH_KINDS.has("error")).toBe(true);
     expect(VALID_WATCH_KINDS.has("session_stopped")).toBe(true);
+    expect(VALID_WATCH_KINDS.has("context_threshold_reached")).toBe(true);
+    expect(VALID_WATCH_KINDS.has("session_rotated")).toBe(true);
+    expect(VALID_WATCH_KINDS.has("rotation_failed")).toBe(true);
+    expect(VALID_WATCH_KINDS.has("rotation_refused")).toBe(true);
     expect(VALID_WATCH_KINDS.has("tool_call_result")).toBe(true);
   });
 
@@ -180,8 +188,8 @@ describe("VALID_WATCH_KINDS", () => {
     expect(VALID_WATCH_KINDS.has("tool_call_started")).toBe(false);
   });
 
-  it("has exactly 9 entries", () => {
-    expect(VALID_WATCH_KINDS.size).toBe(9);
+  it("has exactly 13 entries", () => {
+    expect(VALID_WATCH_KINDS.size).toBe(13);
   });
 
   it("DECISION_ONLY_KINDS is a subset of VALID_WATCH_KINDS", () => {

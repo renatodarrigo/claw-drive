@@ -86,7 +86,7 @@ describe("CD-13 contract guard — event kinds (src/lib/events.ts)", () => {
 });
 
 describe("CD-13 contract guard — watch-surfaced kinds (VALID_WATCH_KINDS)", () => {
-  // The 9 watch-surfaced kinds (COMPATIBILITY.md §3). Runtime-exported Set.
+  // The 13 watch-surfaced kinds (COMPATIBILITY.md §3). Runtime-exported Set.
   const EXPECTED_WATCH_KINDS = new Set([
     "tool_decision_required",
     "tool_decision_resolved",
@@ -95,6 +95,10 @@ describe("CD-13 contract guard — watch-surfaced kinds (VALID_WATCH_KINDS)", ()
     "turn_failed",
     "error",
     "session_stopped",
+    "context_threshold_reached",
+    "session_rotated",
+    "rotation_failed",
+    "rotation_refused",
     "tool_call_result",
     "idle",
   ]);

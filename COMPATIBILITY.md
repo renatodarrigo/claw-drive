@@ -316,7 +316,7 @@ rotation_refused
 #### `VALID_WATCH_KINDS` — watch-surfaced event kinds
 
 The `VALID_WATCH_KINDS` constant (exported from `src/cli/commands/watch.ts`)
-enumerates the 9 event kinds that `claw-drive watch` can surface to consumers.
+enumerates the 13 event kinds that `claw-drive watch` can surface to consumers.
 This set is part of the public contract:
 
 ```
@@ -327,6 +327,10 @@ turn_completed
 turn_failed
 error
 session_stopped
+context_threshold_reached
+session_rotated
+rotation_failed
+rotation_refused
 tool_call_result
 idle
 ```

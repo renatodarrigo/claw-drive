@@ -1,6 +1,6 @@
 import * as fs from "node:fs/promises";
 import { sessionsRoot, statePath, eventsPath, isValidSessionId } from "../../lib/paths.js";
-import { isValidAlias, resolveSessionRef } from "../../lib/alias.js";
+import { isValidAlias, resolveSessionRef, aliasWithGeneration } from "../../lib/alias.js";
 import {
   readState,
   isPidAlive,
@@ -55,6 +55,14 @@ export interface SessionSnapshot {
   created_at: string;
   last_activity_at: string | null;
   turns: number;
+  /** Context rotation: present only on rotation-lineage sessions. */
+  context_tokens?: number;
+  rotation_threshold?: number;
+  generation?: number;
+  root_session_id?: string;
+  rotated_from?: string;
+  rotated_to?: string;
+  compactions?: number;
   current_turn?: TurnSnapshot;
   last_completed_turn?: CompletedTurnSnapshot;
   pending_decisions: PendingDecisionSnapshot[];
@@ -287,6 +295,15 @@ export function buildSessionSnapshot(
     created_at: state.started_at,
     last_activity_at: state.last_event_at,
     turns: state.turns,
+    ...(state.context_tokens !== undefined ? { context_tokens: state.context_tokens } : {}),
+    ...(state.policy !== "bypass" && state.policy.rotation
+      ? { rotation_threshold: state.policy.rotation.threshold_tokens }
+      : {}),
+    ...(state.generation !== undefined ? { generation: state.generation } : {}),
+    ...(state.root_session_id ? { root_session_id: state.root_session_id } : {}),
+    ...(state.rotated_from ? { rotated_from: state.rotated_from } : {}),
+    ...(state.rotated_to ? { rotated_to: state.rotated_to } : {}),
+    ...(state.compactions !== undefined ? { compactions: state.compactions } : {}),
     current_turn,
     last_completed_turn,
     pending_decisions: pending,
@@ -317,19 +334,26 @@ function compactCwd(cwd: string, maxLen = 30): string {
   return `…/${basename}`;
 }
 
+function fmtContext(s: SessionSnapshot): string {
+  if (s.context_tokens === undefined) return "-";
+  const k = (n: number) => `${Math.round(n / 1000)}k`;
+  return s.rotation_threshold ? `${k(s.context_tokens)}/${k(s.rotation_threshold)}` : k(s.context_tokens);
+}
+
 export function renderSummaryTable(snaps: SessionSnapshot[], nowMs: number): string {
   if (snaps.length === 0) return NO_SESSIONS_MSG;
   const rows: string[][] = [];
-  rows.push(["SESSION_ID", "STATUS", "TURNS", "PENDING", "ERRORS", "LAST_ACTIVITY", "CWD"]);
+  rows.push(["SESSION_ID", "STATUS", "TURNS", "CONTEXT", "PENDING", "ERRORS", "LAST_ACTIVITY", "CWD"]);
   for (const s of snaps) {
     const idShort = s.session_id.length > 20 ? s.session_id.slice(0, 19) + "…" : s.session_id;
     // CD-10: append the alias to the id cell when present; un-aliased rows are
     // byte-identical to before.
-    const idCell = s.alias ? `${idShort} (${s.alias})` : idShort;
+    const idCell = s.alias ? `${idShort} (${aliasWithGeneration(s.alias, s.generation)})` : idShort;
     rows.push([
       idCell,
       s.status,
       String(s.turns),
+      fmtContext(s),
       String(s.pending_decisions.length),
       String(s.recent_errors.length),
       relativeTime(s.last_activity_at, nowMs),
@@ -352,7 +376,7 @@ function ageHumanReadable(seconds: number): string {
 export function renderDetailedBlock(s: SessionSnapshot): string {
   const lines: string[] = [];
   lines.push(`Session: ${s.session_id}`);
-  if (s.alias) lines.push(`Alias:         ${s.alias}`); // CD-10
+  if (s.alias) lines.push(`Alias:         ${aliasWithGeneration(s.alias, s.generation)}`); // CD-10
   const statusLine = s.runner_pid ? `${s.status} (pid ${s.runner_pid})` : s.status;
   lines.push(`Status:        ${statusLine}`);
   lines.push(`Cwd:           ${s.cwd}`);
@@ -361,6 +385,20 @@ export function renderDetailedBlock(s: SessionSnapshot): string {
     : s.policy_digest;
   lines.push(`Policy:        ${policyStr}`);
   lines.push(`Turns:         ${s.turns}`);
+  if (s.generation !== undefined) {
+    const lineage = [
+      s.rotated_from ? `rotated from ${s.rotated_from}` : null,
+      s.rotated_to ? `rotated to ${s.rotated_to}` : null,
+      s.root_session_id ? `root ${s.root_session_id}` : null,
+    ].filter(Boolean).join(", ");
+    lines.push(`Generation:    ${s.generation}${lineage ? ` (${lineage})` : ""}`);
+  }
+  if (s.context_tokens !== undefined) {
+    lines.push(`Context:       ${fmtContext(s)} tokens`);
+  }
+  if (s.compactions !== undefined && s.compactions > 0) {
+    lines.push(`Compactions:   ${s.compactions} (native auto-compact fired — rotation lost the race)`);
+  }
   lines.push(`Created:       ${s.created_at}`);
   if (s.last_activity_at) {
     const rel = relativeTime(s.last_activity_at, Date.now());

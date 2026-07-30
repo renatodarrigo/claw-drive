@@ -113,6 +113,14 @@ async function handleStartSession(args: Record<string, unknown>) {
     const notification_contract = buildNotificationContract({
       watchCommand: `${selfBinAbs} watch ${sessionId}`,
       wrapperEnabled: args.wrapper !== false,
+      ...(policy !== "bypass" && policy.rotation
+        ? {
+            rotation: {
+              threshold_tokens: policy.rotation.threshold_tokens,
+              max_generations: policy.rotation.max_generations ?? 10,
+            },
+          }
+        : {}),
     });
     return ok({ session_id: sessionId, watch_command, notification_contract });
   }

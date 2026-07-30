@@ -2,7 +2,7 @@ import * as fs from "node:fs/promises";
 import { sessionsRoot, statePath, eventsPath, isValidSessionId } from "../../lib/paths.js";
 import { readState, isPidAlive } from "../../lib/state.js";
 import { readEventsSince } from "../../lib/events.js";
-import { resolveSessionRef } from "../../lib/alias.js";
+import { resolveSessionRef, aliasWithGeneration } from "../../lib/alias.js";
 
 export async function cmdPending(argv: string[]): Promise<number> {
   const target = argv[0];
@@ -36,7 +36,7 @@ export async function cmdPending(argv: string[]): Promise<number> {
     for (const p of pending) {
       // CD-10: include the alias alongside session_id when the session has one;
       // un-aliased lines are byte-identical (no alias key).
-      const tag = s.alias ? { session_id: id, alias: s.alias } : { session_id: id };
+      const tag = s.alias ? { session_id: id, alias: aliasWithGeneration(s.alias, s.generation) } : { session_id: id };
       console.log(JSON.stringify({ ...tag, ...p }));
     }
   }

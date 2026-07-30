@@ -2,6 +2,7 @@ import * as fs from "node:fs/promises";
 import { sessionsRoot, statePath, eventsPath, isValidSessionId } from "../../lib/paths.js";
 import { readState, isPidAlive } from "../../lib/state.js";
 import { readEventsSince } from "../../lib/events.js";
+import { aliasWithGeneration } from "../../lib/alias.js";
 
 export async function cmdSessions(_argv: string[]): Promise<number> {
   let entries: string[];
@@ -33,7 +34,7 @@ export async function cmdSessions(_argv: string[]): Promise<number> {
     for (const c of requiredCalls) if (!resolvedCalls.has(c)) pending++;
     // CD-10: show the alias inline with the id when present; un-aliased rows
     // render byte-identically to before.
-    const idCell = s.alias ? `${id} (${s.alias})` : id;
+    const idCell = s.alias ? `${id} (${aliasWithGeneration(s.alias, s.generation)})` : id;
     rows.push([idCell, status, String(s.turns), String(pending), s.cwd].join("\t"));
   }
   console.log(rows.join("\n"));
