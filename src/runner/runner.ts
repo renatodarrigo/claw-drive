@@ -9,6 +9,7 @@ import {
   socketPath,
   statePath,
   handoverPath,
+  crashHandoverPath,
   sessionDir,
   clawDriveBinPath,
 } from "../lib/paths.js";
@@ -23,6 +24,7 @@ import { scheduleDecisionTimeout } from "./decision-timeout.js";
 import { createBudgetTracker, budgetExceededReason, type BudgetTracker } from "./budget.js";
 import { rotationConfigOf, isOverThreshold, checkRotateGate, effectiveMaxGenerations } from "./context-tracker.js";
 import { buildHandoverInstruction, extractHandover, composeSuccessorBrief } from "../lib/handover.js";
+import { buildCrashDigest, buildDistillerPrompt, runDistiller } from "../lib/distill.js";
 import { newSessionId, scaffoldSessionDir, spawnRunnerDetached, waitForReady } from "../lib/spawn-session.js";
 import type { ControlRequest, ControlResponse } from "../lib/socket-protocol.js";
 import { buildDecisionContext } from "../lib/decision-context.js";
@@ -1061,11 +1063,40 @@ export async function runRunner(sessionId: string): Promise<void> {
     process.on("SIGTERM", () => resolve());
     process.on("SIGINT", () => resolve());
     b.on("exit", (code) => {
-      // If stop_session is managing teardown, let it handle session_stopped + process.exit.
+      // stop_session and rotate own their teardown; this branch is the
+      // UNEXPECTED death path (Context rotation: crash → best-effort distillation).
       if (ctx.stopping) return;
-      sess.exit_code = code;
-      sess.status = "stopped";
-      writeState(statePath(sessionId), sess).finally(() => resolve());
+      void (async () => {
+        sess.exit_code = code;
+        sess.status = "stopped";
+        sess.exit_reason = `crashed:${code === null ? "signal" : code}`;
+        let handover_path: string | undefined;
+        if (rotationConfigOf(sess.policy)) {
+          try {
+            const { events } = await readEventsSince(eventsPath(sessionId), 0);
+            const brief = (sess as unknown as { scenario_brief?: string }).scenario_brief ?? "";
+            const text = await runDistiller({
+              model: sess.model,
+              prompt: buildDistillerPrompt({ digest: buildCrashDigest(events), originalBrief: brief }),
+            });
+            if (text) {
+              await fs.writeFile(crashHandoverPath(sessionId), text);
+              handover_path = crashHandoverPath(sessionId);
+            }
+          } catch { /* best-effort — never block teardown on distillation */ }
+        }
+        await writeState(statePath(sessionId), sess);
+        ctx.seq += 1;
+        await appendEvent(eventsPath(sessionId), {
+          seq: ctx.seq,
+          at: new Date().toISOString(),
+          kind: "session_stopped",
+          reason: sess.exit_reason,
+          exit_code: code,
+          ...(handover_path ? { handover_path } : {}),
+        } as Event);
+        resolve();
+      })();
     });
   });
 
