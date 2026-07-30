@@ -339,8 +339,16 @@ async function turnAssistantText(sessionId: string, turnId: string): Promise<str
  * the still-in-flight first one — returning null here, same as the
  * both-attempts-exhausted case, so the caller leaves B running (the guiding
  * invariant).
+ *
+ * `flags`, if given, is set to `{ wedged: true }` on the wedged-abort path
+ * specifically (distinct from the genuine both-attempts-no-markers failure)
+ * so the caller can report a truthful reason instead of a generic one that
+ * implies attempt 2 ran when it never did.
  */
-async function runHandoverTurn(ctx: RunnerContext): Promise<string | null> {
+async function runHandoverTurn(
+  ctx: RunnerContext,
+  flags?: { wedged?: boolean }
+): Promise<string | null> {
   for (const attempt of [1, 2] as const) {
     const turnId = `turn_${ctx.state.turns + 1}`;
     const done = new Promise<"completed" | "failed">((resolve) =>
@@ -364,6 +372,7 @@ async function runHandoverTurn(ctx: RunnerContext): Promise<string | null> {
       if (grace === "timeout") {
         // Wedged: B never acknowledged the interrupt. Abort rather than let a
         // second send_turn race the still-unterminated first one.
+        if (flags) flags.wedged = true;
         return null;
       }
       // Ignore the interrupted turn's actual outcome (completed or failed) —
@@ -682,17 +691,25 @@ export async function handleRequest(
         let freedAlias: string | undefined;
         let scaffoldedId: string | undefined;
         try {
-          const handover = await runHandoverTurn(ctx);
+          const handoverFlags: { wedged?: boolean } = {};
+          const handover = await runHandoverTurn(ctx, handoverFlags);
           if (!handover) {
+            // Truthful reason: the wedged-interrupt abort never ran attempt 2,
+            // so it must not be reported as the genuine both-attempts case.
+            const reason = handoverFlags.wedged
+              ? "handover_turn_wedged: interrupted turn never terminated within grace"
+              : "handover_generation_failed: no extractable <handover> block after 2 attempts";
             await emitEvent(ctx, {
               kind: "rotation_failed",
-              reason: "handover_generation_failed: no extractable <handover> block after 2 attempts",
+              reason,
             } as Omit<Event, "seq" | "at">);
             return {
               id: req.id,
               ok: false,
               error: "ROTATION_FAILED",
-              message: "handover generation failed after 2 attempts; session left running",
+              message: handoverFlags.wedged
+                ? "handover turn never terminated after interrupt; session left running"
+                : "handover generation failed after 2 attempts; session left running",
             };
           }
           await fs.writeFile(handoverPath(ctx.sessionId), handover);
@@ -763,6 +780,17 @@ export async function handleRequest(
               message: "successor runner did not become ready; predecessor left running",
             };
           }
+          // Past this point the successor is live and OWNS its session dir
+          // and the alias. Clear both compensation trackers so a throw from
+          // the remaining writeState/emitEvent below can never rm a running
+          // successor's state dir nor restore the alias into a two-live-
+          // holder conflict — the catch below would then just emit
+          // rotation_failed(internal_error:*) and return ROTATION_FAILED:
+          // loud, non-destructive, predecessor left alive and untorn (a
+          // dangling-but-recoverable lineage pointer on an extremely narrow
+          // path).
+          scaffoldedId = undefined;
+          freedAlias = undefined;
           ctx.state.rotated_to = newId;
           await writeState(statePath(ctx.sessionId), ctx.state);
           const watchCommand = `${clawDriveBinPath()} watch ${newId}`;
