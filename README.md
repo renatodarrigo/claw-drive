@@ -308,6 +308,8 @@ B's echo fires the hook → policy defers → monitor alerts A → human answers
 | `update_policy` | Replace a session's policy |
 | `interrupt_turn` | SIGINT B to cancel the current turn |
 | `provide_tool_output` | Inject human-run command output back into B's conversation; auto-resolves pending defer if needed |
+| `rotate_session` | Rotate a session at its context threshold: B writes a structured handover, a successor spawns in the same cwd/policy with the handover embedded in its first turn, the alias transfers, and the predecessor stops. LONG-RUNNING (up to ~20 min worst case). |
+| `recover_session` | Continue a DEAD session from its `crash-handover.md` (or a freshly distilled one) by spawning a successor with the lineage stamped and the alias re-claimed if free. |
 
 ## CLI
 
@@ -325,6 +327,8 @@ B's echo fires the hook → policy defers → monitor alerts A → human answers
 | `send <session> "<msg>"` | Send a user turn |
 | `start --cwd PATH [--policy FILE] [--brief FILE] [--name ALIAS]` | Start a session. `--name` gives it a reusable alias (see [Session aliases](#session-aliases-start---name)). |
 | `stop <session>` | Reap B |
+| `rotate <session>` | Rotate a session at its context threshold. See [Context rotation & crash recovery](#context-rotation--crash-recovery). |
+| `recover <session_id> [--no-start] [--model M]` | Continue a dead session from its crash-handover, distilling one from `events.jsonl` if needed. Canonical id only — aliases resolve among live sessions only. |
 | `interrupt <session> <turn>` | SIGINT B |
 | `policy <session> [--set FILE] [--show]` | View/replace a session's policy |
 | `policy-test '<command>' [flags]` | Diagnose a tool call against a policy. Three output formats (default human, `--explain`, `--json`); multi-tool via `--tool TOOL --arg KEY=VALUE`; `--policy starter\|permissive\|bypass\|<file>`; `--exit-on reject\|defer\|approve\|escalate` for CI gating. |
@@ -390,6 +394,47 @@ Two policy templates ship in `templates/`:
 
 - **`claw-drive-policy.json`** — conservative starter. Default for `install.sh` and when no `--policy` is passed to `start_session`. Safe for unknown projects. Auto-rejects `Edit`/`Write` and Bash write vectors against the policy file itself and `~/.claw-drive/` runtime state — see [docs/policies.html](https://renatodarrigo.github.io/claw-drive/policies.html#policy-file).
 - **`claw-drive-policy-permissive.json`** — starter plus common dev-CLI auto-approves (`rg`, `sed`, `awk`, `jq`, `diff`, `mkdir -p`, `touch`, `cp` (non-recursive), `mv`, non-recursive `chmod`/`chown`, safe `git` ops including `git -C <path>` prefix forms, `bash <script>` (rejects `-c` inline form), `rm -f /tmp/...`, comment-prefixed Bash lines (`# rationale`), path/env introspection). Reduces escalation volume in dev-heavy sessions. Destructive commands (`rm -rf`, `git push`, `git reset --hard`, recursive `chmod -R 777`, etc.) still auto-reject — and the comment-prefix rule never beats them since `auto_reject` is evaluated first. Opt in via `--policy templates/claw-drive-policy-permissive.json` at install or by passing the inline policy to `start_session`.
+
+## Context rotation & crash recovery
+
+Native context compaction is opaque — you don't choose when it fires or what survives it. Context rotation is an explicit, driver-triggered alternative: when a driven session's context is getting full, it hands off to a fresh successor carrying a structured, purpose-written summary instead of a compacted transcript.
+
+Turn it on with a `rotation` block in the policy (rename the `_rotation_example` key shipped in `templates/claw-drive-policy.json`):
+
+```json
+{
+  "escalate_default": true,
+  "rotation": {
+    "threshold_tokens": 120000,
+    "max_generations": 10,
+    "mode": "manual"
+  }
+}
+```
+
+- **`threshold_tokens`** (required) — once B's tracked context reaches this many tokens, the runner emits a `context_threshold_reached` event on every completed turn while above it, and `claw-drive rotate` becomes available.
+- **`max_generations`** (optional; default `10`, `0` = unlimited) — a lineage cap. At the cap, rotation is refused (`MAX_GENERATIONS`) instead of continuing indefinitely — B still gets a best-effort terminal handover, and the session lives on toward native auto-compact.
+- **`mode`** — only `"manual"` is accepted in this release: rotation happens when the driver calls it, never on its own.
+
+Absent `rotation`, nothing changes — no tracking, no events, no behavior difference from a session without the block.
+
+### The driving flow
+
+1. B's tracked context crosses `threshold_tokens` → the runner emits `context_threshold_reached` (surfaced by `watch` like any other decision-relevant event).
+2. The driver calls `claw-drive rotate <session>` (or the `rotate_session` MCP tool).
+3. B writes a structured handover as a plain assistant-text turn — no tool call, so it can't stall on a policy escalation. A successor session spawns in the same cwd, under the same policy, with the handover **and** the lineage's verbatim original mission embedded in its first turn.
+4. The predecessor emits `session_rotated` — carrying the successor's `new_session_id` and a ready-made `watch_command` so the driver's Monitor flow can retarget without manual bookkeeping — then stops.
+5. Any alias the predecessor held transfers to the successor. `status`, `sessions`, and `watch --all` display `name (N)` for a session in a lineage, where `N` is its generation (the lineage root is generation 1).
+
+**Guiding invariant: a failed rotation never leaves the still-running predecessor worse off than before the attempt.** Every step of the handoff — handover, successor spawn, lineage stamp, alias transfer — has to actually succeed before the predecessor stops; anything short of that leaves B running and addressable, with the failure reported (`rotation_failed` / `rotation_refused`) rather than silently swallowed.
+
+### Recovering from a hard death
+
+Rotation needs a live, responsive B. `claw-drive recover <dead-session>` (or `recover_session` over MCP) covers the other case: a session that crashed, was killed, or died with the host. It reuses the runner's own best-effort `crash-handover.md` if one was written on the way down, or, failing that, distills one from the dead session's `events.jsonl` via a one-shot, minimal-mode `claude -p` call (no settings sources loaded, run from a neutral cwd — no hooks, no project memory) — then spawns a successor exactly as rotation does: same cwd and policy, lineage stamped, alias re-claimed if it's free. Pass `--no-start` to produce just the handover without spawning a successor, or `--model` to override the distiller's model.
+
+`recover` takes the canonical `sess_…` id, not an alias — aliases only resolve among *live* sessions, and `recover` targets dead ones by definition.
+
+Because a crash-handover may be the only distilled record of a session's final state, `claw-drive prune` skips a dead session that still has an unconsumed one — pass `--force` to prune it anyway. A `recover` call that sets `rotated_to` marks the handover consumed, and prune removes the session normally from then on.
 
 ## Testing
 

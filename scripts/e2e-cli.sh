@@ -45,11 +45,15 @@ expect_stdout_contains "--help mentions policy"   "policy"    "$BIN" --help
 expect_stdout_contains "--help mentions prune"    "prune"     "$BIN" --help
 expect_stdout_contains "--help mentions watch"    "watch"     "$BIN" --help
 expect_stdout_contains "--help mentions provide-output" "provide-output" "$BIN" --help
+expect_stdout_contains "--help mentions rotate"   "rotate"    "$BIN" --help
+expect_stdout_contains "--help mentions recover"  "recover"   "$BIN" --help
 
 section "help (capability map)"
 expect_exit            "help verb exits 0"                  0 "$BIN" help
 expect_exit            "no-arg exits 0"                     0 "$BIN"
 expect_stdout_contains "help lists MCP tool start_session"  "start_session" "$BIN" help
+expect_stdout_contains "help lists MCP tool rotate_session"   "rotate_session"   "$BIN" help
+expect_stdout_contains "help lists MCP tool recover_session"  "recover_session"  "$BIN" help
 expect_stdout_contains "help has MCP TOOLS section"         "MCP TOOLS"     "$BIN" help
 expect_stdout_contains "help has MENTAL MODEL section"      "MENTAL MODEL"  "$BIN" help
 expect_exit            "unknown command exits 2"            2 "$BIN" not-a-real-command
@@ -70,5 +74,7 @@ expect_exit "stop <bogus> fails (exit 2)"      2 "$BIN" stop nonexistent-session
 expect_exit "policy <bogus> fails (exit 2)"    2 "$BIN" policy nonexistent-session-id
 expect_exit "approve <bogus> fails (exit 1)"   1 "$BIN" approve nonexistent-call-id
 expect_exit "reject <bogus> fails (exit 1)"    1 "$BIN" reject nonexistent-call-id
+expect_exit "rotate <bogus> fails (exit 2)"    2 "$BIN" rotate nonexistent-session-id
+expect_exit "recover <bogus> fails (exit 2)"   2 "$BIN" recover nonexistent-session-id
 
 summary

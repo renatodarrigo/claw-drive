@@ -20,6 +20,14 @@ The policy matches the **command string**. It does not execute the command, pars
 
 These are not bugs to be patched one regex at a time. They are a property of gating at the command-string layer.
 
+## Context rotation and the handover trust boundary
+
+Rotation hands a session off to a fresh successor via a handover document that Session B writes itself. That handover is **B-authored content** — the same trust class as any other B output (assistant text, tool arguments, file edits). It is injected verbatim into the successor's first turn; rotation introduces no new privilege boundary and no new class of trusted input. A cooperative B produces a faithful progress report, and the successor treats it the way it would treat a plan carried over from an earlier turn of the same conversation.
+
+The one piece of rotation machinery that isn't B-authored — the runner-prepended, verbatim ORIGINAL MISSION section stitched onto every successor's brief — exists to bound **drift**, not to defend against **injection**. Its job is keeping a multi-generation lineage anchored to the task you actually gave it, instead of telescoping through each generation's paraphrase of the one before. It is not a security control: under this threat model B is cooperative, so there is no adversary for it to repel.
+
+Crash recovery's distiller runs a one-shot, minimal-mode `claude -p` call that loads no settings sources and runs from a neutral cwd, so it has neither hooks nor project memory (`CLAUDE.md`). It cannot re-enter claw-drive's own approver hook or otherwise recurse into the gated tool surface — structurally, not just by policy — so reconstructing a handover from a dead session's event log cannot become a path back into tool execution.
+
 ## If you need to contain an adversarial agent
 
 Run the driven session inside an **OS-level sandbox** — a container, or a namespace/seccomp jail — that bounds what the process can touch regardless of what command it runs. claw-drive does not provide its own sandbox; it gates tool calls inside whatever boundary you put around it. Use both together: the sandbox is the wall, claw-drive is the reviewer at the desk inside it.
