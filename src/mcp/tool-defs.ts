@@ -173,7 +173,8 @@ export const MCP_TOOL_DEFS: McpToolDef[] = [
       "after emitting session_rotated (carrying new_session_id + a successor watch_command). LONG-RUNNING: the handover is " +
       "a real model turn (up to ~20 min worst case). Structured refusals leave the session running: NO_ROTATION_CONFIG " +
       "(policy has no rotation block), TURN_IN_FLIGHT (retry at the turn boundary), DECISIONS_PENDING (resolve the listed " +
-      "call_ids first), MAX_GENERATIONS (cap reached — a terminal handover is still written; raise the cap via update_policy " +
+      "call_ids first), ROTATION_IN_PROGRESS (a rotation is already running for this session — wait for its outcome), " +
+      "MAX_GENERATIONS (cap reached — a terminal handover is still written; raise the cap via update_policy " +
       "or re-brief a fresh lineage), BOOTSTRAP_EXCEEDS_THRESHOLD (first turn already over threshold — raise it), " +
       "ROTATION_FAILED (handover generation failed; B continues toward native auto-compact).",
     inputSchema: {

@@ -249,6 +249,7 @@ Structured refusals leave the session running:
 - `NO_ROTATION_CONFIG` — policy has no rotation block.
 - `TURN_IN_FLIGHT` — retry at the turn boundary.
 - `DECISIONS_PENDING` — resolve the listed call_ids first.
+- `ROTATION_IN_PROGRESS` — a rotation is already running for this session; wait for its outcome.
 - `MAX_GENERATIONS` — cap reached; a terminal handover is still written; raise the cap via `update_policy` or re-brief a fresh lineage.
 - `BOOTSTRAP_EXCEEDS_THRESHOLD` — first turn already over threshold; raise it.
 - `ROTATION_FAILED` — handover generation failed; B continues toward native auto-compact.
@@ -274,6 +275,10 @@ tool_call_started
 tool_call_result
 tool_output_provided
 error
+context_threshold_reached
+session_rotated
+rotation_failed
+rotation_refused
 ```
 
 #### `VALID_WATCH_KINDS` — watch-surfaced event kinds
