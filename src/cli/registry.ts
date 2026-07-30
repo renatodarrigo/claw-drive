@@ -9,6 +9,7 @@ import { cmdSend } from "./commands/send.js";
 import { cmdStart } from "./commands/start.js";
 import { cmdStop } from "./commands/stop.js";
 import { cmdRotate } from "./commands/rotate.js";
+import { cmdRecover } from "./commands/recover.js";
 import { cmdInterrupt } from "./commands/interrupt.js";
 import { cmdPolicy } from "./commands/policy.js";
 import { cmdPrune } from "./commands/prune.js";
@@ -49,6 +50,10 @@ export const COMMANDS: readonly CommandEntry[] = [
     summary: "Rotate B at its context threshold: handover → fresh successor session → predecessor stops.",
     usage: "rotate <session>",
     handler: cmdRotate },
+  { name: "recover", group: "lifecycle",
+    summary: "Continue a DEAD session: distill a handover from its record and spawn a successor.",
+    usage: "recover <session_id> [--no-start] [--model M]",
+    handler: cmdRecover },
   // Observe
   { name: "sessions", group: "observe",
     summary: "List all sessions, including orphaned ones.",

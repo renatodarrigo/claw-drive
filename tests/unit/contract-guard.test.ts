@@ -27,7 +27,7 @@ const repoRoot = join(here, "..", "..");
 const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf-8");
 
 describe("CD-13 contract guard — MCP tools (src/mcp/tool-defs.ts)", () => {
-  // The 11 frozen MCP tools (COMPATIBILITY.md §2).
+  // The 12 frozen MCP tools (COMPATIBILITY.md §2).
   const EXPECTED_MCP_TOOLS = new Set([
     "start_session",
     "stop_session",
@@ -40,6 +40,7 @@ describe("CD-13 contract guard — MCP tools (src/mcp/tool-defs.ts)", () => {
     "update_policy",
     "interrupt_turn",
     "rotate_session",
+    "recover_session",
   ]);
 
   it("the server registers exactly the frozen tool set", () => {
@@ -104,7 +105,7 @@ describe("CD-13 contract guard — watch-surfaced kinds (VALID_WATCH_KINDS)", ()
 });
 
 describe("CD-13 contract guard — CLI subcommands (src/cli/registry.ts)", () => {
-  // The 18 frozen CLI subcommands (COMPATIBILITY.md §4).
+  // The 19 frozen CLI subcommands (COMPATIBILITY.md §4).
   const EXPECTED_CLI_SUBCOMMANDS = new Set([
     "sessions",
     "show",
@@ -124,6 +125,7 @@ describe("CD-13 contract guard — CLI subcommands (src/cli/registry.ts)", () =>
     "prune",
     "provide-output",
     "rotate",
+    "recover",
   ]);
 
   it("the commands registry holds exactly the frozen subcommands", () => {

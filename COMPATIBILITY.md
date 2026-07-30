@@ -107,7 +107,7 @@ impossible-today values. No existing valid policy becomes invalid.
 
 ### 2. MCP tools (`src/mcp/tool-defs.ts`, served by `src/mcp/server.ts`)
 
-The server exposes exactly **11 tools**. The tool names, required inputs, and
+The server exposes exactly **12 tools**. The tool names, required inputs, and
 response shapes listed here are frozen.
 
 #### `start_session`
@@ -254,6 +254,38 @@ Structured refusals leave the session running:
 - `BOOTSTRAP_EXCEEDS_THRESHOLD` — first turn already over threshold; raise it.
 - `ROTATION_FAILED` — handover generation failed; B continues toward native auto-compact.
 
+#### `recover_session`
+
+Continue a DEAD session (crashed, killed, rebooted) from the freshest
+handover: uses the runner's `crash-handover.md` if it exists, else distills
+one now from the session's `events.jsonl` via a one-shot `claude -p --bare`
+call, then spawns a successor session (same cwd/policy, lineage stamped, alias
+re-claimed if free).
+
+**Inputs:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `session_id` | `string` | yes | The canonical `sess_…` id of the dead session to recover. Aliases are not accepted (aliases only resolve among live sessions). |
+| `model` | `string` | no | Model override for the one-shot distiller call, when distillation is needed. Defaults to the dead session's own `model`. |
+| `no_start` | `boolean` | no | When `true`, only produce/return the handover file — no successor session is spawned. |
+
+**Response:** `{ "handover_path": "<string>", "distilled": <boolean>, "new_session_id"?: "<string>", "alias"?: "<string>", "generation"?: <number>, "watch_command"?: "<string>" }`
+
+`distilled` is `true` when the handover was freshly distilled from
+`events.jsonl` (vs. an existing `crash-handover.md`). `new_session_id`,
+`alias`, `generation`, and `watch_command` are present only when a successor
+was spawned (i.e. `no_start` was not set).
+
+Errors:
+
+- `SESSION_NOT_FOUND` — no state for the given session_id.
+- `SESSION_LIVE` — the session is still live; use `rotate_session` instead (or stop it first).
+- `ALREADY_RECOVERED` — the session already has a successor (`rotated_to` is set).
+- `NO_RECORD` — no crash-handover and no events.jsonl to distill from.
+- `DISTILL_FAILED` — the distiller produced no extractable `<handover>` block.
+- `RECOVER_FAILED` — the successor runner did not become ready within 5s.
+
 ---
 
 ### 3. Event `kind` set (`src/lib/events.ts`)
@@ -307,7 +339,7 @@ surfaced activity has occurred for the configured threshold
 
 ### 4. CLI subcommands (`src/cli/registry.ts`, dispatched by `src/cli/cli.ts`)
 
-**18 subcommands** are frozen.
+**19 subcommands** are frozen.
 
 | Subcommand | Flags |
 |------------|-------|
@@ -323,6 +355,7 @@ surfaced activity has occurred for the configured threshold
 | `start` | `--cwd PATH` (required), `--policy FILE`, `--brief FILE`, `--no-wrapper` |
 | `stop <session>` | _(none)_ |
 | `rotate <session>` | _(none)_ |
+| `recover <session_id>` | `--no-start`, `--model M` |
 | `interrupt <session> <turn>` | _(none)_ |
 | `policy <session>` | `--set FILE`, `--show` |
 | `policy-test '<command>'` | `--tool TOOL`, `--arg KEY=VALUE`, `--policy SPEC`, `--explain`, `--json`, `--exit-on DECISION`, `--no-color`, `--help` / `-h` |

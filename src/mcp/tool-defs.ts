@@ -183,4 +183,23 @@ export const MCP_TOOL_DEFS: McpToolDef[] = [
       required: ["session_id"],
     },
   },
+  {
+    name: "recover_session",
+    description:
+      "Continue a DEAD session (crashed, killed, rebooted) from the freshest handover: uses the runner's " +
+      "crash-handover.md if it exists, else distills one now from the session's events.jsonl via a one-shot " +
+      "claude -p --bare call, then spawns a successor session (same cwd/policy, lineage stamped, alias re-claimed " +
+      "if free). Pass no_start: true to only produce the handover file. Errors: SESSION_NOT_FOUND, SESSION_LIVE " +
+      "(use rotate_session instead), ALREADY_RECOVERED (successor exists), NO_RECORD, DISTILL_FAILED, RECOVER_FAILED. " +
+      "session_id must be the canonical sess_… id (aliases only resolve among live sessions).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        session_id: { type: "string" },
+        model: { type: "string" },
+        no_start: { type: "boolean" },
+      },
+      required: ["session_id"],
+    },
+  },
 ];

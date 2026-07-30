@@ -28,6 +28,7 @@ import {
   spawnRunnerDetached,
   waitForReady,
 } from "../lib/spawn-session.js";
+import { recoverSession } from "../lib/recover.js";
 
 function err(code: string, message: string) {
   return {
@@ -423,6 +424,20 @@ async function handleRotateSession(args: Record<string, unknown>) {
   }
 }
 
+async function handleRecoverSession(args: Record<string, unknown>) {
+  const sessionId = args.session_id;
+  if (typeof sessionId !== "string" || !isValidSessionId(sessionId)) {
+    return err("SESSION_NOT_FOUND", "session_id must be a canonical sess_… id (recover targets dead sessions)");
+  }
+  const out = await recoverSession({
+    sessionId,
+    model: typeof args.model === "string" ? args.model : null,
+    noStart: args.no_start === true,
+  });
+  if (!out.ok) return err(out.error, out.message);
+  return ok(out.result);
+}
+
 export async function runMcpServer(): Promise<void> {
   const server = new Server(
     { name: "claw-drive", version: "0.3.0" },
@@ -442,6 +457,7 @@ export async function runMcpServer(): Promise<void> {
     update_policy: handleUpdatePolicy,
     interrupt_turn: handleInterruptTurn,
     rotate_session: handleRotateSession,
+    recover_session: handleRecoverSession,
   };
   const tools = MCP_TOOL_DEFS.map((d) => {
     const handler = handlers[d.name];
