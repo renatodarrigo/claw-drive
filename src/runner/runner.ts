@@ -18,6 +18,7 @@ import { startSocketServer } from "./socket-server.js";
 import { buildClaudeArgs } from "./runner-args.js";
 import { scheduleDecisionTimeout } from "./decision-timeout.js";
 import { createBudgetTracker, budgetExceededReason, type BudgetTracker } from "./budget.js";
+import { rotationConfigOf, isOverThreshold } from "./context-tracker.js";
 import type { ControlRequest, ControlResponse } from "../lib/socket-protocol.js";
 import { buildDecisionContext } from "../lib/decision-context.js";
 import { installRunnerLogCapture } from "../lib/runner-log.js";
@@ -84,6 +85,19 @@ interface RunnerContext {
   budget: BudgetTracker | null;
   /** Set once a budget cap is breached so the breaker fires exactly once. */
   budgetBreached: boolean;
+  /** context-rotation rotation tracking. lastContextTokens: latest main-loop usage reading
+   * (null until the first assistant line with usage). completedTurns counts
+   * turn_completed events. turnInFlight flips on send/provide and off on
+   * turn_completed/turn_failed. bootstrapExceeded latches when the FIRST
+   * completed turn is already over threshold. rotating guards re-entry and
+   * suppresses threshold re-fires during the handover turn. turnWaiters lets
+   * the rotate choreography await a specific turn's completion. */
+  lastContextTokens: number | null;
+  completedTurns: number;
+  turnInFlight: boolean;
+  bootstrapExceeded: boolean;
+  rotating: boolean;
+  turnWaiters: Map<string, (outcome: "completed" | "failed") => void>;
 }
 
 // Placeholder type; populated in Task 13 when the approval flow lands.
@@ -219,11 +233,61 @@ async function runStdoutLoop(ctx: RunnerContext): Promise<void> {
         } as Omit<Event, "seq" | "at">);
         continue;
       }
-      const { events } = parseClaudeLine(parsed, ctx.currentTurnId ?? "turn_unknown");
-      for (const partial of events) {
+      const out = parseClaudeLine(parsed, ctx.currentTurnId ?? "turn_unknown");
+      if (out.main_context_tokens !== undefined) {
+        ctx.lastContextTokens = out.main_context_tokens;
+      }
+      if (out.compact_boundary) {
+        // Native auto-compact won the race (or rotation isn't configured).
+        ctx.state.compactions = (ctx.state.compactions ?? 0) + 1;
+        await writeState(statePath(ctx.sessionId), ctx.state);
+      }
+      for (const partial of out.events) {
         await emitEvent(ctx, partial as Omit<Event, "seq" | "at">);
+        await afterEventBookkeeping(ctx, partial as Event);
       }
     }
+  }
+}
+
+/**
+ * context-rotation turn-boundary bookkeeping, run after each parsed event is emitted:
+ * maintains turnInFlight / completedTurns / turnWaiters, persists
+ * context_tokens, latches the bootstrap guard, and re-fires
+ * context_threshold_reached on every completed turn while above threshold
+ * (suppressed during the rotate choreography's own handover turn).
+ */
+async function afterEventBookkeeping(ctx: RunnerContext, ev: Event): Promise<void> {
+  if (ev.kind !== "turn_completed" && ev.kind !== "turn_failed") return;
+  ctx.turnInFlight = false;
+  const turnId = (ev as { turn_id?: string }).turn_id;
+  if (turnId) {
+    const waiter = ctx.turnWaiters.get(turnId);
+    if (waiter) {
+      ctx.turnWaiters.delete(turnId);
+      waiter(ev.kind === "turn_completed" ? "completed" : "failed");
+    }
+  }
+  if (ev.kind !== "turn_completed") return;
+  ctx.completedTurns += 1;
+  if (ctx.lastContextTokens !== null) {
+    ctx.state.context_tokens = ctx.lastContextTokens;
+    await writeState(statePath(ctx.sessionId), ctx.state);
+  }
+  const cfg = rotationConfigOf(ctx.state.policy);
+  if (!cfg) return;
+  const over = isOverThreshold(cfg, ctx.lastContextTokens);
+  if (over && ctx.completedTurns === 1) {
+    ctx.bootstrapExceeded = true;
+  }
+  if (over && !ctx.rotating) {
+    await emitEvent(ctx, {
+      kind: "context_threshold_reached",
+      turn_id: turnId,
+      context_tokens: ctx.lastContextTokens as number,
+      threshold_tokens: cfg.threshold_tokens,
+      generation: ctx.state.generation ?? 1,
+    } as Omit<Event, "seq" | "at">);
   }
 }
 
@@ -239,6 +303,7 @@ async function handleRequest(
       const turnId = `turn_${ctx.state.turns + 1}`;
       ctx.state.turns += 1;
       ctx.currentTurnId = turnId;
+      ctx.turnInFlight = true;
       await emitEvent(ctx, {
         kind: "turn_started",
         turn_id: turnId,
@@ -525,6 +590,7 @@ async function handleRequest(
       const turnId = `turn_${ctx.state.turns + 1}`;
       ctx.state.turns += 1;
       ctx.currentTurnId = turnId;
+      ctx.turnInFlight = true;
       await emitEvent(ctx, {
         kind: "turn_started",
         turn_id: turnId,
@@ -637,6 +703,12 @@ export async function runRunner(sessionId: string): Promise<void> {
     stopping: false,
     budget: budgetCfg ? createBudgetTracker(budgetCfg) : null,
     budgetBreached: false,
+    lastContextTokens: null,
+    completedTurns: 0,
+    turnInFlight: false,
+    bootstrapExceeded: false,
+    rotating: false,
+    turnWaiters: new Map(),
   };
 
   // Start the stdout loop; run it in the background. If it fails, emit an
