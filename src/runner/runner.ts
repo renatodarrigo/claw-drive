@@ -1074,7 +1074,10 @@ export async function runRunner(sessionId: string): Promise<void> {
         if (rotationConfigOf(sess.policy)) {
           try {
             const { events } = await readEventsSince(eventsPath(sessionId), 0);
-            const brief = (sess as unknown as { scenario_brief?: string }).scenario_brief ?? "";
+            const brief =
+              sess.original_brief ??
+              (sess as unknown as { scenario_brief?: string }).scenario_brief ??
+              "";
             const text = await runDistiller({
               model: sess.model,
               prompt: buildDistillerPrompt({ digest: buildCrashDigest(events), originalBrief: brief }),
