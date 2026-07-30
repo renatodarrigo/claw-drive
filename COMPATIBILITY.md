@@ -258,9 +258,9 @@ Structured refusals leave the session running:
 
 Continue a DEAD session (crashed, killed, rebooted) from the freshest
 handover: uses the runner's `crash-handover.md` if it exists, else distills
-one now from the session's `events.jsonl` via a one-shot `claude -p --bare`
-call, then spawns a successor session (same cwd/policy, lineage stamped, alias
-re-claimed if free).
+one now from the session's `events.jsonl` via a one-shot minimal-mode
+`claude -p` call, then spawns a successor session (same cwd/policy, lineage
+stamped, alias re-claimed if free).
 
 **Inputs:**
 
