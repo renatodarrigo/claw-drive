@@ -32,6 +32,7 @@ export type ControlRequest =
   | { id: string; op: "update_policy"; policy: Policy }
   | { id: string; op: "interrupt_turn"; turn_id: string }
   | { id: string; op: "stop_session" }
+  | { id: string; op: "rotate" }
   | {
       id: string;
       op: "provide_tool_output";

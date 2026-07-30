@@ -8,6 +8,9 @@ import {
   settingsPath,
   socketPath,
   statePath,
+  handoverPath,
+  sessionDir,
+  clawDriveBinPath,
 } from "../lib/paths.js";
 import { readState, writeState, type SessionState } from "../lib/state.js";
 import * as path from "node:path";
@@ -18,7 +21,9 @@ import { startSocketServer } from "./socket-server.js";
 import { buildClaudeArgs } from "./runner-args.js";
 import { scheduleDecisionTimeout } from "./decision-timeout.js";
 import { createBudgetTracker, budgetExceededReason, type BudgetTracker } from "./budget.js";
-import { rotationConfigOf, isOverThreshold } from "./context-tracker.js";
+import { rotationConfigOf, isOverThreshold, checkRotateGate, effectiveMaxGenerations } from "./context-tracker.js";
+import { buildHandoverInstruction, extractHandover, composeSuccessorBrief } from "../lib/handover.js";
+import { newSessionId, scaffoldSessionDir, spawnRunnerDetached, waitForReady } from "../lib/spawn-session.js";
 import type { ControlRequest, ControlResponse } from "../lib/socket-protocol.js";
 import { buildDecisionContext } from "../lib/decision-context.js";
 import { installRunnerLogCapture } from "../lib/runner-log.js";
@@ -71,7 +76,7 @@ interface DeferredCall {
   reason: string;
 }
 
-interface RunnerContext {
+export interface RunnerContext {
   sessionId: string;
   state: SessionState;
   b: ChildProcess;
@@ -291,7 +296,58 @@ async function afterEventBookkeeping(ctx: RunnerContext, ev: Event): Promise<voi
   }
 }
 
-async function handleRequest(
+const HANDOVER_TURN_TIMEOUT_MS = 600_000;
+
+function sleepTimeout(ms: number): Promise<"timeout"> {
+  return new Promise((resolve) => {
+    const t = setTimeout(() => resolve("timeout"), ms);
+    t.unref();
+  });
+}
+
+/** Concatenated assistant_text of one turn, read back from events.jsonl (CD-8 pattern). */
+async function turnAssistantText(sessionId: string, turnId: string): Promise<string> {
+  const { events } = await readEventsSince(eventsPath(sessionId), 0);
+  return events
+    .filter((e) => e.kind === "assistant_text" && (e as { turn_id?: string }).turn_id === turnId)
+    .map((e) => (e as { text: string }).text)
+    .join("\n");
+}
+
+/**
+ * Context rotation: inject the handover instruction as a normal user turn, await its
+ * completion (via turnWaiters), and extract the <handover> body. Two attempts,
+ * 600s each; a timed-out attempt SIGINTs B (interrupt_turn semantics) before
+ * the retry. Returns null when both attempts fail — the caller aborts the
+ * rotation and leaves B running (the guiding invariant).
+ */
+async function runHandoverTurn(ctx: RunnerContext): Promise<string | null> {
+  for (const attempt of [1, 2] as const) {
+    const turnId = `turn_${ctx.state.turns + 1}`;
+    const done = new Promise<"completed" | "failed">((resolve) =>
+      ctx.turnWaiters.set(turnId, resolve)
+    );
+    await handleRequest(ctx, {
+      id: `handover_${attempt}`,
+      op: "send_turn",
+      message: buildHandoverInstruction({ attempt }),
+    });
+    const outcome = await Promise.race([done, sleepTimeout(HANDOVER_TURN_TIMEOUT_MS)]);
+    ctx.turnWaiters.delete(turnId);
+    if (outcome === "timeout") {
+      if (ctx.b.pid) {
+        try { process.kill(ctx.b.pid, "SIGINT"); } catch { /* already dead */ }
+      }
+      continue;
+    }
+    if (outcome === "failed") continue;
+    const handover = extractHandover(await turnAssistantText(ctx.sessionId, turnId));
+    if (handover) return handover;
+  }
+  return null;
+}
+
+export async function handleRequest(
   ctx: RunnerContext,
   req: ControlRequest
 ): Promise<ControlResponse> {
@@ -529,6 +585,152 @@ async function handleRequest(
       // Return first (so the caller sees ok:true promptly), then tear down.
       setImmediate(() => teardownSession(ctx, "stop_session"));
       return { id: req.id, ok: true };
+    }
+
+    case "rotate": {
+      const cfg = rotationConfigOf(ctx.state.policy);
+      const blocker = checkRotateGate({
+        cfg,
+        turnInFlight: ctx.turnInFlight,
+        pendingCallIds: [...ctx.pendingApprovals.keys()],
+        generation: ctx.state.generation ?? 1,
+        bootstrapExceeded: ctx.bootstrapExceeded,
+      });
+      if (
+        blocker &&
+        (blocker.code === "NO_ROTATION_CONFIG" ||
+          blocker.code === "TURN_IN_FLIGHT" ||
+          blocker.code === "DECISIONS_PENDING")
+      ) {
+        // Transient / config blockers: plain error, no event.
+        return { id: req.id, ok: false, error: blocker.code, message: blocker.message };
+      }
+      if (ctx.rotating) {
+        return {
+          id: req.id,
+          ok: false,
+          error: "ROTATION_IN_PROGRESS",
+          message: "a rotation is already running for this session",
+        };
+      }
+      ctx.rotating = true;
+      try {
+        if (blocker) {
+          // MAX_GENERATIONS or BOOTSTRAP_EXCEEDS_THRESHOLD — policy-level
+          // refusals: emit rotation_refused; at the cap, checkpoint a terminal
+          // handover FIRST (best-effort) so the human's re-brief starts from
+          // B's own report, not a post-hoc distillation.
+          let detail = blocker.message;
+          if (blocker.code === "MAX_GENERATIONS") {
+            const terminal = await runHandoverTurn(ctx);
+            if (terminal) {
+              await fs.writeFile(handoverPath(ctx.sessionId), terminal);
+              detail += ` Terminal handover written to ${handoverPath(ctx.sessionId)}.`;
+            }
+          }
+          await emitEvent(ctx, {
+            kind: "rotation_refused",
+            reason:
+              blocker.code === "MAX_GENERATIONS" ? "max_generations" : "bootstrap_exceeds_threshold",
+            detail,
+          } as Omit<Event, "seq" | "at">);
+          return { id: req.id, ok: false, error: blocker.code, message: detail };
+        }
+
+        // Happy path: handover → persist → successor → lineage → self-stop.
+        const handover = await runHandoverTurn(ctx);
+        if (!handover) {
+          await emitEvent(ctx, {
+            kind: "rotation_failed",
+            reason: "handover_generation_failed: no extractable <handover> block after 2 attempts",
+          } as Omit<Event, "seq" | "at">);
+          return {
+            id: req.id,
+            ok: false,
+            error: "ROTATION_FAILED",
+            message: "handover generation failed after 2 attempts; session left running",
+          };
+        }
+        await fs.writeFile(handoverPath(ctx.sessionId), handover);
+
+        const generation = ctx.state.generation ?? 1;
+        const maxG = effectiveMaxGenerations(cfg!);
+        const newId = newSessionId();
+        const alias = ctx.state.alias;
+        if (alias !== undefined) {
+          // Free the alias BEFORE scaffolding the successor: alias uniqueness
+          // is among live sessions, and we are still live at this moment.
+          delete ctx.state.alias;
+          await writeState(statePath(ctx.sessionId), ctx.state);
+        }
+        await scaffoldSessionDir({
+          sessionId: newId,
+          cwd: ctx.state.cwd,
+          policy: ctx.state.policy,
+          decisionTimeoutSeconds: ctx.state.decision_timeout_seconds,
+          model: ctx.state.model,
+          scenarioBrief: composeSuccessorBrief({
+            originalBrief:
+              (ctx.state as unknown as { scenario_brief?: string }).scenario_brief ??
+              "(no original brief was recorded at session start)",
+            handover,
+            generation: generation + 1,
+            maxGenerations: maxG,
+            predecessorId: ctx.sessionId,
+            predecessorEventsPath: eventsPath(ctx.sessionId),
+          }),
+          wrapper: ctx.state.wrapper,
+          alias,
+          lineage: {
+            generation: generation + 1,
+            root_session_id: ctx.state.root_session_id ?? ctx.sessionId,
+            rotated_from: ctx.sessionId,
+          },
+        });
+        spawnRunnerDetached(newId);
+        if (!(await waitForReady(newId, 5000))) {
+          await fs.rm(sessionDir(newId), { recursive: true, force: true });
+          if (alias !== undefined) {
+            ctx.state.alias = alias;
+            await writeState(statePath(ctx.sessionId), ctx.state);
+          }
+          await emitEvent(ctx, {
+            kind: "rotation_failed",
+            reason: "successor_not_ready: runner did not become ready within 5s",
+          } as Omit<Event, "seq" | "at">);
+          return {
+            id: req.id,
+            ok: false,
+            error: "ROTATION_FAILED",
+            message: "successor runner did not become ready; predecessor left running",
+          };
+        }
+        ctx.state.rotated_to = newId;
+        await writeState(statePath(ctx.sessionId), ctx.state);
+        const watchCommand = `${clawDriveBinPath()} watch ${newId}`;
+        await emitEvent(ctx, {
+          kind: "session_rotated",
+          new_session_id: newId,
+          ...(alias !== undefined ? { alias } : {}),
+          generation: generation + 1,
+          handover_path: handoverPath(ctx.sessionId),
+          watch_command: watchCommand,
+        } as Omit<Event, "seq" | "at">);
+        setImmediate(() => teardownSession(ctx, `rotated:${newId}`));
+        return {
+          id: req.id,
+          ok: true,
+          result: {
+            new_session_id: newId,
+            ...(alias !== undefined ? { alias } : {}),
+            generation: generation + 1,
+            handover_path: handoverPath(ctx.sessionId),
+            watch_command: watchCommand,
+          },
+        };
+      } finally {
+        ctx.rotating = false;
+      }
     }
 
     case "provide_tool_output": {
