@@ -48,7 +48,7 @@ describe("CD-13 contract guard — MCP tools (src/mcp/tool-defs.ts)", () => {
 });
 
 describe("CD-13 contract guard — event kinds (src/lib/events.ts)", () => {
-  // The 14 frozen event kinds written to events.jsonl (COMPATIBILITY.md §3).
+  // The 18 frozen event kinds written to events.jsonl (COMPATIBILITY.md §3).
   const EXPECTED_EVENT_KINDS = new Set([
     "session_started",
     "session_stopped",
@@ -64,6 +64,10 @@ describe("CD-13 contract guard — event kinds (src/lib/events.ts)", () => {
     "tool_call_result",
     "tool_output_provided",
     "error",
+    "context_threshold_reached",
+    "session_rotated",
+    "rotation_failed",
+    "rotation_refused",
   ]);
 
   it("the EventKind union pins exactly the frozen kinds", () => {

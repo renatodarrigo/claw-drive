@@ -24,6 +24,16 @@ export function statePath(sessionId: string): string {
   return path.join(sessionDir(sessionId), "state.json");
 }
 
+/** Context rotation: the B-authored rotation/terminal handover persisted by the runner. */
+export function handoverPath(sessionId: string): string {
+  return path.join(sessionDir(sessionId), "handover.md");
+}
+
+/** Context rotation: the distilled crash handover (runner best-effort or `recover`). */
+export function crashHandoverPath(sessionId: string): string {
+  return path.join(sessionDir(sessionId), "crash-handover.md");
+}
+
 export function socketPath(sessionId: string): string {
   return path.join(sessionDir(sessionId), "control.sock");
 }

@@ -37,6 +37,23 @@ export interface SessionState {
    * /^[a-zA-Z][a-zA-Z0-9_-]{0,31}$/ and must not begin with `sess_`.
    */
   alias?: string;
+  /**
+   * context-rotation (all additive-optional; absent on pre-context-rotation state files and on
+   * sessions without a rotation policy block).
+   * context_tokens: B's main-loop context size as of the last completed turn.
+   * generation: 1-based position in a rotation lineage (stamped at scaffold
+   * time for rotation-configured sessions; successors get predecessor+1).
+   * root_session_id: the lineage's origin session.
+   * rotated_from / rotated_to: lineage links (predecessor / successor).
+   * compactions: count of NATIVE auto-compact events observed in B's stream —
+   * nonzero means compaction won the race against rotation.
+   */
+  context_tokens?: number;
+  generation?: number;
+  root_session_id?: string;
+  rotated_from?: string;
+  rotated_to?: string;
+  compactions?: number;
 }
 
 export async function readState(statePath: string): Promise<SessionState | null> {

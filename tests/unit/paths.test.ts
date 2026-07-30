@@ -16,6 +16,8 @@ import {
   isValidSessionId,
   isInsideHome,
   appRoot,
+  handoverPath,
+  crashHandoverPath,
 } from "../../src/lib/paths.js";
 
 describe("paths", () => {
@@ -120,5 +122,12 @@ describe("paths", () => {
     expect(
       isInsideHome(path.join(os.homedir(), "..", "..", os.homedir().split("/").pop()!))
     ).toBe(false);
+  });
+});
+
+describe("context-rotation handover paths", () => {
+  it("handoverPath / crashHandoverPath live in the session dir", () => {
+    expect(handoverPath("sess_x")).toMatch(/sessions\/sess_x\/handover\.md$/);
+    expect(crashHandoverPath("sess_x")).toMatch(/sessions\/sess_x\/crash-handover\.md$/);
   });
 });
