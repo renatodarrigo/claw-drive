@@ -405,6 +405,24 @@ async function handleInterruptTurn(args: Record<string, any>) {
   }
 }
 
+async function handleRotateSession(args: Record<string, unknown>) {
+  const sessionId = await resolveArgSession(args.session_id);
+  if (sessionId === null) {
+    return err("SESSION_NOT_FOUND", "invalid session_id");
+  }
+  try {
+    const resp = await sendRequest(
+      socketPath(sessionId),
+      { id: "rot_" + Date.now(), op: "rotate" },
+      1_500_000 // Context rotation: choreography includes up to two 600s handover turns
+    );
+    if (!resp.ok) return err(resp.error, resp.message);
+    return ok(resp.result ?? {});
+  } catch (e) {
+    return err("SESSION_UNREACHABLE", (e as Error).message);
+  }
+}
+
 export async function runMcpServer(): Promise<void> {
   const server = new Server(
     { name: "claw-drive", version: "0.3.0" },
@@ -423,6 +441,7 @@ export async function runMcpServer(): Promise<void> {
     provide_tool_output: handleProvideToolOutput,
     update_policy: handleUpdatePolicy,
     interrupt_turn: handleInterruptTurn,
+    rotate_session: handleRotateSession,
   };
   const tools = MCP_TOOL_DEFS.map((d) => {
     const handler = handlers[d.name];

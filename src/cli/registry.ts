@@ -8,6 +8,7 @@ import { cmdDefer } from "./commands/defer.js";
 import { cmdSend } from "./commands/send.js";
 import { cmdStart } from "./commands/start.js";
 import { cmdStop } from "./commands/stop.js";
+import { cmdRotate } from "./commands/rotate.js";
 import { cmdInterrupt } from "./commands/interrupt.js";
 import { cmdPolicy } from "./commands/policy.js";
 import { cmdPrune } from "./commands/prune.js";
@@ -44,6 +45,10 @@ export const COMMANDS: readonly CommandEntry[] = [
     summary: "Reap a session's Claude process; keep its dir for inspection.",
     usage: "stop <session>",
     handler: cmdStop },
+  { name: "rotate", group: "lifecycle",
+    summary: "Rotate B at its context threshold: handover → fresh successor session → predecessor stops.",
+    usage: "rotate <session>",
+    handler: cmdRotate },
   // Observe
   { name: "sessions", group: "observe",
     summary: "List all sessions, including orphaned ones.",

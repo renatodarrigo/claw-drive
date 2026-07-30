@@ -107,7 +107,7 @@ impossible-today values. No existing valid policy becomes invalid.
 
 ### 2. MCP tools (`src/mcp/tool-defs.ts`, served by `src/mcp/server.ts`)
 
-The server exposes exactly **10 tools**. The tool names, required inputs, and
+The server exposes exactly **11 tools**. The tool names, required inputs, and
 response shapes listed here are frozen.
 
 #### `start_session`
@@ -232,6 +232,27 @@ Session remains alive.
 
 **Response:** `{ "ok": true }`
 
+#### `rotate_session`
+
+Rotate a driven session at its context threshold: B writes a structured
+handover, a successor session is spawned in the same cwd with the same policy
+and the handover embedded in its first turn, the alias (if any) transfers, and
+the predecessor stops after emitting `session_rotated`. LONG-RUNNING: the
+handover is a real model turn (up to ~20 min worst case).
+
+**Required input:** `session_id: string`
+
+**Response:** `{ "new_session_id": "<string>", "alias"?: "<string>", "generation": <number>, "handover_path": "<string>", "watch_command": "<string>" }`
+
+Structured refusals leave the session running:
+
+- `NO_ROTATION_CONFIG` — policy has no rotation block.
+- `TURN_IN_FLIGHT` — retry at the turn boundary.
+- `DECISIONS_PENDING` — resolve the listed call_ids first.
+- `MAX_GENERATIONS` — cap reached; a terminal handover is still written; raise the cap via `update_policy` or re-brief a fresh lineage.
+- `BOOTSTRAP_EXCEEDS_THRESHOLD` — first turn already over threshold; raise it.
+- `ROTATION_FAILED` — handover generation failed; B continues toward native auto-compact.
+
 ---
 
 ### 3. Event `kind` set (`src/lib/events.ts`)
@@ -281,8 +302,7 @@ surfaced activity has occurred for the configured threshold
 
 ### 4. CLI subcommands (`src/cli/registry.ts`, dispatched by `src/cli/cli.ts`)
 
-**17 subcommands** are frozen (the design doc referenced 18; the actual
-implementation has 17).
+**18 subcommands** are frozen.
 
 | Subcommand | Flags |
 |------------|-------|
@@ -297,6 +317,7 @@ implementation has 17).
 | `send <session> "<message>"` | _(none)_ |
 | `start` | `--cwd PATH` (required), `--policy FILE`, `--brief FILE`, `--no-wrapper` |
 | `stop <session>` | _(none)_ |
+| `rotate <session>` | _(none)_ |
 | `interrupt <session> <turn>` | _(none)_ |
 | `policy <session>` | `--set FILE`, `--show` |
 | `policy-test '<command>'` | `--tool TOOL`, `--arg KEY=VALUE`, `--policy SPEC`, `--explain`, `--json`, `--exit-on DECISION`, `--no-color`, `--help` / `-h` |

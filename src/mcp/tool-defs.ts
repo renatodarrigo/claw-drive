@@ -164,4 +164,22 @@ export const MCP_TOOL_DEFS: McpToolDef[] = [
       required: ["session_id", "turn_id"],
     },
   },
+  {
+    name: "rotate_session",
+    description:
+      "Rotate a driven session at its context threshold: B writes a structured handover (pure text, no tool calls), " +
+      "a successor session is spawned in the same cwd with the same policy and the handover embedded in its first turn " +
+      "(original mission verbatim + handover + raw-log pointer), the alias (if any) transfers, and the predecessor stops " +
+      "after emitting session_rotated (carrying new_session_id + a successor watch_command). LONG-RUNNING: the handover is " +
+      "a real model turn (up to ~20 min worst case). Structured refusals leave the session running: NO_ROTATION_CONFIG " +
+      "(policy has no rotation block), TURN_IN_FLIGHT (retry at the turn boundary), DECISIONS_PENDING (resolve the listed " +
+      "call_ids first), MAX_GENERATIONS (cap reached — a terminal handover is still written; raise the cap via update_policy " +
+      "or re-brief a fresh lineage), BOOTSTRAP_EXCEEDS_THRESHOLD (first turn already over threshold — raise it), " +
+      "ROTATION_FAILED (handover generation failed; B continues toward native auto-compact).",
+    inputSchema: {
+      type: "object",
+      properties: { session_id: { type: "string" } },
+      required: ["session_id"],
+    },
+  },
 ];
