@@ -81,4 +81,40 @@ describe("scaffoldSessionDir", () => {
       "the composed successor brief"
     );
   });
+
+  it("stamps original_brief from the scenario brief on a rotation-configured fresh start", async () => {
+    const id = "sess_20260729T000000_gggggg";
+    await scaffoldSessionDir({
+      ...baseInput(id),
+      policy: { rotation: { threshold_tokens: 120000 } },
+      scenarioBrief: "the original mission",
+    });
+    const state = await readState(statePath(id));
+    expect(state!.original_brief).toBe("the original mission");
+  });
+
+  it("stamps an explicit originalBrief verbatim on a lineage scaffold, distinct from the composed scenario_brief", async () => {
+    const id = "sess_20260729T000000_hhhhhh";
+    await scaffoldSessionDir({
+      ...baseInput(id),
+      scenarioBrief: "the composed successor brief",
+      originalBrief: "the TRUE original mission from generation 1",
+      lineage: { generation: 3, root_session_id: "sess_root", rotated_from: "sess_prev" },
+    });
+    const state = await readState(statePath(id));
+    expect(state!.original_brief).toBe("the TRUE original mission from generation 1");
+    expect((state as unknown as { scenario_brief?: string }).scenario_brief).toBe(
+      "the composed successor brief"
+    );
+  });
+
+  it("does NOT stamp original_brief on a plain non-rotation fresh start, even with a scenario brief", async () => {
+    const id = "sess_20260729T000000_iiiiii";
+    await scaffoldSessionDir({
+      ...baseInput(id),
+      scenarioBrief: "just a brief, no rotation configured",
+    });
+    const state = await readState(statePath(id));
+    expect(state!.original_brief).toBeUndefined();
+  });
 });

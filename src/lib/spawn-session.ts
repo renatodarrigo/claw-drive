@@ -40,6 +40,16 @@ export interface ScaffoldInput {
   decisionTimeoutSeconds: number;
   model: string | null;
   scenarioBrief?: string;
+  /**
+   * Context rotation: the lineage's verbatim original mission. When absent on a
+   * fresh rotation-configured start, scaffoldSessionDir derives it from
+   * scenarioBrief itself (generation 1's brief IS the original mission).
+   * Successors must always pass it explicitly (the rotate choreography reads
+   * it back off the predecessor's own state) so it survives verbatim past
+   * generation 2 instead of telescoping through each generation's composed
+   * successor brief.
+   */
+  originalBrief?: string;
   wrapper?: boolean;
   alias?: string;
   mcpServers?: Record<string, unknown>;
@@ -82,6 +92,24 @@ export async function scaffoldSessionDir(input: ScaffoldInput): Promise<void> {
   };
   if (input.scenarioBrief) {
     (state as SessionState & { scenario_brief?: string }).scenario_brief = input.scenarioBrief;
+  }
+  if (input.originalBrief !== undefined) {
+    // Context rotation: caller already resolved the lineage's true original
+    // mission — carry it forward verbatim so it never has to be re-derived
+    // from an already-composed predecessor brief.
+    state.original_brief = input.originalBrief;
+  } else if (
+    !input.lineage &&
+    input.policy !== "bypass" &&
+    input.policy.rotation &&
+    input.scenarioBrief
+  ) {
+    // Context rotation: a fresh rotation-configured start's own scenario brief
+    // IS the lineage's original mission (mirrors the generation-1 stamp
+    // below) — stamp it now so generation 3 onward can recover the TRUE
+    // original instead of generation 2's already-composed, handover-laden
+    // successor brief.
+    state.original_brief = input.scenarioBrief;
   }
   if (input.wrapper !== undefined) state.wrapper = input.wrapper;
   if (input.alias !== undefined) state.alias = input.alias;

@@ -47,6 +47,9 @@ export interface SessionState {
    * rotated_from / rotated_to: lineage links (predecessor / successor).
    * compactions: count of NATIVE auto-compact events observed in B's stream —
    * nonzero means compaction won the race against rotation.
+   * original_brief: the lineage's verbatim original mission; stamped at scaffold
+   * time for rotation-configured or lineage sessions; successors inherit it
+   * unchanged.
    */
   context_tokens?: number;
   generation?: number;
@@ -54,6 +57,7 @@ export interface SessionState {
   rotated_from?: string;
   rotated_to?: string;
   compactions?: number;
+  original_brief?: string;
 }
 
 export async function readState(statePath: string): Promise<SessionState | null> {

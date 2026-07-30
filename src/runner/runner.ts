@@ -297,6 +297,12 @@ async function afterEventBookkeeping(ctx: RunnerContext, ev: Event): Promise<voi
 }
 
 const HANDOVER_TURN_TIMEOUT_MS = 600_000;
+/**
+ * After a timed-out attempt's SIGINT, how long to wait for the INTERRUPTED
+ * turn to actually terminate before giving up on it. See runHandoverTurn's
+ * docstring for why this can't just be skipped.
+ */
+const HANDOVER_INTERRUPT_GRACE_MS = 15_000;
 
 function sleepTimeout(ms: number): Promise<"timeout"> {
   return new Promise((resolve) => {
@@ -318,8 +324,21 @@ async function turnAssistantText(sessionId: string, turnId: string): Promise<str
  * Context rotation: inject the handover instruction as a normal user turn, await its
  * completion (via turnWaiters), and extract the <handover> body. Two attempts,
  * 600s each; a timed-out attempt SIGINTs B (interrupt_turn semantics) before
- * the retry. Returns null when both attempts fail — the caller aborts the
- * rotation and leaves B running (the guiding invariant).
+ * the retry.
+ *
+ * Every parsed stdout line is stamped with ctx.currentTurnId AT PARSE TIME, and
+ * send_turn flips currentTurnId synchronously. So after a timeout+SIGINT we
+ * must NOT immediately advance to attempt 2's send_turn — the interrupted
+ * turn's own terminating output may still be in flight, and if it arrives
+ * after currentTurnId has already flipped, it gets mis-stamped with attempt
+ * 2's turn id: mis-resolving attempt 2's waiter with the wrong outcome, or
+ * bleeding stray text into attempt 2's extracted transcript. Instead we grant
+ * the INTERRUPTED turn a bounded grace period (on its own still-registered
+ * waiter) to actually terminate before proceeding. If it never does (wedged),
+ * we abort the rotation entirely rather than risk a second send_turn racing
+ * the still-in-flight first one — returning null here, same as the
+ * both-attempts-exhausted case, so the caller leaves B running (the guiding
+ * invariant).
  */
 async function runHandoverTurn(ctx: RunnerContext): Promise<string | null> {
   for (const attempt of [1, 2] as const) {
@@ -333,13 +352,25 @@ async function runHandoverTurn(ctx: RunnerContext): Promise<string | null> {
       message: buildHandoverInstruction({ attempt }),
     });
     const outcome = await Promise.race([done, sleepTimeout(HANDOVER_TURN_TIMEOUT_MS)]);
-    ctx.turnWaiters.delete(turnId);
     if (outcome === "timeout") {
       if (ctx.b.pid) {
         try { process.kill(ctx.b.pid, "SIGINT"); } catch { /* already dead */ }
       }
+      // Grace period on the SAME waiter — the interrupted turn's id is still
+      // current, so its real terminating event (if it ever arrives) resolves
+      // `done` via afterEventBookkeeping, which also deletes the map entry.
+      const grace = await Promise.race([done, sleepTimeout(HANDOVER_INTERRUPT_GRACE_MS)]);
+      ctx.turnWaiters.delete(turnId); // no-op if afterEventBookkeeping already resolved+deleted it
+      if (grace === "timeout") {
+        // Wedged: B never acknowledged the interrupt. Abort rather than let a
+        // second send_turn race the still-unterminated first one.
+        return null;
+      }
+      // Ignore the interrupted turn's actual outcome (completed or failed) —
+      // attempt 2 starts fresh regardless.
       continue;
     }
+    ctx.turnWaiters.delete(turnId); // no-op (afterEventBookkeeping already deleted it on resolve)
     if (outcome === "failed") continue;
     const handover = extractHandover(await turnAssistantText(ctx.sessionId, turnId));
     if (handover) return handover;
@@ -624,8 +655,14 @@ export async function handleRequest(
           if (blocker.code === "MAX_GENERATIONS") {
             const terminal = await runHandoverTurn(ctx);
             if (terminal) {
-              await fs.writeFile(handoverPath(ctx.sessionId), terminal);
-              detail += ` Terminal handover written to ${handoverPath(ctx.sessionId)}.`;
+              // Best-effort: a write failure here must not prevent the
+              // refusal from completing — note it in the detail instead.
+              try {
+                await fs.writeFile(handoverPath(ctx.sessionId), terminal);
+                detail += ` Terminal handover written to ${handoverPath(ctx.sessionId)}.`;
+              } catch (err) {
+                detail += ` (best-effort terminal handover write failed: ${err instanceof Error ? err.message : String(err)})`;
+              }
             }
           }
           await emitEvent(ctx, {
@@ -638,96 +675,143 @@ export async function handleRequest(
         }
 
         // Happy path: handover → persist → successor → lineage → self-stop.
-        const handover = await runHandoverTurn(ctx);
-        if (!handover) {
-          await emitEvent(ctx, {
-            kind: "rotation_failed",
-            reason: "handover_generation_failed: no extractable <handover> block after 2 attempts",
-          } as Omit<Event, "seq" | "at">);
-          return {
-            id: req.id,
-            ok: false,
-            error: "ROTATION_FAILED",
-            message: "handover generation failed after 2 attempts; session left running",
-          };
-        }
-        await fs.writeFile(handoverPath(ctx.sessionId), handover);
-
-        const generation = ctx.state.generation ?? 1;
-        const maxG = effectiveMaxGenerations(cfg!);
-        const newId = newSessionId();
-        const alias = ctx.state.alias;
-        if (alias !== undefined) {
-          // Free the alias BEFORE scaffolding the successor: alias uniqueness
-          // is among live sessions, and we are still live at this moment.
-          delete ctx.state.alias;
-          await writeState(statePath(ctx.sessionId), ctx.state);
-        }
-        await scaffoldSessionDir({
-          sessionId: newId,
-          cwd: ctx.state.cwd,
-          policy: ctx.state.policy,
-          decisionTimeoutSeconds: ctx.state.decision_timeout_seconds,
-          model: ctx.state.model,
-          scenarioBrief: composeSuccessorBrief({
-            originalBrief:
-              (ctx.state as unknown as { scenario_brief?: string }).scenario_brief ??
-              "(no original brief was recorded at session start)",
-            handover,
-            generation: generation + 1,
-            maxGenerations: maxG,
-            predecessorId: ctx.sessionId,
-            predecessorEventsPath: eventsPath(ctx.sessionId),
-          }),
-          wrapper: ctx.state.wrapper,
-          alias,
-          lineage: {
-            generation: generation + 1,
-            root_session_id: ctx.state.root_session_id ?? ctx.sessionId,
-            rotated_from: ctx.sessionId,
-          },
-        });
-        spawnRunnerDetached(newId);
-        if (!(await waitForReady(newId, 5000))) {
-          await fs.rm(sessionDir(newId), { recursive: true, force: true });
-          if (alias !== undefined) {
-            ctx.state.alias = alias;
-            await writeState(statePath(ctx.sessionId), ctx.state);
+        // freedAlias / scaffoldedId track in-flight side effects so an
+        // UNEXPECTED throw (caught below) can best-effort compensate — the
+        // guiding invariant is that a failed rotation never leaves the
+        // still-running predecessor worse off than before the attempt.
+        let freedAlias: string | undefined;
+        let scaffoldedId: string | undefined;
+        try {
+          const handover = await runHandoverTurn(ctx);
+          if (!handover) {
+            await emitEvent(ctx, {
+              kind: "rotation_failed",
+              reason: "handover_generation_failed: no extractable <handover> block after 2 attempts",
+            } as Omit<Event, "seq" | "at">);
+            return {
+              id: req.id,
+              ok: false,
+              error: "ROTATION_FAILED",
+              message: "handover generation failed after 2 attempts; session left running",
+            };
           }
+          await fs.writeFile(handoverPath(ctx.sessionId), handover);
+
+          const generation = ctx.state.generation ?? 1;
+          const maxG = effectiveMaxGenerations(cfg!);
+          const newId = newSessionId();
+          // The lineage's TRUE original mission — never re-derive it from a
+          // predecessor's scenario_brief once that predecessor is itself a
+          // successor (that brief is already a composed handover, not the
+          // original; see original_brief's doc comment in state.ts).
+          const originalBrief =
+            ctx.state.original_brief ??
+            (ctx.state as unknown as { scenario_brief?: string }).scenario_brief ??
+            "(no original brief was recorded at session start)";
+          const alias = ctx.state.alias;
+          if (alias !== undefined) {
+            // Free the alias BEFORE scaffolding the successor: alias uniqueness
+            // is among live sessions, and we are still live at this moment.
+            delete ctx.state.alias;
+            await writeState(statePath(ctx.sessionId), ctx.state);
+            freedAlias = alias;
+          }
+          scaffoldedId = newId;
+          await scaffoldSessionDir({
+            sessionId: newId,
+            cwd: ctx.state.cwd,
+            policy: ctx.state.policy,
+            decisionTimeoutSeconds: ctx.state.decision_timeout_seconds,
+            model: ctx.state.model,
+            scenarioBrief: composeSuccessorBrief({
+              originalBrief,
+              handover,
+              generation: generation + 1,
+              maxGenerations: maxG,
+              predecessorId: ctx.sessionId,
+              predecessorEventsPath: eventsPath(ctx.sessionId),
+            }),
+            originalBrief,
+            wrapper: ctx.state.wrapper,
+            alias,
+            lineage: {
+              generation: generation + 1,
+              root_session_id: ctx.state.root_session_id ?? ctx.sessionId,
+              rotated_from: ctx.sessionId,
+            },
+          });
+          spawnRunnerDetached(newId);
+          if (!(await waitForReady(newId, 5000))) {
+            // Restore the alias BEFORE the rm — fs.rm can itself throw
+            // (EACCES etc.), and the predecessor's alias must already be back
+            // before that risk is taken, not after.
+            if (alias !== undefined) {
+              ctx.state.alias = alias;
+              await writeState(statePath(ctx.sessionId), ctx.state);
+              freedAlias = undefined;
+            }
+            await fs.rm(sessionDir(newId), { recursive: true, force: true });
+            scaffoldedId = undefined;
+            await emitEvent(ctx, {
+              kind: "rotation_failed",
+              reason: "successor_not_ready: runner did not become ready within 5s",
+            } as Omit<Event, "seq" | "at">);
+            return {
+              id: req.id,
+              ok: false,
+              error: "ROTATION_FAILED",
+              message: "successor runner did not become ready; predecessor left running",
+            };
+          }
+          ctx.state.rotated_to = newId;
+          await writeState(statePath(ctx.sessionId), ctx.state);
+          const watchCommand = `${clawDriveBinPath()} watch ${newId}`;
           await emitEvent(ctx, {
-            kind: "rotation_failed",
-            reason: "successor_not_ready: runner did not become ready within 5s",
-          } as Omit<Event, "seq" | "at">);
-          return {
-            id: req.id,
-            ok: false,
-            error: "ROTATION_FAILED",
-            message: "successor runner did not become ready; predecessor left running",
-          };
-        }
-        ctx.state.rotated_to = newId;
-        await writeState(statePath(ctx.sessionId), ctx.state);
-        const watchCommand = `${clawDriveBinPath()} watch ${newId}`;
-        await emitEvent(ctx, {
-          kind: "session_rotated",
-          new_session_id: newId,
-          ...(alias !== undefined ? { alias } : {}),
-          generation: generation + 1,
-          handover_path: handoverPath(ctx.sessionId),
-          watch_command: watchCommand,
-        } as Omit<Event, "seq" | "at">);
-        setImmediate(() => teardownSession(ctx, `rotated:${newId}`));
-        return {
-          id: req.id,
-          ok: true,
-          result: {
+            kind: "session_rotated",
             new_session_id: newId,
             ...(alias !== undefined ? { alias } : {}),
             generation: generation + 1,
             handover_path: handoverPath(ctx.sessionId),
             watch_command: watchCommand,
-          },
-        };
+          } as Omit<Event, "seq" | "at">);
+          setImmediate(() => teardownSession(ctx, `rotated:${newId}`));
+          return {
+            id: req.id,
+            ok: true,
+            result: {
+              new_session_id: newId,
+              ...(alias !== undefined ? { alias } : {}),
+              generation: generation + 1,
+              handover_path: handoverPath(ctx.sessionId),
+              watch_command: watchCommand,
+            },
+          };
+        } catch (err) {
+          // Unexpected throw (e.g. ENOSPC/EACCES out of scaffoldSessionDir, or
+          // any other stray fs error) — best-effort compensate so the
+          // still-running predecessor is never left worse off than before the
+          // attempt, then report a clean structured failure instead of letting
+          // the exception escape as a raw HANDLER_ERROR with no event at all.
+          if (freedAlias !== undefined) {
+            try {
+              ctx.state.alias = freedAlias;
+              await writeState(statePath(ctx.sessionId), ctx.state);
+            } catch { /* best-effort */ }
+          }
+          if (scaffoldedId !== undefined) {
+            try {
+              await fs.rm(sessionDir(scaffoldedId), { recursive: true, force: true });
+            } catch { /* best-effort */ }
+          }
+          const message = `internal_error: ${err instanceof Error ? err.message : String(err)}`;
+          try {
+            await emitEvent(ctx, {
+              kind: "rotation_failed",
+              reason: message,
+            } as Omit<Event, "seq" | "at">);
+          } catch { /* best-effort */ }
+          return { id: req.id, ok: false, error: "ROTATION_FAILED", message };
+        }
       } finally {
         ctx.rotating = false;
       }
