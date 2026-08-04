@@ -204,7 +204,7 @@ Over MCP, pass `name` to `start_session({ cwd, policy, name: "reviewer" })`.
 
 - **Constraints:** 1–32 chars, starts with a letter, then letters/digits/`_`/`-`; it must not begin with `sess_` (that's the canonical-id shape).
 - **Uniqueness:** an alias is unique among **live** sessions. Starting with an alias another live session already holds fails with an error naming the conflicting `session_id`. Once a holder stops (or is pruned), the alias is free to reuse.
-- **Resolution:** every session argument — `send`, `stop`, `interrupt`, `policy`, `tail`, `show`, single-session `watch`, single-id `status`, single-target `pending`, and the MCP session tools — accepts either an alias or a canonical id.
+- **Resolution:** every session argument — `send`, `stop`, `interrupt`, `policy`, `tail`, `show`, `report`, single-session `watch`, single-id `status`, single-target `pending`, and the MCP session tools — accepts either an alias or a canonical id.
 - **Display:** `status`, `sessions`, `pending`, and `watch --all` show the alias alongside the `session_id` when present.
 
 `start` still prints the canonical `session_id`, so scripts that capture it are unaffected. (No post-start rename, no cross-restart registry, no namespacing — an alias lives with its session.)
