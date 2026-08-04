@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **`claw-drive report <session>` (CD-59).** A human-readable session report rendered from `events.jsonl`: a summary header (id, alias, cwd, model, started/ended, duration, exit reason, turn/tool-call/decision counts) followed by a chronological transcript — user turns, assistant text, one consolidated line per tool call (its policy resolution and how any pause was resolved), sentinel outcomes, idle gaps (`--idle-after`, default `600`), and session lifecycle markers. `--json` emits the summary object only. Works for live and dead sessions; strictly read-only — never writes session state, events, or sockets. Adds a CLI subcommand: the frozen 1.x contract's subcommand count moves 17 → 18 (COMPATIBILITY.md §4).
+
 ## [1.3.1] — 2026-06-29
 
 ### Fixed
