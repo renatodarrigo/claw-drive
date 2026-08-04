@@ -338,16 +338,33 @@ export function renderTranscript(events: Event[], opts: RenderTranscriptOptions)
   const idleThresholdMs = opts.idleAfterSeconds > 0 ? opts.idleAfterSeconds * 1000 : Infinity;
   let lastAtMs: number | null = null;
 
-  const renderCall = (callId: string, fallbackAt: string, fallbackTurnId: string): void => {
+  const renderCall = (
+    callId: string,
+    fallbackAt: string,
+    fallbackTurnId: string,
+    pause?: Extract<Event, { kind: "tool_decision_required" }>
+  ): void => {
     if (renderedCallIds.has(callId)) return;
     renderedCallIds.add(callId);
-    const rec = calls.get(callId) ?? {
+    const rec: ToolCallReport = calls.get(callId) ?? {
       call_id: callId,
       turn_id: fallbackTurnId,
       tool: "(unknown)",
       args_summary: "",
       requested_at: fallbackAt,
       category: "pending" as const,
+      // An orphan tool_decision_required (its tool_call_requested is missing
+      // from the log) did pause for a policy decision, so carry that through:
+      // without it the call reads as an ordinary in-flight one. This record is
+      // transcript-only and never enters `calls`, so counts stay unchanged.
+      ...(pause
+        ? {
+            paused: true,
+            severity: pause.severity,
+            default_action: pause.default_action,
+            matched_rule: pause.matched_rule,
+          }
+        : {}),
     };
     lines.push(renderToolCallLine(rec));
   };
@@ -387,8 +404,9 @@ export function renderTranscript(events: Event[], opts: RenderTranscriptOptions)
         break;
       case "tool_decision_required":
         // Normally already rendered by tool_call_requested above; this is a
-        // defensive fallback for a log missing that event.
-        renderCall(e.call_id, e.at, e.turn_id);
+        // defensive fallback for a log missing that event. Pass the decision
+        // itself so the fallback record can report the pause it represents.
+        renderCall(e.call_id, e.at, e.turn_id, e);
         break;
       case "error":
         lines.push(

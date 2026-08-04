@@ -398,6 +398,52 @@ describe("live session with an in-flight tool call", () => {
   });
 });
 
+/**
+ * Defensive shape: a tool_decision_required whose tool_call_requested is
+ * missing from the log (a truncated or hand-edited events.jsonl — the real
+ * runner does not durably produce this). classifyToolCalls deliberately does
+ * not synthesise a record for it, so it stays out of the counts; the
+ * transcript renderer still has to render the line from the decision event
+ * alone. That call genuinely paused, so it must read as an escalation
+ * carrying its severity/default — not as an in-flight "awaiting decision".
+ */
+function buildOrphanDecisionEvents(): Event[] {
+  let seq = 0;
+  const next = () => ++seq;
+  return [
+    { seq: next(), at: at(0), kind: "session_started", cwd: "/home/ren/Workspace/project", policy_digest: "pdigest1" },
+    { seq: next(), at: at(1), turn_id: "turn_1", kind: "turn_started", message: "delete the build dir" },
+    {
+      seq: next(), at: at(2), turn_id: "turn_1", kind: "tool_decision_required",
+      call_id: "call_orphan", tool: "Bash", args: { command: "rm -rf build" },
+      severity: "high", default_action: "reject", matched_rule: "destructive-fs", default_at: at(3),
+    },
+  ];
+}
+
+describe("orphan tool_decision_required (no matching tool_call_requested)", () => {
+  const events = buildOrphanDecisionEvents();
+
+  it("renders it as a paused escalation carrying severity and default action", () => {
+    const transcript = renderTranscript(events, { idleAfterSeconds: 600 });
+    expect(transcript).toContain("escalated (severity: high, default: reject) → still pending");
+    expect(transcript).not.toContain("awaiting decision");
+  });
+
+  it("stays out of the counts, exactly as before", () => {
+    const counts = buildReportCounts(events);
+    expect(counts.decisions).toBe(0);
+    expect(counts.tool_calls).toBe(0);
+    expect(counts.pending).toBe(0);
+    expect(counts.escalated).toBe(0);
+  });
+
+  it("renders the call exactly once", () => {
+    const transcript = renderTranscript(events, { idleAfterSeconds: 600 });
+    expect(transcript.match(/TOOL_CALL/g)).toHaveLength(1);
+  });
+});
+
 describe("renderReportText / renderReportJson", () => {
   const events = buildFixtureEvents();
   const summary = buildReportSummary(baseState(), events, NOW_MS)!;
