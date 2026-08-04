@@ -15,6 +15,7 @@ import { cmdWatch } from "./commands/watch.js";
 import { cmdProvideOutput } from "./commands/provide-output.js";
 import { cmdPolicyTest } from "./commands/policy-test.js";
 import { cmdStatus } from "./commands/status.js";
+import { cmdReport } from "./commands/report.js";
 
 export type CommandGroup = "lifecycle" | "observe" | "decide" | "policy" | "maintenance";
 
@@ -57,6 +58,10 @@ export const COMMANDS: readonly CommandEntry[] = [
     summary: "State + pending decisions + recent events for one session.",
     usage: "show <session>",
     handler: cmdShow },
+  { name: "report", group: "observe",
+    summary: "Human-readable session report rendered from events.jsonl: header + chronological transcript.",
+    usage: "report <session> [--json] [--idle-after SECONDS]",
+    handler: cmdReport },
   { name: "tail", group: "observe",
     summary: "Print a session's event log.",
     usage: "tail <session> [--since N] [--follow]",

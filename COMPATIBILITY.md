@@ -280,13 +280,13 @@ surfaced activity has occurred for the configured threshold
 
 ### 4. CLI subcommands (`src/cli/registry.ts`, dispatched by `src/cli/cli.ts`)
 
-**17 subcommands** are frozen (the design doc referenced 18; the actual
-implementation has 17).
+**18 subcommands** are frozen.
 
 | Subcommand | Flags |
 |------------|-------|
 | `sessions` | _(none)_ |
 | `show <session>` | _(none)_ |
+| `report <session>` | `--json`, `--idle-after SECONDS`, `--help` / `-h` |
 | `tail <session>` | `--since N`, `--follow` / `-f` |
 | `watch <session>` | `--since N`, `--replay`, `--only KIND[,KIND]...`, `--decision-only`, `--no-token-filter`, `--idle-after SECONDS` |
 | `pending [<session>]` | _(none)_ |
