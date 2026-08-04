@@ -52,6 +52,7 @@
         <tr><td><code>sessions</code></td><td>List sessions (live and orphaned).</td></tr>
         <tr><td><code>status [&lt;session&gt;] [--json]</code></td><td>Fleet snapshot — one row per live session (state, last token, pending-decision count). With a session argument, just that one. <code>--json</code> for structured output. The point-in-time companion to <code>watch --all</code>.</td></tr>
         <tr><td><code>show &lt;session&gt;</code></td><td>State plus last 20 events.</td></tr>
+        <tr><td><code>report &lt;session&gt; [--json] [--idle-after SECONDS]</code></td><td>Human-readable session report rendered from <code>events.jsonl</code>: a summary header (id, alias, cwd, model, started/ended, duration, exit reason, turn/tool-call/decision counts) followed by a chronological transcript — user turns, assistant text, one line per tool call with its policy resolution and how any pause was resolved, sentinel outcomes, idle gaps (<code>--idle-after</code>, default <code>600</code>), and lifecycle markers. <code>--json</code> emits the summary object only. Works for live and dead sessions; strictly read-only.</td></tr>
         <tr><td><code>tail &lt;session&gt; [--since N] [--follow]</code></td><td>Stream events from a sequence number.</td></tr>
         <tr><td><code>pending [&lt;session&gt;]</code></td><td>List awaiting-approval calls. Each entry carries the decision's <code>rationale</code> and, for <code>Edit</code>/<code>Write</code>, a <code>diff</code>.</td></tr>
         <tr><td><code>approve &lt;call_id&gt; [--reason R] [--remember | --remember-as JSON] [--preview] [--json]</code></td><td>Approve a paused call.</td></tr>
@@ -122,7 +123,7 @@
         <tr>
           <td>CLI subcommands</td>
           <td><code>src/cli/cli.ts</code></td>
-          <td>All 17 subcommands and their flags. Global flags <code>--version</code> / <code>-v</code> and <code>--help</code> / <code>-h</code>.</td>
+          <td>All 18 subcommands and their flags. Global flags <code>--version</code> / <code>-v</code> and <code>--help</code> / <code>-h</code>.</td>
         </tr>
         <tr>
           <td>Sentinel vocabulary</td>
