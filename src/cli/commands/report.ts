@@ -15,10 +15,14 @@ import { extractTrailingToken, DEFAULT_IDLE_AFTER_SECONDS } from "../../lib/toke
  */
 
 /**
- * The four AC-named policy-resolution outcomes, plus "pending" for an
- * escalated/deferred call whose tool_decision_required has no matching
- * tool_decision_resolved yet (a live in-flight pause, or a dead session that
- * ended mid-decision).
+ * The four AC-named policy-resolution outcomes, plus "pending" for a call with
+ * no tool_decision_resolved yet. "pending" covers two distinct shapes, told
+ * apart by ToolCallReport.paused:
+ *   - paused: a tool_decision_required fired and is still awaiting an answer
+ *     (a live escalation/defer, or a dead session that ended mid-decision);
+ *   - not paused: the call was requested but the policy hook has not weighed in
+ *     yet — the ordinary in-flight window on a live session. This is NOT an
+ *     escalation and must not be rendered as one.
  */
 export type ToolCallCategory =
   | "auto-approved"
@@ -34,6 +38,8 @@ export interface ToolCallReport {
   args_summary: string;
   requested_at: string;
   category: ToolCallCategory;
+  /** True once a tool_decision_required has been seen for this call_id, i.e. the call actually paused for a policy decision. */
+  paused?: boolean;
   severity?: Severity;
   default_action?: DecisionAction;
   matched_rule?: string;
@@ -119,6 +125,7 @@ export function classifyToolCalls(events: Event[]): Map<string, ToolCallReport> 
     required.set(e.call_id, e);
     const rec = calls.get(e.call_id);
     if (rec) {
+      rec.paused = true;
       rec.severity = e.severity;
       rec.default_action = e.default_action;
       rec.matched_rule = e.matched_rule;
@@ -268,6 +275,13 @@ function describeResolution(rec: ToolCallReport): string {
   if (rec.category === "auto-approved" || rec.category === "auto-rejected") {
     const verb = rec.category === "auto-approved" ? "auto-approved" : "auto-rejected";
     return rec.resolved_reason ? `${verb} (rule: ${rec.resolved_reason})` : verb;
+  }
+
+  // A call that was requested but never paused for a policy decision is simply
+  // in flight — the ordinary window before the PreToolUse hook resolves it (or
+  // a session killed mid-call). Reporting that as "escalated" would be wrong.
+  if (rec.category === "pending" && !rec.paused) {
+    return "awaiting decision";
   }
 
   const pauseDesc =

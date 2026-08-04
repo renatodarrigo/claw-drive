@@ -339,6 +339,65 @@ describe("renderTranscript", () => {
   });
 });
 
+/**
+ * A live session captured mid-call: the tool call has been requested but the
+ * PreToolUse hook has not resolved it yet, so there is no
+ * tool_decision_required and no tool_decision_resolved — and no turn_completed
+ * or session_stopped either. This is the ordinary in-flight window, NOT an
+ * escalation; it is the most common shape a live `report` invocation sees.
+ */
+function buildLiveInFlightEvents(): Event[] {
+  let seq = 0;
+  const next = () => ++seq;
+  return [
+    { seq: next(), at: at(0), kind: "session_started", cwd: "/home/ren/Workspace/project", policy_digest: "pdigest1" },
+    { seq: next(), at: at(1), turn_id: "turn_1", kind: "turn_started", message: "list the files" },
+    { seq: next(), at: at(2), turn_id: "turn_1", kind: "assistant_text", text: "Listing them now." },
+    { seq: next(), at: at(3), turn_id: "turn_1", kind: "tool_call_requested", call_id: "call_live", tool: "Bash", args: { command: "ls -la" } },
+  ];
+}
+
+describe("live session with an in-flight tool call", () => {
+  const events = buildLiveInFlightEvents();
+
+  it("classifies a requested call with no decision event as pending but not paused", () => {
+    const c = classifyToolCalls(events).get("call_live")!;
+    expect(c.category).toBe("pending");
+    expect(c.paused).toBeFalsy();
+    expect(c.severity).toBeUndefined();
+    expect(c.default_action).toBeUndefined();
+  });
+
+  it("renders it as awaiting decision, never as an escalation", () => {
+    const transcript = renderTranscript(events, { idleAfterSeconds: 600 });
+    expect(transcript).toContain('TOOL_CALL turn_1 Bash "ls -la" → awaiting decision');
+    expect(transcript).not.toMatch(/escalated/);
+    expect(transcript).not.toMatch(/still pending/);
+  });
+
+  it("distinguishes an in-flight call from a genuinely paused one still awaiting an answer", () => {
+    const inFlight = renderTranscript(events, { idleAfterSeconds: 600 });
+    const paused = renderTranscript(buildFixtureEvents(), { idleAfterSeconds: 600 });
+    expect(inFlight).toContain("awaiting decision");
+    expect(paused).toContain("escalated (severity: low, default: reject) → still pending");
+    expect(paused).not.toContain("awaiting decision");
+  });
+
+  it("still counts the in-flight call as pending in the header breakdown", () => {
+    const counts = buildReportCounts(events);
+    expect(counts.tool_calls).toBe(1);
+    expect(counts.pending).toBe(1);
+    expect(counts.escalated).toBe(0);
+  });
+
+  it("reports an ongoing duration and no ended_at for the still-running session", () => {
+    const summary = buildReportSummary(baseState(), events, NOW_MS)!;
+    expect(summary.ended_at).toBeUndefined();
+    expect(summary.duration_is_ongoing).toBe(true);
+    expect(summary.counts.pending).toBe(1);
+  });
+});
+
 describe("renderReportText / renderReportJson", () => {
   const events = buildFixtureEvents();
   const summary = buildReportSummary(baseState(), events, NOW_MS)!;
