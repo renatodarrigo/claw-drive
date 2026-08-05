@@ -109,10 +109,11 @@ describe("CD-13 contract guard — watch-surfaced kinds (VALID_WATCH_KINDS)", ()
 });
 
 describe("CD-13 contract guard — CLI subcommands (src/cli/registry.ts)", () => {
-  // The 19 frozen CLI subcommands (COMPATIBILITY.md §4).
+  // The 20 frozen CLI subcommands (COMPATIBILITY.md §4).
   const EXPECTED_CLI_SUBCOMMANDS = new Set([
     "sessions",
     "show",
+    "report",
     "tail",
     "watch",
     "pending",

@@ -9,6 +9,7 @@
 - **Prune guard.** `claw-drive prune` now skips, rather than deletes, a dead session whose crash-handover has not yet been consumed by a `recover` call — it may be the only distilled record of that session's final state. `--force` prunes it anyway.
 - **Lineage state fields.** `generation`, `root_session_id`, `rotated_from`, `rotated_to`, `compactions`, and `original_brief` — all additive-optional on `state.json`, absent on any session without a rotation policy block.
 - **Contract growth, fully additive (see `COMPATIBILITY.md`):** MCP tools 10 → 12 (`rotate_session`, `recover_session`); event kinds 14 → 18 (`context_threshold_reached`, `session_rotated`, `rotation_failed`, `rotation_refused`); `watch`-surfaced kinds 9 → 13 (the same four); CLI subcommands 17 → 19 (`rotate`, `recover`).
+- **`claw-drive report <session>` (CD-59).** A human-readable session report rendered from `events.jsonl`: a summary header (id, alias, cwd, model, started/ended, duration, exit reason, turn/tool-call/decision counts) followed by a chronological transcript — user turns, assistant text, one consolidated line per tool call (its policy resolution and how any pause was resolved), sentinel outcomes, idle gaps (`--idle-after`, default `600`), and session lifecycle markers. `--json` emits the summary object only. Works for live and dead sessions; strictly read-only — never writes session state, events, or sockets. Adds a CLI subcommand: the frozen 1.x contract's subcommand count moves 19 → 20 (COMPATIBILITY.md §4).
 
 ### Tests
 

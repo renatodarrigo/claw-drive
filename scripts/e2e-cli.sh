@@ -32,6 +32,7 @@ info "  home: $TMPHOME"
 section "help"
 expect_stdout_contains "--help mentions sessions" "sessions"  "$BIN" --help
 expect_stdout_contains "--help mentions show"     "show"      "$BIN" --help
+expect_stdout_contains "--help mentions report"   "report"    "$BIN" --help
 expect_stdout_contains "--help mentions tail"     "tail"      "$BIN" --help
 expect_stdout_contains "--help mentions pending"  "pending"   "$BIN" --help
 expect_stdout_contains "--help mentions approve"  "approve"   "$BIN" --help
@@ -69,6 +70,7 @@ section "error handling (exit codes are observed, not assumed)"
 # - missing session → exit 2 (show / tail / stop / policy)
 # - missing call    → exit 1 (approve / reject)
 expect_exit "show <bogus> fails (exit 2)"      2 "$BIN" show nonexistent-session-id
+expect_exit "report <bogus> fails (exit 2)"    2 "$BIN" report nonexistent-session-id
 expect_exit "tail <bogus> fails (exit 2)"      2 "$BIN" tail nonexistent-session-id
 expect_exit "stop <bogus> fails (exit 2)"      2 "$BIN" stop nonexistent-session-id
 expect_exit "policy <bogus> fails (exit 2)"    2 "$BIN" policy nonexistent-session-id

@@ -204,7 +204,7 @@ Over MCP, pass `name` to `start_session({ cwd, policy, name: "reviewer" })`.
 
 - **Constraints:** 1–32 chars, starts with a letter, then letters/digits/`_`/`-`; it must not begin with `sess_` (that's the canonical-id shape).
 - **Uniqueness:** an alias is unique among **live** sessions. Starting with an alias another live session already holds fails with an error naming the conflicting `session_id`. Once a holder stops (or is pruned), the alias is free to reuse.
-- **Resolution:** every session argument — `send`, `stop`, `interrupt`, `policy`, `tail`, `show`, single-session `watch`, single-id `status`, single-target `pending`, and the MCP session tools — accepts either an alias or a canonical id.
+- **Resolution:** every session argument — `send`, `stop`, `interrupt`, `policy`, `tail`, `show`, `report`, single-session `watch`, single-id `status`, single-target `pending`, and the MCP session tools — accepts either an alias or a canonical id.
 - **Display:** `status`, `sessions`, `pending`, and `watch --all` show the alias alongside the `session_id` when present.
 
 `start` still prints the canonical `session_id`, so scripts that capture it are unaffected. (No post-start rename, no cross-restart registry, no namespacing — an alias lives with its session.)
@@ -319,6 +319,7 @@ B's echo fires the hook → policy defers → monitor alerts A → human answers
 | `sessions` | List sessions (live + orphaned) |
 | `status [<session>] [--json]` | Fleet snapshot — one row per live session (state, last token, pending-decision count). With a session argument, just that one; `--json` for structured output. Point-in-time companion to `watch --all`. |
 | `show <session>` | State + last 20 events |
+| `report <session> [--json] [--idle-after SECONDS]` | Human-readable session report rendered from `events.jsonl`: a summary header (id, alias, cwd, model, started/ended, duration, exit reason, turn/tool-call/decision counts) followed by a chronological transcript — user turns, assistant text, one consolidated line per tool call (policy resolution and how any pause was resolved), sentinel outcomes, idle gaps (`--idle-after`, default `600`), and session lifecycle markers. `--json` emits the summary object only (header fields + per-category counts); works for live and dead sessions; strictly read-only. |
 | `tail <session> [--since N] [--follow]` | Stream events |
 | `pending [<session>]` | List awaiting-approval calls. An escalated decision carries a capped `rationale` and (for Edit/Write) a `diff`. |
 | `approve <call_id> [--reason R] [--remember]` | Approve a paused call. `--remember` derives a rule and appends to `auto_approve`. |

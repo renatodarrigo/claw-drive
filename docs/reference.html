@@ -41,6 +41,8 @@
         <tr><td><code>update_policy</code></td><td>Replace a session's policy at runtime.</td></tr>
         <tr><td><code>interrupt_turn</code></td><td>SIGINT B to cancel the current turn.</td></tr>
         <tr><td><code>provide_tool_output</code></td><td>Inject human-run command output back into B's conversation. Auto-resolves pending defer.</td></tr>
+        <tr><td><code>rotate_session</code></td><td>Rotate a driven session at its context threshold: B writes a structured handover, a successor spawns in the same cwd under the same policy (handover + the lineage's verbatim original mission in its first turn), any alias transfers, and the predecessor stops after emitting <code>session_rotated</code>. Structured refusals (<code>TURN_IN_FLIGHT</code>, <code>DECISIONS_PENDING</code>, <code>MAX_GENERATIONS</code>, …) leave the session running. LONG-RUNNING: the handover is a real model turn.</td></tr>
+        <tr><td><code>recover_session</code></td><td>Continue a DEAD session (crashed, killed, rebooted) from the freshest handover: reuses the runner's <code>crash-handover.md</code> or distills one from <code>events.jsonl</code> via a one-shot minimal-mode <code>claude -p</code>, then spawns a successor exactly as rotation does (lineage stamped, alias re-claimed if free). Takes the canonical <code>sess_…</code> id; optional <code>model</code> and <code>no_start</code>.</td></tr>
       </tbody>
     </table>
 
@@ -52,6 +54,7 @@
         <tr><td><code>sessions</code></td><td>List sessions (live and orphaned).</td></tr>
         <tr><td><code>status [&lt;session&gt;] [--json]</code></td><td>Fleet snapshot — one row per live session (state, last token, pending-decision count). With a session argument, just that one. <code>--json</code> for structured output. The point-in-time companion to <code>watch --all</code>.</td></tr>
         <tr><td><code>show &lt;session&gt;</code></td><td>State plus last 20 events.</td></tr>
+        <tr><td><code>report &lt;session&gt; [--json] [--idle-after SECONDS]</code></td><td>Human-readable session report rendered from <code>events.jsonl</code>: a summary header (id, alias, cwd, model, started/ended, duration, exit reason, turn/tool-call/decision counts) followed by a chronological transcript — user turns, assistant text, one line per tool call with its policy resolution and how any pause was resolved, sentinel outcomes, idle gaps (<code>--idle-after</code>, default <code>600</code>), and lifecycle markers. <code>--json</code> emits the summary object only. Works for live and dead sessions; strictly read-only.</td></tr>
         <tr><td><code>tail &lt;session&gt; [--since N] [--follow]</code></td><td>Stream events from a sequence number.</td></tr>
         <tr><td><code>pending [&lt;session&gt;]</code></td><td>List awaiting-approval calls. Each entry carries the decision's <code>rationale</code> and, for <code>Edit</code>/<code>Write</code>, a <code>diff</code>.</td></tr>
         <tr><td><code>approve &lt;call_id&gt; [--reason R] [--remember | --remember-as JSON] [--preview] [--json]</code></td><td>Approve a paused call.</td></tr>
@@ -60,6 +63,8 @@
         <tr><td><code>send &lt;session&gt; "&lt;msg&gt;"</code></td><td>Send a user turn.</td></tr>
         <tr><td><code>start --cwd PATH [--policy FILE] [--brief FILE] [--name ALIAS]</code></td><td>Start a session from the CLI. <code>--name</code> assigns a reusable alias usable in place of the canonical id at any session-arg command (see <a href="#session-aliases">Session aliases</a>).</td></tr>
         <tr><td><code>stop &lt;session&gt;</code></td><td>Reap B.</td></tr>
+        <tr><td><code>rotate &lt;session&gt;</code></td><td>Rotate a session at its context threshold (see <code>rotate_session</code> above). Available once the policy's <code>rotation</code> block is configured; the driver typically calls it when <code>context_threshold_reached</code> fires.</td></tr>
+        <tr><td><code>recover &lt;session_id&gt; [--no-start] [--model M]</code></td><td>Continue a dead session from its crash-handover (or distill one now), spawning a successor with lineage stamped. <code>--no-start</code> writes the handover only; <code>--model</code> overrides the distiller's model.</td></tr>
         <tr><td><code>interrupt &lt;session&gt; &lt;turn&gt;</code></td><td>SIGINT B.</td></tr>
         <tr><td><code>policy &lt;session&gt; [--set FILE] [--show]</code></td><td>View or replace a session's policy.</td></tr>
         <tr><td><code>policy-test '&lt;command&gt;' [flags]</code></td><td>Diagnose a tool call against a policy. See <a href="policies.html#testing">Policies → Testing a policy</a>.</td></tr>
@@ -122,7 +127,7 @@
         <tr>
           <td>CLI subcommands</td>
           <td><code>src/cli/cli.ts</code></td>
-          <td>All 17 subcommands and their flags. Global flags <code>--version</code> / <code>-v</code> and <code>--help</code> / <code>-h</code>.</td>
+          <td>All 20 subcommands and their flags. Global flags <code>--version</code> / <code>-v</code> and <code>--help</code> / <code>-h</code>.</td>
         </tr>
         <tr>
           <td>Sentinel vocabulary</td>
