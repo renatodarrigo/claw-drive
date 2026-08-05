@@ -14,7 +14,11 @@ export type EventKind =
   | "tool_call_started"
   | "tool_call_result"
   | "tool_output_provided"
-  | "error";
+  | "error"
+  | "context_threshold_reached"
+  | "session_rotated"
+  | "rotation_failed"
+  | "rotation_refused";
 
 export type ResolvedBy = "policy" | "user_mcp" | "user_mcp_auto" | "user_cli" | "timeout";
 export type Severity = "low" | "medium" | "high";
@@ -22,7 +26,7 @@ export type DecisionAction = "approve" | "reject" | "defer";
 
 export type Event =
   | { seq: number; at: string; kind: "session_started"; cwd: string; policy_digest: string }
-  | { seq: number; at: string; kind: "session_stopped"; reason: string; exit_code: number | null }
+  | { seq: number; at: string; kind: "session_stopped"; reason: string; exit_code: number | null; handover_path?: string }
   | { seq: number; at: string; turn_id: string; kind: "turn_started"; message: string }
   | { seq: number; at: string; turn_id: string; kind: "turn_completed"; stop_reason: string }
   | { seq: number; at: string; turn_id: string; kind: "turn_failed"; error: string; stderr_tail?: string }
@@ -68,7 +72,28 @@ export type Event =
       stderr_len: number;
       exit_code: number | null;
     }
-  | { seq: number; at: string; turn_id?: string; kind: "error"; message: string; recoverable: boolean };
+  | { seq: number; at: string; turn_id?: string; kind: "error"; message: string; recoverable: boolean }
+  | {
+      seq: number;
+      at: string;
+      turn_id?: string;
+      kind: "context_threshold_reached";
+      context_tokens: number;
+      threshold_tokens: number;
+      generation: number;
+    }
+  | {
+      seq: number;
+      at: string;
+      kind: "session_rotated";
+      new_session_id: string;
+      alias?: string;
+      generation: number;
+      handover_path: string;
+      watch_command: string;
+    }
+  | { seq: number; at: string; kind: "rotation_failed"; reason: string }
+  | { seq: number; at: string; kind: "rotation_refused"; reason: string; detail?: string };
 
 export async function appendEvent(eventsFile: string, event: Event): Promise<void> {
   const line = JSON.stringify(event) + "\n";

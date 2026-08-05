@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **Context rotation.** A driven session (B) can hand off to a fresh successor before its context window fills up, as an explicit driver-triggered alternative to native auto-compact. An optional `rotation` policy block (`threshold_tokens`, `max_generations?`, `mode?`) turns it on; absent, nothing about a session's tracking or behavior changes. Once B's tracked context reaches `threshold_tokens`, the runner emits `context_threshold_reached` on every completed turn while above it, and `claw-drive rotate <session>` (CLI) / `rotate_session` (MCP) becomes available: B writes a structured handover as a plain-text turn (no tool call, so it can't stall on a policy escalation), a successor session spawns in the same cwd under the same policy with the handover plus the lineage's verbatim original mission embedded in its first turn, any alias transfers to the successor, and the predecessor emits `session_rotated` — carrying the successor's `new_session_id` and a ready-made `watch_command` — before stopping. `status` and `sessions` show `alias (generation)` for any session in a lineage; `pending` and `watch --all` carry the bare alias plus an additive `generation` field alongside it. Structured refusals (`NO_ROTATION_CONFIG`, `TURN_IN_FLIGHT`, `DECISIONS_PENDING`, `ROTATION_IN_PROGRESS`, `MAX_GENERATIONS`, `BOOTSTRAP_EXCEEDS_THRESHOLD`, `ROTATION_FAILED`) always leave the session running: a failed or refused rotation never leaves it worse off than before the attempt.
+- **Crash recovery.** `claw-drive recover <session_id>` (CLI) / `recover_session` (MCP) continues a session that died outright — crash, kill, host reboot — rather than rotation's graceful, still-live path. It reuses the runner's own best-effort `crash-handover.md` if one was written on the way down, or, failing that, distills one from the dead session's `events.jsonl` via a one-shot, minimal-mode `claude -p` call (no settings sources loaded, run from a neutral cwd), then spawns a successor exactly as rotation does (lineage stamped, alias re-claimed if free).
+- **Prune guard.** `claw-drive prune` now skips, rather than deletes, a dead session whose crash-handover has not yet been consumed by a `recover` call — it may be the only distilled record of that session's final state. `--force` prunes it anyway.
+- **Lineage state fields.** `generation`, `root_session_id`, `rotated_from`, `rotated_to`, `compactions`, and `original_brief` — all additive-optional on `state.json`, absent on any session without a rotation policy block.
+- **Contract growth, fully additive (see `COMPATIBILITY.md`):** MCP tools 10 → 12 (`rotate_session`, `recover_session`); event kinds 14 → 18 (`context_threshold_reached`, `session_rotated`, `rotation_failed`, `rotation_refused`); `watch`-surfaced kinds 9 → 13 (the same four); CLI subcommands 17 → 19 (`rotate`, `recover`).
+
+### Tests
+
+- Three new integration tests spawning real `claude` sessions: a two-rotation lineage test (handover content, generation/root/alias bookkeeping, verbatim-mission propagation), a hard-crash recovery test (SIGKILLed runner, distilled crash-handover, successor spawn), and a bootstrap-refusal test (`BOOTSTRAP_EXCEEDS_THRESHOLD` leaves the session live).
+
 ## [1.3.1] — 2026-06-29
 
 ### Fixed

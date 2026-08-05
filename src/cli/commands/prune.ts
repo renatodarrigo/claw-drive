@@ -1,5 +1,5 @@
 import * as fs from "node:fs/promises";
-import { sessionsRoot, sessionDir, statePath, isValidSessionId } from "../../lib/paths.js";
+import { sessionsRoot, sessionDir, statePath, crashHandoverPath, isValidSessionId } from "../../lib/paths.js";
 import { readState, isPidAlive } from "../../lib/state.js";
 
 function parseDuration(s: string): number {
@@ -12,8 +12,10 @@ function parseDuration(s: string): number {
 
 export async function cmdPrune(argv: string[]): Promise<number> {
   let olderThan = parseDuration("24h");
+  let force = false;
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--older-than") olderThan = parseDuration(argv[++i] ?? "24h");
+    else if (argv[i] === "--force") force = true;
   }
   const cutoff = Date.now() - olderThan;
   let entries: string[];
@@ -23,6 +25,7 @@ export async function cmdPrune(argv: string[]): Promise<number> {
     return 0;
   }
   const removed: string[] = [];
+  const skipped: string[] = [];
   for (const id of entries) {
     if (!isValidSessionId(id)) continue;
     const s = await readState(statePath(id));
@@ -31,9 +34,20 @@ export async function cmdPrune(argv: string[]): Promise<number> {
     if (alive) continue;
     const startedAt = Date.parse(s.started_at);
     if (startedAt > cutoff) continue;
+    if (!force && !s.rotated_to) {
+      // Context rotation: a crash-handover no successor ever consumed may be the only
+      // distilled copy of the session's final state — refuse to eat it.
+      try {
+        await fs.access(crashHandoverPath(id));
+        skipped.push(id);
+        continue;
+      } catch {
+        /* no unconsumed crash handover — prune as before */
+      }
+    }
     await fs.rm(sessionDir(id), { recursive: true, force: true });
     removed.push(id);
   }
-  console.log(JSON.stringify({ removed }));
+  console.log(JSON.stringify({ removed, skipped_unconsumed_handover: skipped }));
   return 0;
 }

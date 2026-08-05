@@ -74,3 +74,16 @@ export async function resolveSessionRef(arg: string): Promise<string | null> {
   if (!isValidAlias(arg)) return null;
   return findLiveAliasHolder(arg);
 }
+
+/**
+ * context-rotation display form: "reviewer (2)" when the session has a lineage
+ * generation, bare alias otherwise. Display-only — addressing always uses the
+ * bare alias (parens/spaces are illegal in the alias grammar above).
+ */
+export function aliasWithGeneration(
+  alias: string | undefined,
+  generation: number | undefined
+): string | undefined {
+  if (!alias) return undefined;
+  return generation !== undefined ? `${alias} (${generation})` : alias;
+}

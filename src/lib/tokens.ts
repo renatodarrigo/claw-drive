@@ -90,6 +90,8 @@ export interface NotificationContract {
   watch_command: string;
   watch_flags: Record<string, string>;
   idle_after_seconds: number;
+  /** Context rotation: present when the session's policy has a rotation block. */
+  rotation?: { threshold_tokens: number; max_generations: number };
 }
 
 const VOCAB_SEMANTICS: Record<string, string> = {
@@ -116,6 +118,7 @@ export function buildNotificationContract(args: {
   watchCommand: string;
   wrapperEnabled: boolean;
   idleAfterSeconds?: number;
+  rotation?: { threshold_tokens: number; max_generations: number };
 }): NotificationContract {
   return {
     version: 1,
@@ -128,5 +131,6 @@ export function buildNotificationContract(args: {
     watch_command: args.watchCommand,
     watch_flags: { ...WATCH_FLAGS_DOC },
     idle_after_seconds: args.idleAfterSeconds ?? DEFAULT_IDLE_AFTER_SECONDS,
+    ...(args.rotation ? { rotation: args.rotation } : {}),
   };
 }

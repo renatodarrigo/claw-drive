@@ -1552,6 +1552,57 @@ describe("compositionDenyMessage", () => {
   });
 });
 
+describe("validatePolicy context-rotation rotation block", () => {
+  const base = { escalate_default: true };
+
+  it("accepts an absent rotation block (feature off)", () => {
+    expect(validatePolicy(base).ok).toBe(true);
+  });
+
+  it("accepts a minimal valid block", () => {
+    expect(validatePolicy({ ...base, rotation: { threshold_tokens: 120000 } }).ok).toBe(true);
+  });
+
+  it("accepts the full block with mode manual and max_generations 0 (unlimited)", () => {
+    expect(
+      validatePolicy({ ...base, rotation: { threshold_tokens: 120000, max_generations: 0, mode: "manual" } }).ok
+    ).toBe(true);
+  });
+
+  it("rejects a rotation block without threshold_tokens", () => {
+    const v = validatePolicy({ ...base, rotation: {} });
+    expect(v.ok).toBe(false);
+    expect((v as { error: string }).error).toContain("threshold_tokens");
+  });
+
+  it("rejects non-positive / non-integer threshold_tokens", () => {
+    for (const bad of [0, -5, 1.5, "120000", null]) {
+      const v = validatePolicy({ ...base, rotation: { threshold_tokens: bad } });
+      expect(v.ok).toBe(false);
+    }
+  });
+
+  it("rejects negative or fractional max_generations", () => {
+    for (const bad of [-1, 2.5, "10"]) {
+      const v = validatePolicy({ ...base, rotation: { threshold_tokens: 120000, max_generations: bad } });
+      expect(v.ok).toBe(false);
+    }
+  });
+
+  it('rejects mode "auto" with the reserved-for-v2 message', () => {
+    const v = validatePolicy({ ...base, rotation: { threshold_tokens: 120000, mode: "auto" } });
+    expect(v.ok).toBe(false);
+    expect((v as { error: string }).error).toContain("reserved");
+  });
+
+  it("rejects unknown rotation keys but ignores underscore keys", () => {
+    const bad = validatePolicy({ ...base, rotation: { threshold_tokens: 120000, checkpoint: 1 } });
+    expect(bad.ok).toBe(false);
+    const okv = validatePolicy({ ...base, rotation: { threshold_tokens: 120000, _comment: "x" } });
+    expect(okv.ok).toBe(true);
+  });
+});
+
 describe("starter template", () => {
   it("ships bash_composition per_segment and validates", () => {
     const here = fileURLToPath(import.meta.url);

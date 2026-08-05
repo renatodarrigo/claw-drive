@@ -37,12 +37,12 @@ describe("renderHelp — capability map", () => {
     for (const h of headers) expect(help).toContain(h);
   });
 
-  it("pins exactly the frozen 10-tool set (drift tripwire)", () => {
+  it("pins exactly the frozen 12-tool set (drift tripwire)", () => {
     expect(new Set(MCP_TOOL_DEFS.map((t) => t.name))).toEqual(
       new Set([
         "start_session", "stop_session", "send_turn", "poll_turn", "poll_session",
         "list_sessions", "resolve_tool_call", "provide_tool_output", "update_policy",
-        "interrupt_turn",
+        "interrupt_turn", "rotate_session", "recover_session",
       ])
     );
   });

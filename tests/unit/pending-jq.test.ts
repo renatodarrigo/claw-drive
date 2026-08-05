@@ -22,7 +22,11 @@ afterEach(async () => {
   await fs.rm(tmpHome, { recursive: true, force: true });
 });
 
-async function setupSession(sessionId: string, events: Event[]): Promise<void> {
+async function setupSession(
+  sessionId: string,
+  events: Event[],
+  overrides: Partial<SessionState> = {}
+): Promise<void> {
   const sessDir = path.join(tmpHome, "sessions", sessionId);
   await fs.mkdir(sessDir, { recursive: true });
   const state: SessionState = {
@@ -38,6 +42,7 @@ async function setupSession(sessionId: string, events: Event[]): Promise<void> {
     turns: 0,
     exit_code: null,
     exit_reason: null,
+    ...overrides,
   };
   await writeState(path.join(sessDir, "state.json"), state);
   for (const ev of events) {
@@ -106,4 +111,40 @@ describe("cmdPending output is jq-parseable for tricky byte ranges", () => {
       expect(parsed.args.command).toBe(command);
     });
   }
+});
+
+describe("cmdPending alias/generation tag shape (CD-1: machine-readable fields are additive-only)", () => {
+  it("carries the bare alias plus an additive generation field — never a composed display string", async () => {
+    const sessionId = "sess_aliased";
+    await setupSession(sessionId, [makeDecisionEvent("echo hi")], {
+      alias: "reviewer",
+      generation: 2,
+    });
+
+    const { code, captured } = await captureStdout(() => cmdPending([sessionId]));
+    expect(code).toBe(0);
+    const parsed = JSON.parse(captured.trim());
+    expect(parsed.alias).toBe("reviewer");
+    expect(parsed.generation).toBe(2);
+  });
+
+  it("omits both alias and generation when the session has neither", async () => {
+    const sessionId = "sess_bare";
+    await setupSession(sessionId, [makeDecisionEvent("echo hi")]);
+
+    const { captured } = await captureStdout(() => cmdPending([sessionId]));
+    const parsed = JSON.parse(captured.trim());
+    expect(parsed).not.toHaveProperty("alias");
+    expect(parsed).not.toHaveProperty("generation");
+  });
+
+  it("carries alias without generation when the session isn't part of a rotation lineage", async () => {
+    const sessionId = "sess_alias_only";
+    await setupSession(sessionId, [makeDecisionEvent("echo hi")], { alias: "scout" });
+
+    const { captured } = await captureStdout(() => cmdPending([sessionId]));
+    const parsed = JSON.parse(captured.trim());
+    expect(parsed.alias).toBe("scout");
+    expect(parsed).not.toHaveProperty("generation");
+  });
 });

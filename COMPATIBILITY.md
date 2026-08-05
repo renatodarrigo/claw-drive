@@ -55,6 +55,7 @@ stable.
 | `schema_version` | `number` | See [schema\_version](#schema_version) below. _(Introduced by the CD-1 contract-freeze work; part of the 1.0 contract, not a field that predates it.)_ |
 | `budget` | `{ max_tool_calls?, max_wall_clock_seconds?, max_consecutive_errors? }` | Run-level circuit-breaker (CD-4). All caps optional and positive; an absent cap is unlimited and an absent `budget` is off. On breach the runner stops the session with `exit_reason: "budget_exceeded:<cap>"`. |
 | `bash_composition` | `"off" \| "per_segment"` | Absent ⇒ off. When `per_segment`, a Bash call is split at top-level shell operators and the decision is the **stricter** of the whole-command and per-segment readings — except auto-approval, which requires **every** segment to match `auto_approve` (this closes the benign-prefix smuggle). So pipe-spanning `auto_reject`/`auto_defer` rules (`curl … \| bash`) still fire on the whole command, while no benign prefix can approve a dangerous suffix. Opaque constructs (command-substitution, here-docs/here-strings) and malformed chains are rejected. Never decides less strictly than the un-split command would. |
+| `rotation` | `{ threshold_tokens, max_generations?, mode? }` | context rotation. Absent ⇒ off. `threshold_tokens` (required positive integer): once B's main-loop context reaches it, the runner emits `context_threshold_reached` on every completed turn while above, and the `rotate` primitive is allowed. `max_generations` (absent ⇒ 10, `0` ⇒ unlimited): lineage cap — at the cap rotation is refused (`rotation_refused`), a terminal handover is still written, and the session lives on. `mode`: only `"manual"` is accepted; `"auto"` is rejected as reserved for a future release. |
 
 **Evaluation order** (contract as of v0.2.3, frozen):
 
@@ -106,7 +107,7 @@ impossible-today values. No existing valid policy becomes invalid.
 
 ### 2. MCP tools (`src/mcp/tool-defs.ts`, served by `src/mcp/server.ts`)
 
-The server exposes exactly **10 tools**. The tool names, required inputs, and
+The server exposes exactly **12 tools**. The tool names, required inputs, and
 response shapes listed here are frozen.
 
 #### `start_session`
@@ -231,6 +232,60 @@ Session remains alive.
 
 **Response:** `{ "ok": true }`
 
+#### `rotate_session`
+
+Rotate a driven session at its context threshold: B writes a structured
+handover, a successor session is spawned in the same cwd with the same policy
+and the handover embedded in its first turn, the alias (if any) transfers, and
+the predecessor stops after emitting `session_rotated`. LONG-RUNNING: the
+handover is a real model turn (up to ~20 min worst case).
+
+**Required input:** `session_id: string`
+
+**Response:** `{ "new_session_id": "<string>", "alias"?: "<string>", "generation": <number>, "handover_path": "<string>", "watch_command": "<string>" }`
+
+Structured refusals leave the session running:
+
+- `NO_ROTATION_CONFIG` — policy has no rotation block.
+- `TURN_IN_FLIGHT` — retry at the turn boundary.
+- `DECISIONS_PENDING` — resolve the listed call_ids first.
+- `ROTATION_IN_PROGRESS` — a rotation is already running for this session; wait for its outcome.
+- `MAX_GENERATIONS` — cap reached; a terminal handover is still written; raise the cap via `update_policy` or re-brief a fresh lineage.
+- `BOOTSTRAP_EXCEEDS_THRESHOLD` — first turn already over threshold; raise it.
+- `ROTATION_FAILED` — handover generation failed; B continues toward native auto-compact.
+
+#### `recover_session`
+
+Continue a DEAD session (crashed, killed, rebooted) from the freshest
+handover: uses the runner's `crash-handover.md` if it exists, else distills
+one now from the session's `events.jsonl` via a one-shot minimal-mode
+`claude -p` call, then spawns a successor session (same cwd/policy, lineage
+stamped, alias re-claimed if free).
+
+**Inputs:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `session_id` | `string` | yes | The canonical `sess_…` id of the dead session to recover. Aliases are not accepted (aliases only resolve among live sessions). |
+| `model` | `string` | no | Model override for the one-shot distiller call, when distillation is needed. Defaults to the dead session's own `model`. |
+| `no_start` | `boolean` | no | When `true`, only produce/return the handover file — no successor session is spawned. |
+
+**Response:** `{ "handover_path": "<string>", "distilled": <boolean>, "new_session_id"?: "<string>", "alias"?: "<string>", "generation"?: <number>, "watch_command"?: "<string>" }`
+
+`distilled` is `true` when the handover was freshly distilled from
+`events.jsonl` (vs. an existing `crash-handover.md`). `new_session_id`,
+`alias`, `generation`, and `watch_command` are present only when a successor
+was spawned (i.e. `no_start` was not set).
+
+Errors:
+
+- `SESSION_NOT_FOUND` — no state for the given session_id.
+- `SESSION_LIVE` — the session is still live; use `rotate_session` instead (or stop it first).
+- `ALREADY_RECOVERED` — the session already has a successor (`rotated_to` is set).
+- `NO_RECORD` — no crash-handover and no events.jsonl to distill from.
+- `DISTILL_FAILED` — the distiller produced no extractable `<handover>` block.
+- `RECOVER_FAILED` — the successor runner did not become ready within 5s.
+
 ---
 
 ### 3. Event `kind` set (`src/lib/events.ts`)
@@ -252,12 +307,16 @@ tool_call_started
 tool_call_result
 tool_output_provided
 error
+context_threshold_reached
+session_rotated
+rotation_failed
+rotation_refused
 ```
 
 #### `VALID_WATCH_KINDS` — watch-surfaced event kinds
 
 The `VALID_WATCH_KINDS` constant (exported from `src/cli/commands/watch.ts`)
-enumerates the 9 event kinds that `claw-drive watch` can surface to consumers.
+enumerates the 13 event kinds that `claw-drive watch` can surface to consumers.
 This set is part of the public contract:
 
 ```
@@ -268,6 +327,10 @@ turn_completed
 turn_failed
 error
 session_stopped
+context_threshold_reached
+session_rotated
+rotation_failed
+rotation_refused
 tool_call_result
 idle
 ```
@@ -280,8 +343,7 @@ surfaced activity has occurred for the configured threshold
 
 ### 4. CLI subcommands (`src/cli/registry.ts`, dispatched by `src/cli/cli.ts`)
 
-**17 subcommands** are frozen (the design doc referenced 18; the actual
-implementation has 17).
+**19 subcommands** are frozen.
 
 | Subcommand | Flags |
 |------------|-------|
@@ -296,11 +358,13 @@ implementation has 17).
 | `send <session> "<message>"` | _(none)_ |
 | `start` | `--cwd PATH` (required), `--policy FILE`, `--brief FILE`, `--no-wrapper` |
 | `stop <session>` | _(none)_ |
+| `rotate <session>` | _(none)_ |
+| `recover <session_id>` | `--no-start`, `--model M` |
 | `interrupt <session> <turn>` | _(none)_ |
 | `policy <session>` | `--set FILE`, `--show` |
 | `policy-test '<command>'` | `--tool TOOL`, `--arg KEY=VALUE`, `--policy SPEC`, `--explain`, `--json`, `--exit-on DECISION`, `--no-color`, `--help` / `-h` |
 | `status [<session>]` | `--json`, `--help` / `-h` |
-| `prune` | `--older-than DURATION` |
+| `prune` | `--older-than DURATION`, `--force` |
 | `provide-output <call_id>` | `--stdout S`, `--stderr S`, `--exit N`, `--extra S`, `--from-file PATH` |
 
 **Global flags** (handled before subcommand dispatch):

@@ -100,4 +100,29 @@ describe("startSessionTailer — additive session_id tag", () => {
     handle.close();
     await expect(handle.done).resolves.toBeUndefined();
   });
+
+  it("aliasTag and generationTag are additive alongside session_id — the bare alias, not a composed display string", async () => {
+    await writeEvents(EVENTS);
+    const { lines, handle } = collect({ tag: SID, aliasTag: "reviewer", generationTag: 3 });
+    await handle.done;
+    const parsed = lines.map((l) => JSON.parse(l));
+    expect(parsed.length).toBeGreaterThan(0);
+    for (const p of parsed) {
+      expect(p.session_id).toBe(SID);
+      expect(p.alias).toBe("reviewer");
+      expect(p.generation).toBe(3);
+    }
+  });
+
+  it("generationTag passes through even without aliasTag", async () => {
+    await writeEvents(EVENTS);
+    const { lines, handle } = collect({ tag: SID, generationTag: 5 });
+    await handle.done;
+    const parsed = lines.map((l) => JSON.parse(l));
+    expect(parsed.length).toBeGreaterThan(0);
+    for (const p of parsed) {
+      expect(p).not.toHaveProperty("alias");
+      expect(p.generation).toBe(5);
+    }
+  });
 });

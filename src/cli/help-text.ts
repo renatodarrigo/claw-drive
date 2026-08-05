@@ -33,6 +33,8 @@ THE DRIVING LOOP
               gate, send B the go-ahead.
   4. send     give B its next instruction as a user turn.
   5. stop     reap B when the task is done.
+  6. rotate   when context_threshold_reached fires: B writes a handover and a
+              fresh successor session continues the task (alias follows).
   Sentinel vocabulary: B emits [NEEDS-INPUT] when it needs you and [DONE] when
   the task is complete; watch surfaces a turn as actionable only when one of
   those trailing tokens is present. An idle event fires when a session goes
@@ -51,6 +53,10 @@ POLICY & SAFETY
   circuit-breaker caps spend and trips on repeated failures. Unresolved
   decisions fail secure after decision_timeout_seconds (default 3600). Lint a
   policy with 'policy lint'; dry-run a command against one with 'policy-test'.
+  A rotation block bounds context per session: at threshold_tokens the runner
+  emits context_threshold_reached (re-fires each completed turn while above)
+  and 'rotate' becomes available; max_generations (default 10) caps the
+  lineage. 'recover' continues a crashed session from a distilled handover.
 
 FLEET
   'watch --all' merges every live session into one session_id-tagged stream with

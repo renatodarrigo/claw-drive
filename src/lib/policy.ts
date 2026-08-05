@@ -51,6 +51,18 @@ export interface PolicyObject {
    * independently; the strictest segment's decision wins. See COMPATIBILITY.md.
    */
   bash_composition?: "off" | "per_segment";
+  /**
+   * Optional context-rotation config. Absent ⇒ rotation entirely off (no
+   * tracking, no events — no behaviour change). threshold_tokens: emit
+   * context_threshold_reached and allow `rotate` once B's main-loop context
+   * reaches this. max_generations: lineage cap (absent ⇒ 10; 0 ⇒ unlimited).
+   * mode: only "manual" in this release — "auto" is rejected as reserved.
+   */
+  rotation?: {
+    threshold_tokens: number;
+    max_generations?: number;
+    mode?: "manual";
+  };
 }
 
 export type Policy = "bypass" | PolicyObject;
@@ -378,6 +390,7 @@ export function validatePolicy(p: unknown): { ok: true } | { ok: false; error: s
     "schema_version",
     "budget",
     "bash_composition",
+    "rotation",
   ]);
   for (const key of Object.keys(obj)) {
     if (key.startsWith("_")) continue; // metadata comment; ignored by validator
@@ -455,6 +468,40 @@ export function validatePolicy(p: unknown): { ok: true } | { ok: false; error: s
   if (obj.bash_composition !== undefined) {
     if (obj.bash_composition !== "off" && obj.bash_composition !== "per_segment") {
       return { ok: false, error: 'bash_composition must be "off" or "per_segment"' };
+    }
+  }
+  // rotation (context rotation): optional context-rotation config. threshold_tokens is
+  // required when the block is present; max_generations is a non-negative
+  // integer (0 = unlimited); mode accepts only "manual" — "auto" is reserved.
+  if (obj.rotation !== undefined) {
+    if (typeof obj.rotation !== "object" || obj.rotation === null || Array.isArray(obj.rotation)) {
+      return { ok: false, error: "rotation must be an object" };
+    }
+    const r = obj.rotation as Record<string, unknown>;
+    for (const key of Object.keys(r)) {
+      if (key.startsWith("_")) continue;
+      if (!["threshold_tokens", "max_generations", "mode"].includes(key)) {
+        return { ok: false, error: `unknown rotation key '${key}'` };
+      }
+    }
+    const t = r.threshold_tokens;
+    if (typeof t !== "number" || !Number.isInteger(t) || t <= 0) {
+      return { ok: false, error: "rotation.threshold_tokens must be a positive integer" };
+    }
+    const mg = r.max_generations;
+    if (mg !== undefined && (typeof mg !== "number" || !Number.isInteger(mg) || mg < 0)) {
+      return { ok: false, error: "rotation.max_generations must be a non-negative integer (0 = unlimited)" };
+    }
+    if (r.mode !== undefined) {
+      if (r.mode === "auto") {
+        return {
+          ok: false,
+          error: 'rotation.mode "auto" is reserved for a future release; only "manual" is supported',
+        };
+      }
+      if (r.mode !== "manual") {
+        return { ok: false, error: 'rotation.mode must be "manual"' };
+      }
     }
   }
   return { ok: true };

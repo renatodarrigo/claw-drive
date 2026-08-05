@@ -164,4 +164,42 @@ export const MCP_TOOL_DEFS: McpToolDef[] = [
       required: ["session_id", "turn_id"],
     },
   },
+  {
+    name: "rotate_session",
+    description:
+      "Rotate a driven session at its context threshold: B writes a structured handover (pure text, no tool calls), " +
+      "a successor session is spawned in the same cwd with the same policy and the handover embedded in its first turn " +
+      "(original mission verbatim + handover + raw-log pointer), the alias (if any) transfers, and the predecessor stops " +
+      "after emitting session_rotated (carrying new_session_id + a successor watch_command). LONG-RUNNING: the handover is " +
+      "a real model turn (up to ~20 min worst case). Structured refusals leave the session running: NO_ROTATION_CONFIG " +
+      "(policy has no rotation block), TURN_IN_FLIGHT (retry at the turn boundary), DECISIONS_PENDING (resolve the listed " +
+      "call_ids first), ROTATION_IN_PROGRESS (a rotation is already running for this session — wait for its outcome), " +
+      "MAX_GENERATIONS (cap reached — a terminal handover is still written; raise the cap via update_policy " +
+      "or re-brief a fresh lineage), BOOTSTRAP_EXCEEDS_THRESHOLD (first turn already over threshold — raise it), " +
+      "ROTATION_FAILED (handover generation failed; B continues toward native auto-compact).",
+    inputSchema: {
+      type: "object",
+      properties: { session_id: { type: "string" } },
+      required: ["session_id"],
+    },
+  },
+  {
+    name: "recover_session",
+    description:
+      "Continue a DEAD session (crashed, killed, rebooted) from the freshest handover: uses the runner's " +
+      "crash-handover.md if it exists, else distills one now from the session's events.jsonl via " +
+      "a one-shot minimal-mode claude -p call, then spawns a successor session (same cwd/policy, lineage stamped, " +
+      "alias re-claimed if free). Pass no_start: true to only produce the handover file. Errors: SESSION_NOT_FOUND, SESSION_LIVE " +
+      "(use rotate_session instead), ALREADY_RECOVERED (successor exists), NO_RECORD, DISTILL_FAILED, RECOVER_FAILED. " +
+      "session_id must be the canonical sess_… id (aliases only resolve among live sessions).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        session_id: { type: "string" },
+        model: { type: "string" },
+        no_start: { type: "boolean" },
+      },
+      required: ["session_id"],
+    },
+  },
 ];

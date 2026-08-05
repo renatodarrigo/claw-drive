@@ -24,6 +24,16 @@ export function statePath(sessionId: string): string {
   return path.join(sessionDir(sessionId), "state.json");
 }
 
+/** Context rotation: the B-authored rotation/terminal handover persisted by the runner. */
+export function handoverPath(sessionId: string): string {
+  return path.join(sessionDir(sessionId), "handover.md");
+}
+
+/** Context rotation: the distilled crash handover (runner best-effort or `recover`). */
+export function crashHandoverPath(sessionId: string): string {
+  return path.join(sessionDir(sessionId), "crash-handover.md");
+}
+
 export function socketPath(sessionId: string): string {
   return path.join(sessionDir(sessionId), "control.sock");
 }
@@ -67,6 +77,17 @@ export function approverBinPath(): string {
   const here = fileURLToPath(import.meta.url);
   const pkgRoot = path.resolve(path.dirname(here), "..", "..");
   return path.join(pkgRoot, "bin", "claw-drive-approver");
+}
+
+/**
+ * Absolute path to bin/claw-drive (the dispatcher). Env override
+ * CLAW_DRIVE_BIN first (tests / nonstandard installs), else package-relative:
+ * this file compiles to <pkg>/dist/lib/paths.js, so ../../bin/claw-drive.
+ */
+export function clawDriveBinPath(): string {
+  if (process.env.CLAW_DRIVE_BIN) return process.env.CLAW_DRIVE_BIN;
+  const here = fileURLToPath(import.meta.url);
+  return path.join(path.dirname(here), "..", "..", "bin", "claw-drive");
 }
 
 const SESSION_ID_RE = /^sess_[A-Za-z0-9_-]{1,64}$/;

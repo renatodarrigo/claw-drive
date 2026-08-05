@@ -25,6 +25,11 @@ export function shouldEmit(ev: Event): boolean {
     case "session_stopped":
     case "error":
       return true;
+    case "context_threshold_reached":
+    case "session_rotated":
+    case "rotation_failed":
+    case "rotation_refused":
+      return true;
     case "tool_call_result":
       return (ev as any).is_error === true;
     default:
@@ -46,14 +51,22 @@ export const VALID_WATCH_KINDS: ReadonlySet<string> = new Set([
   "turn_failed",
   "error",
   "session_stopped",
+  "context_threshold_reached",
+  "session_rotated",
+  "rotation_failed",
+  "rotation_refused",
   "tool_call_result",
   "idle",
 ]);
 
 /**
- * The `--decision-only` preset: the seven kinds that genuinely require human
+ * The `--decision-only` preset: the ten kinds that genuinely require human
  * attention. Drops `turn_completed` (progress) and `tool_output_provided`
- * (confirmation that human-supplied output was relayed).
+ * (confirmation that human-supplied output was relayed). Includes the three
+ * rotation kinds that need a human decision (`context_threshold_reached`,
+ * `rotation_failed`, `rotation_refused`) but NOT `session_rotated` — that one
+ * is informational: in v1 the driver initiated the rotation and already holds
+ * the result.
  */
 export const DECISION_ONLY_KINDS: ReadonlySet<string> = new Set([
   "tool_decision_required",
@@ -61,6 +74,9 @@ export const DECISION_ONLY_KINDS: ReadonlySet<string> = new Set([
   "turn_failed",
   "error",
   "session_stopped",
+  "context_threshold_reached",
+  "rotation_failed",
+  "rotation_refused",
   "tool_call_result",
   "idle",
 ]);

@@ -34,6 +34,13 @@ export interface SessionTailerOptions {
    * consumer can attribute events by the human-friendly name too.
    */
   aliasTag?: string;
+  /**
+   * Additive passthrough of the session's rotation-lineage generation, added
+   * alongside `aliasTag` when set. Machine-readable (a bare number) — display
+   * formatting like "name (2)" is a human-table concern (see
+   * aliasWithGeneration) and never changes `aliasTag`'s shape.
+   */
+  generationTag?: number;
   /** Called if the events file cannot be watched (e.g. it vanished). */
   onWatchError?: (message: string) => void;
 }
@@ -58,7 +65,7 @@ export interface SessionTailerHandle {
  * the caller (single-session `cmdWatch` or the multiplexer), not the tailer.
  */
 export function startSessionTailer(opts: SessionTailerOptions): SessionTailerHandle {
-  const { sessionId, emit, allowed, noTokenFilter, suspectedNeedsInput, tag, aliasTag } = opts;
+  const { sessionId, emit, allowed, noTokenFilter, suspectedNeedsInput, tag, aliasTag, generationTag } = opts;
 
   const allEvents: Event[] = [];
   const idle = newIdleState(opts.idleAfterSeconds, Date.now());
@@ -103,6 +110,7 @@ export function startSessionTailer(opts: SessionTailerOptions): SessionTailerHan
         : {
             session_id: tag,
             ...(aliasTag !== undefined ? { alias: aliasTag } : {}),
+            ...(generationTag !== undefined ? { generation: generationTag } : {}),
             ...(payload as object),
           };
     emit(JSON.stringify(out) + "\n");

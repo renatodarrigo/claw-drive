@@ -38,6 +38,7 @@ export function lintPolicy(policy: PolicyObject, opts: LintOptions = {}): Findin
   checkShadowed(policy, findings);
   checkOverlyBroad(policy, findings);
   checkKnownFp(policy, findings);
+  checkRotationThreshold(policy, findings);
   if (opts.checkCoverage) checkCoverage(policy, findings);
   return sortFindings(findings);
 }
@@ -206,6 +207,30 @@ function checkKnownFp(policy: PolicyObject, findings: Finding[]): void {
         break;
       }
     }
+  });
+}
+
+// -- Rotation threshold floor (context rotation) ---------------------------------------
+
+/**
+ * A rotation threshold below ~40k tokens is almost certainly below the session
+ * bootstrap (system prompt + hooks + CLAUDE.md + brief + handover): the first
+ * completed turn would already exceed it, guaranteeing
+ * bootstrap_exceeds_threshold refusals. The context-rotation step-0 probe measured ~26k
+ * bootstrap in an EMPTY dir under a hook-heavy config.
+ */
+const ROTATION_THRESHOLD_FLOOR = 40_000;
+
+function checkRotationThreshold(policy: PolicyObject, findings: Finding[]): void {
+  const t = policy.rotation?.threshold_tokens;
+  if (t === undefined || t >= ROTATION_THRESHOLD_FLOOR) return;
+  findings.push({
+    severity: "warn",
+    code: "rotation-threshold-low",
+    message:
+      `rotation.threshold_tokens ${t} is below ${ROTATION_THRESHOLD_FLOOR} — session bootstrap ` +
+      `commonly exceeds this, so rotation would be refused with bootstrap_exceeds_threshold ` +
+      `on every attempt. Raise the threshold (default guidance: 120000).`,
   });
 }
 

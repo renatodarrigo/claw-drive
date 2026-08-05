@@ -27,7 +27,7 @@ const repoRoot = join(here, "..", "..");
 const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf-8");
 
 describe("CD-13 contract guard — MCP tools (src/mcp/tool-defs.ts)", () => {
-  // The 10 frozen MCP tools (COMPATIBILITY.md §2).
+  // The 12 frozen MCP tools (COMPATIBILITY.md §2).
   const EXPECTED_MCP_TOOLS = new Set([
     "start_session",
     "stop_session",
@@ -39,6 +39,8 @@ describe("CD-13 contract guard — MCP tools (src/mcp/tool-defs.ts)", () => {
     "provide_tool_output",
     "update_policy",
     "interrupt_turn",
+    "rotate_session",
+    "recover_session",
   ]);
 
   it("the server registers exactly the frozen tool set", () => {
@@ -48,7 +50,7 @@ describe("CD-13 contract guard — MCP tools (src/mcp/tool-defs.ts)", () => {
 });
 
 describe("CD-13 contract guard — event kinds (src/lib/events.ts)", () => {
-  // The 14 frozen event kinds written to events.jsonl (COMPATIBILITY.md §3).
+  // The 18 frozen event kinds written to events.jsonl (COMPATIBILITY.md §3).
   const EXPECTED_EVENT_KINDS = new Set([
     "session_started",
     "session_stopped",
@@ -64,6 +66,10 @@ describe("CD-13 contract guard — event kinds (src/lib/events.ts)", () => {
     "tool_call_result",
     "tool_output_provided",
     "error",
+    "context_threshold_reached",
+    "session_rotated",
+    "rotation_failed",
+    "rotation_refused",
   ]);
 
   it("the EventKind union pins exactly the frozen kinds", () => {
@@ -80,7 +86,7 @@ describe("CD-13 contract guard — event kinds (src/lib/events.ts)", () => {
 });
 
 describe("CD-13 contract guard — watch-surfaced kinds (VALID_WATCH_KINDS)", () => {
-  // The 9 watch-surfaced kinds (COMPATIBILITY.md §3). Runtime-exported Set.
+  // The 13 watch-surfaced kinds (COMPATIBILITY.md §3). Runtime-exported Set.
   const EXPECTED_WATCH_KINDS = new Set([
     "tool_decision_required",
     "tool_decision_resolved",
@@ -89,6 +95,10 @@ describe("CD-13 contract guard — watch-surfaced kinds (VALID_WATCH_KINDS)", ()
     "turn_failed",
     "error",
     "session_stopped",
+    "context_threshold_reached",
+    "session_rotated",
+    "rotation_failed",
+    "rotation_refused",
     "tool_call_result",
     "idle",
   ]);
@@ -99,7 +109,7 @@ describe("CD-13 contract guard — watch-surfaced kinds (VALID_WATCH_KINDS)", ()
 });
 
 describe("CD-13 contract guard — CLI subcommands (src/cli/registry.ts)", () => {
-  // The 17 frozen CLI subcommands (COMPATIBILITY.md §4).
+  // The 19 frozen CLI subcommands (COMPATIBILITY.md §4).
   const EXPECTED_CLI_SUBCOMMANDS = new Set([
     "sessions",
     "show",
@@ -118,6 +128,8 @@ describe("CD-13 contract guard — CLI subcommands (src/cli/registry.ts)", () =>
     "status",
     "prune",
     "provide-output",
+    "rotate",
+    "recover",
   ]);
 
   it("the commands registry holds exactly the frozen subcommands", () => {
