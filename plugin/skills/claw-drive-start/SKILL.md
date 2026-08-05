@@ -38,24 +38,23 @@ The user has invoked this skill to kick off a driven session. This is the standa
    ```
    Capture the response: `{ session_id, watch_command, notification_contract }`. The `notification_contract` describes the session's vocabulary, surface modes, watch flags, and the idle default — read it programmatically rather than hardcoding to a specific claw-drive version.
 
-6. **Send the brief as the first user turn.** Call `send_turn` with the brief content as the user message. Capture the `turn_id`.
+   The runner queues `scenario_brief` as Session B's first user turn on its own — do NOT also send the brief with `send_turn`, or B receives the mission twice.
 
-7. **Start the Monitor.** Decide the watch_command:
+6. **Start the Monitor.** Decide the watch_command:
    - If `--verbose` was passed, append ` --no-token-filter` to the watch_command. Monitor will stream all actionable kinds without the sentinel-aware filter (pairs with `wrapper: false` from step 5 so neither side of the contract is engaged).
    - Otherwise, use the watch_command from step 5 unchanged. The watch parser is sentinel-aware by default: `tool_decision_required`, timeout-resolved decisions, `turn_failed`, `error`, `session_stopped`, and is-error `tool_call_result` always surface; `turn_completed` surfaces only when Session B's last message ends with `[NEEDS-INPUT]` (human is needed) or `[DONE]` (task complete). `tool_output_provided` always surfaces.
 
    Then call Claude Code's `Monitor` tool with the (possibly modified) watch_command.
 
-8. **Report to the user:**
+7. **Report to the user:**
    - Session ID: `<id>`
-   - First turn ID: `<turn_id>`
    - Monitor active. Notifications will surface as they arrive.
    - **(Default)** Session B has been taught the two-token contract: emit `[NEEDS-INPUT]` when human input is needed, `[DONE]` when the task is complete, nothing otherwise. Monitor surfaces those `turn_completed` events; other actionable events (decisions, failures, session stops) always fire. Pass `--verbose` next time for the raw stream.
    - **(If `--verbose`)** Both wrapper injection and the sentinel filter are disabled. Monitor surfaces every actionable event. Omit `--verbose` next time for the sentinel-aware default.
    - To resolve a paused call: `/claw-drive-resolve <call_id> <approve|reject|defer> [--remember]`
    - To stop: tell me "stop session `<id>`" or call `claw-drive stop <id>` from a shell.
 
-9. **Wait for notifications.** Do not poll; let the Monitor tool deliver events. Surface `tool_decision_required` events to the user immediately with the relevant context (the tool, the args, the policy match if any).
+8. **Wait for notifications.** Do not poll; let the Monitor tool deliver events. Surface `tool_decision_required` events to the user immediately with the relevant context (the tool, the args, the policy match if any).
 
 ## What this skill does NOT do
 
