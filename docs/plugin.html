@@ -85,6 +85,13 @@
 
     <p>See <a href="driving-patterns.html#defer-round-trip">Driving patterns → Defer round-trip</a> for the full mechanism.</p>
 
+    <h3 id="status"><code>/claw-drive-status</code></h3>
+    <p>Snapshots one or all driven sessions and characterizes what's happening rather than dumping raw JSON: high-severity pending decisions first, then sessions waiting on you (<code>[NEEDS-INPUT]</code>), completions (<code>[DONE]</code>), lower-severity decisions, recent errors — or a quiet "N running, nothing pending" when there's nothing to act on.</p>
+
+    <pre><code class="language-bash">/claw-drive-status [&lt;session-id&gt;]</code></pre>
+
+    <p>Runs <code>claw-drive status [--json]</code> under the hood. Without an argument it summarizes the whole fleet, calling out only the sessions that need attention.</p>
+
     <h2>Scope</h2>
     <p>The plugin is a UX layer. It does NOT:</p>
     <ul>

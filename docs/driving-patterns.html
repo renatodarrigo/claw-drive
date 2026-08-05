@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Driving patterns — claw-drive</title>
-  <meta name="description" content="How one Claude Code session drives another. Monitor, watch, defer round-trip, CLAW-GATE, interrupts, restart resilience.">
+  <meta name="description" content="How one Claude Code session drives another. Monitor, watch, defer round-trip, CLAW-GATE, interrupts, context rotation, crash recovery, restart resilience.">
   <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
   <link rel="stylesheet" href="assets/style.css">
 </head>
@@ -60,12 +60,16 @@ await Monitor(watch_command);
         <tr><td><code>turn_failed</code></td><td>Surface the failure details.</td></tr>
         <tr><td><code>error</code></td><td>Runner-side error. Surface and decide whether to abort.</td></tr>
         <tr><td><code>tool_call_result</code> (with <code>is_error</code>)</td><td>A tool call B issued errored. Surface the error.</td></tr>
+        <tr><td><code>context_threshold_reached</code></td><td>B's tracked context has reached the policy's rotation threshold — re-fires on every completed turn while above it. Plan the handoff: resolve pending decisions, then <code>rotate</code>. See <a href="#rotation">Context rotation</a>.</td></tr>
+        <tr><td><code>session_rotated</code></td><td>B handed off to a successor. Retarget: start a new Monitor on the <code>watch_command</code> riding on the event (single-session <code>watch</code> ends with the predecessor; <code>watch --all</code> picks the successor up on its own).</td></tr>
+        <tr><td><code>rotation_refused</code></td><td>A <code>rotate</code> call was refused with a structured code (<code>DECISIONS_PENDING</code>, <code>TURN_IN_FLIGHT</code>, <code>MAX_GENERATIONS</code>, …). The session is unchanged — act on the code, then retry.</td></tr>
+        <tr><td><code>rotation_failed</code></td><td>Handover generation failed. B keeps running toward native auto-compact — surface it.</td></tr>
         <tr><td><code>session_stopped</code></td><td>Wrap up.</td></tr>
         <tr><td><code>idle</code></td><td>Synthetic heartbeat — no surfaced event arrived within the idle window (default 600s). Break the wait: decide whether to interrupt B or keep holding. See <a href="#idle">Idle events</a>.</td></tr>
       </tbody>
     </table>
 
-    <p><code>watch</code> surfaces only the nine kinds above — eight filtered from <code>events.jsonl</code>, plus the synthetic <code>idle</code> heartbeat it raises itself; Session B's assistant prose, intermediate tool-call lifecycle events, and successful results stay out of A's stream.</p>
+    <p><code>watch</code> surfaces only the thirteen kinds above — twelve filtered from <code>events.jsonl</code>, plus the synthetic <code>idle</code> heartbeat it raises itself; Session B's assistant prose, intermediate tool-call lifecycle events, and successful results stay out of A's stream.</p>
 
     <h3 id="decision-context">What rides with a decision: rationale + diff</h3>
     <p>A <code>tool_decision_required</code> event is more than a tool name and its args. When the runner raises the decision it attaches two context fields, so whoever resolves the gate can judge it in place rather than blind:</p>
@@ -148,6 +152,32 @@ claw-drive watch &lt;id&gt; --only tool_decision_required,turn_failed,session_st
     <pre><code class="language-bash">claw-drive interrupt &lt;session&gt; &lt;turn_id&gt;</code></pre>
 
     <p>You can then <code>send_turn</code> a correction and continue.</p>
+
+    <h2 id="rotation">Context rotation: handing off before the window fills</h2>
+    <p>A long-lived B eventually fills its context window, and native auto-compact decides for you when that happens and what survives it. With a <code>rotation</code> block in the policy (<a href="policies.html#rotation">Policies → Context rotation</a>), the handoff point is the driver's choice instead: once B's tracked context reaches <code>threshold_tokens</code>, the runner emits <code>context_threshold_reached</code> — re-fired on every completed turn while above it — and <code>rotate</code> becomes available.</p>
+
+    <ol>
+      <li><code>context_threshold_reached</code> surfaces through <code>watch</code>. Don't rotate into a half-finished exchange: a rotation is refused while a turn is in flight (<code>TURN_IN_FLIGHT</code> — retry at the turn boundary) and while decisions are pending (<code>DECISIONS_PENDING</code> — resolve the listed <code>call_id</code>s first).</li>
+      <li>The driver calls <code>claw-drive rotate &lt;session&gt;</code> (or <code>rotate_session</code> over MCP). B writes a structured handover as a plain assistant-text turn — no tool call, so it can't stall on a policy escalation. This is a real model turn: long-running, up to ~20 minutes worst case.</li>
+      <li>A successor session spawns in the same cwd under the same policy, with the handover <em>and</em> the lineage's verbatim original mission embedded in its first turn. Any alias the predecessor held transfers to the successor; <code>status</code> and <code>sessions</code> show <code>alias (generation)</code> for a session in a lineage.</li>
+      <li>The predecessor emits <code>session_rotated</code> — carrying the successor's <code>new_session_id</code> and a ready-made <code>watch_command</code> — then stops.</li>
+    </ol>
+
+    <h3 id="rotation-retarget">Retargeting the monitor across a rotation</h3>
+    <p>A single-session <code>watch</code> follows one session, so it ends with the predecessor: <code>session_rotated</code> surfaces, then <code>session_stopped</code>, then the stream closes. Feed the <code>watch_command</code> riding on <code>session_rotated</code> to a fresh Monitor to follow the successor. A fleet driver skips the bookkeeping entirely: <code>watch --all</code>'s dynamic membership picks the successor up automatically, its lines carrying the transferred alias plus an additive <code>generation</code> field.</p>
+
+    <p>Every refusal is structured and leaves the session running — <code>NO_ROTATION_CONFIG</code>, <code>TURN_IN_FLIGHT</code>, <code>DECISIONS_PENDING</code>, <code>ROTATION_IN_PROGRESS</code>, <code>MAX_GENERATIONS</code> (the lineage cap; a terminal handover is still written — raise the cap via <code>update_policy</code> or re-brief a fresh lineage), <code>BOOTSTRAP_EXCEEDS_THRESHOLD</code>, <code>ROTATION_FAILED</code> (handover generation failed; B continues toward native auto-compact). A failed or refused rotation never leaves the predecessor worse off than before the attempt: every step of the handoff has to succeed before the predecessor stops.</p>
+
+    <h3 id="recover">Crash recovery: <code>recover</code></h3>
+    <p>Rotation needs a live, responsive B. <code>claw-drive recover &lt;session_id&gt;</code> (or <code>recover_session</code> over MCP) covers the other case — a session that crashed, was killed, or died with the host. It reuses the runner's best-effort <code>crash-handover.md</code> if one was written on the way down, or distills a handover now from the dead session's <code>events.jsonl</code> via a one-shot, minimal-mode <code>claude -p</code> call, then spawns a successor exactly as rotation does: same cwd and policy, lineage stamped, alias re-claimed if it's free.</p>
+
+    <pre><code class="language-bash">claw-drive recover &lt;session_id&gt;
+# --no-start produces just the handover file; --model M overrides the distiller's model.</code></pre>
+
+    <p><code>recover</code> takes the canonical <code>sess_…</code> id, not an alias — aliases only resolve among live sessions, and <code>recover</code> targets dead ones by definition. A dead session still holding an unconsumed crash-handover is skipped by <code>prune</code>, since the handover may be the only distilled record of that session's final state; <code>--force</code> prunes it anyway.</p>
+
+    <h3 id="report">The post-mortem companion: <code>report</code></h3>
+    <p>After a rotation or a recovery — or for any session you need to reconstruct — <code>claw-drive report &lt;session&gt;</code> renders the whole story from <code>events.jsonl</code>: a summary header (id, alias, cwd, model, started/ended, duration, exit reason, turn/tool-call/decision counts) followed by a chronological transcript — user turns, assistant text, one consolidated line per tool call with its policy resolution and how any pause was resolved, sentinel outcomes, idle gaps, and session lifecycle markers. It works for live and dead sessions and is strictly read-only. <code>--json</code> emits the summary object alone.</p>
 
     <h2 id="restart">Restart resilience</h2>
     <p>Events persist to <code>~/.claw-drive/sessions/&lt;id&gt;/events.jsonl</code>. If Session A crashes or restarts, the driven session continues to run. Reconnect by listing sessions and starting a new <code>Monitor</code>:</p>

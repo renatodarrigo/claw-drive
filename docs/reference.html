@@ -80,7 +80,7 @@
     <ul>
       <li><strong>Constraints:</strong> 1–32 chars, leading letter, then letters / digits / <code>_</code> / <code>-</code>; must not begin with <code>sess_</code>.</li>
       <li><strong>Uniqueness:</strong> unique among live sessions. A duplicate-live alias fails at start with an error naming the conflicting <code>session_id</code>; once the holder stops or is pruned, the alias is free to reuse.</li>
-      <li><strong>Resolution:</strong> every session-arg CLI subcommand (<code>send</code>, <code>stop</code>, <code>interrupt</code>, <code>policy</code>, <code>tail</code>, <code>show</code>, single-session <code>watch</code>, single-id <code>status</code>, single-target <code>pending</code>) and MCP tool (<code>stop_session</code>, <code>send_turn</code>, <code>poll_turn</code>, <code>poll_session</code>, <code>provide_tool_output</code>, <code>update_policy</code>, <code>interrupt_turn</code>) accepts either an alias or a canonical id.</li>
+      <li><strong>Resolution:</strong> every session-arg CLI subcommand (<code>send</code>, <code>stop</code>, <code>interrupt</code>, <code>policy</code>, <code>tail</code>, <code>show</code>, <code>report</code>, single-session <code>watch</code>, single-id <code>status</code>, single-target <code>pending</code>) and MCP tool (<code>stop_session</code>, <code>send_turn</code>, <code>poll_turn</code>, <code>poll_session</code>, <code>provide_tool_output</code>, <code>update_policy</code>, <code>interrupt_turn</code>) accepts either an alias or a canonical id.</li>
       <li><strong>Display:</strong> <code>status</code>, <code>sessions</code>, <code>pending</code>, and <code>watch --all</code> show the alias alongside the <code>session_id</code> when present.</li>
     </ul>
     <p>An alias lives with its session: there is no post-start rename, no cross-restart registry, and no namespacing. <code>start</code> still prints the canonical <code>session_id</code>.</p>
@@ -112,21 +112,21 @@
         <tr>
           <td>Policy schema</td>
           <td><code>src/lib/policy.ts</code></td>
-          <td>All <code>PolicyObject</code> top-level keys (<code>auto_reject</code>, <code>auto_defer</code>, <code>auto_approve</code>, <code>escalate_default</code>, <code>decision_timeout_seconds</code>, <code>schema_version</code>, <code>budget</code>), the <code>Rule</code> field set, the <code>"bypass"</code> string form, evaluation order, and <code>_</code>-prefixed metadata convention.</td>
+          <td>All <code>PolicyObject</code> top-level keys (<code>auto_reject</code>, <code>auto_defer</code>, <code>auto_approve</code>, <code>escalate_default</code>, <code>decision_timeout_seconds</code>, <code>schema_version</code>, <code>budget</code>, <code>bash_composition</code>, <code>rotation</code>), the <code>Rule</code> field set, the <code>"bypass"</code> string form, evaluation order, and <code>_</code>-prefixed metadata convention.</td>
         </tr>
         <tr>
           <td>MCP tools</td>
-          <td><code>src/mcp/server.ts</code></td>
-          <td>All 10 tool names, their required inputs, and response shapes: <code>start_session</code>, <code>stop_session</code>, <code>send_turn</code>, <code>poll_turn</code>, <code>poll_session</code>, <code>list_sessions</code>, <code>resolve_tool_call</code>, <code>provide_tool_output</code>, <code>update_policy</code>, <code>interrupt_turn</code>.</td>
+          <td><code>src/mcp/tool-defs.ts</code></td>
+          <td>All 12 tool names, their required inputs, and response shapes: <code>start_session</code>, <code>stop_session</code>, <code>send_turn</code>, <code>poll_turn</code>, <code>poll_session</code>, <code>list_sessions</code>, <code>resolve_tool_call</code>, <code>provide_tool_output</code>, <code>update_policy</code>, <code>interrupt_turn</code>, <code>rotate_session</code>, <code>recover_session</code>.</td>
         </tr>
         <tr>
           <td>Event <code>kind</code> set</td>
           <td><code>src/lib/events.ts</code></td>
-          <td>All 14 event kinds written to <code>events.jsonl</code>, and the 9-kind <code>VALID_WATCH_KINDS</code> set surfaced by <code>claw-drive watch</code> (including the synthetic <code>idle</code> kind).</td>
+          <td>All 18 event kinds written to <code>events.jsonl</code>, and the 13-kind <code>VALID_WATCH_KINDS</code> set surfaced by <code>claw-drive watch</code> (including the synthetic <code>idle</code> kind).</td>
         </tr>
         <tr>
           <td>CLI subcommands</td>
-          <td><code>src/cli/cli.ts</code></td>
+          <td><code>src/cli/registry.ts</code></td>
           <td>All 20 subcommands and their flags. Global flags <code>--version</code> / <code>-v</code> and <code>--help</code> / <code>-h</code>.</td>
         </tr>
         <tr>

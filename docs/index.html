@@ -91,6 +91,10 @@
         <h3>Fleet</h3>
         <p>One A supervises many. <code>start --name</code> aliases each session, <code>watch --all</code> multiplexes their streams, <code>status</code> prints the whole fleet. Budget caps bound each run; a per-session <code>runner.log</code> keeps it auditable.</p>
       </a>
+      <a href="driving-patterns.html#rotation" class="pillar">
+        <h3>Rotation &amp; recovery</h3>
+        <p>A task can outlive one context window. <code>rotate</code> hands off to a fresh successor on a structured handover at a policy-set threshold; <code>recover</code> continues a crashed session from its last record; <code>report</code> renders the post-mortem.</p>
+      </a>
     </div>
 
     <h2>Deeper reading</h2>
@@ -101,7 +105,7 @@
       </a>
       <a href="plugin.html" class="read-card">
         <h3>Plugin →</h3>
-        <p>Claude Code slash commands: <code>/claw-drive-init</code>, <code>/claw-drive-start</code>, <code>/claw-drive-resolve</code>.</p>
+        <p>Claude Code slash commands: <code>/claw-drive-init</code>, <code>/claw-drive-start</code>, <code>/claw-drive-resolve</code>, <code>/claw-drive-status</code>, <code>/claw-drive-help</code>.</p>
       </a>
       <a href="policies.html" class="read-card">
         <h3>Policies →</h3>
@@ -109,7 +113,7 @@
       </a>
       <a href="driving-patterns.html" class="read-card">
         <h3>Driving patterns →</h3>
-        <p>Monitor + watch. Defer round-trip. CLAW-GATE. Interrupts. Restart resilience.</p>
+        <p>Monitor + watch. Defer round-trip. CLAW-GATE. Interrupts. Context rotation &amp; crash recovery. Restart resilience.</p>
       </a>
       <a href="reference.html" class="read-card">
         <h3>Reference →</h3>
