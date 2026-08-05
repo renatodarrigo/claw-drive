@@ -33,7 +33,7 @@ export const COMMANDS: readonly CommandEntry[] = [
   // Session lifecycle
   { name: "start", group: "lifecycle",
     summary: "Spawn a driven session (B) in a project cwd.",
-    usage: "start --cwd <path> [--policy FILE] [--brief FILE] [--name <alias>]",
+    usage: "start --cwd <path> [--policy FILE] [--brief FILE] [--name <alias>] [--no-wrapper]",
     handler: cmdStart },
   { name: "send", group: "lifecycle",
     summary: "Send B a user turn.",

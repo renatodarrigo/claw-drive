@@ -326,7 +326,7 @@ B's echo fires the hook → policy defers → monitor alerts A → human answers
 | `reject <call_id> [--reason R] [--remember]` | Reject a paused call. `--remember` appends to `auto_reject`. |
 | `defer <call_id> [--reason R] [--remember]` | Defer a paused call to the human. `--remember` appends to `auto_defer`. |
 | `send <session> "<msg>"` | Send a user turn |
-| `start --cwd PATH [--policy FILE] [--brief FILE] [--name ALIAS]` | Start a session. `--name` gives it a reusable alias (see [Session aliases](#session-aliases-start---name)). |
+| `start --cwd PATH [--policy FILE] [--brief FILE] [--name ALIAS] [--no-wrapper]` | Start a session. `--name` gives it a reusable alias (see [Session aliases](#session-aliases-start---name)); `--no-wrapper` starts B without the sentinel-token wrapper (pair with `watch --no-token-filter`). |
 | `stop <session>` | Reap B |
 | `rotate <session>` | Rotate a session at its context threshold. See [Context rotation & crash recovery](#context-rotation--crash-recovery). |
 | `recover <session_id> [--no-start] [--model M]` | Continue a dead session from its crash-handover, distilling one from `events.jsonl` if needed. Canonical id only — aliases resolve among live sessions only. |
