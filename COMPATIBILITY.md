@@ -357,7 +357,7 @@ surfaced activity has occurred for the configured threshold
 | `reject <call_id>` | `--reason R`, `--remember`, `--remember-as JSON`, `--preview`, `--json` |
 | `defer <call_id>` | `--reason R`, `--remember`, `--remember-as JSON`, `--preview`, `--json` |
 | `send <session> "<message>"` | _(none)_ |
-| `start` | `--cwd PATH` (required), `--policy FILE`, `--brief FILE`, `--no-wrapper` |
+| `start` | `--cwd PATH` (required), `--policy FILE`, `--brief FILE`, `--name ALIAS`, `--no-wrapper` |
 | `stop <session>` | _(none)_ |
 | `rotate <session>` | _(none)_ |
 | `recover <session_id>` | `--no-start`, `--model M` |
