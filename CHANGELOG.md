@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.4.0] — 2026-08-05
 
 ### Added
 
@@ -10,6 +10,15 @@
 - **Lineage state fields.** `generation`, `root_session_id`, `rotated_from`, `rotated_to`, `compactions`, and `original_brief` — all additive-optional on `state.json`, absent on any session without a rotation policy block.
 - **Contract growth, fully additive (see `COMPATIBILITY.md`):** MCP tools 10 → 12 (`rotate_session`, `recover_session`); event kinds 14 → 18 (`context_threshold_reached`, `session_rotated`, `rotation_failed`, `rotation_refused`); `watch`-surfaced kinds 9 → 13 (the same four); CLI subcommands 17 → 19 (`rotate`, `recover`).
 - **`claw-drive report <session>` (CD-59).** A human-readable session report rendered from `events.jsonl`: a summary header (id, alias, cwd, model, started/ended, duration, exit reason, turn/tool-call/decision counts) followed by a chronological transcript — user turns, assistant text, one consolidated line per tool call (its policy resolution and how any pause was resolved), sentinel outcomes, idle gaps (`--idle-after`, default `600`), and session lifecycle markers. `--json` emits the summary object only. Works for live and dead sessions; strictly read-only — never writes session state, events, or sockets. Adds a CLI subcommand: the frozen 1.x contract's subcommand count moves 19 → 20 (COMPATIBILITY.md §4).
+
+### Fixed
+
+- `claw-drive help` — and the `start` rows in reference.html and the README — now list `--no-wrapper`, a real shipped flag the usage string omitted. COMPATIBILITY.md §4's `start` row also gains the (equally omitted) `--name`.
+- The `/claw-drive-start` plugin skill no longer instructs a manual `send_turn` of the brief. The runner already queues `scenario_brief` as Session B's first user turn, so following the old step delivered the mission twice.
+
+### Docs
+
+- Website brought fully in sync with the 1.4.0 feature set: context rotation, crash recovery, and `report` documented across the driving-patterns, policies, index, and plugin pages (including the previously undocumented `/claw-drive-status` skill), with reference.html's frozen-surfaces table reconciled to the current contract (12 MCP tools / 18 event kinds / 13 watch kinds / 20 subcommands).
 
 ### Tests
 
