@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- `budget.max_cost_usd` — fourth budget cap: stops the session when the lineage's cumulative estimated spend (USD, as accounted by the claude CLI) exceeds the cap. Lineage-cumulative across `rotate`/`recover` successors via the additive `cost_usd_base`/`cost_usd` state fields; the running total is visible in `status` for every session; a stream without cost readings can never trip the cap.
+
 ## [1.4.1] — 2026-08-06
 
 ### Fixed

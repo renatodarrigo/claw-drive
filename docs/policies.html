@@ -188,7 +188,8 @@ claw-drive policy lint --max-severity warn ./my-policy.json   # exit 1 on any wa
   "budget": {
     "max_tool_calls": 500,
     "max_wall_clock_seconds": 1800,
-    "max_consecutive_errors": 8
+    "max_consecutive_errors": 8,
+    "max_cost_usd": 5.00
   }
 }</code></pre>
     <ul>
@@ -197,6 +198,7 @@ claw-drive policy lint --max-severity warn ./my-policy.json   # exit 1 on any wa
       <li><code>max_consecutive_errors</code> — consecutive errored tool calls; a clean turn resets the count to zero.</li>
     </ul>
     <p>When a cap is exceeded the runner stops the session and records <code>exit_reason: "budget_exceeded:&lt;cap&gt;"</code> — e.g. <code>budget_exceeded:max_tool_calls</code> — surfaced like any other stop through a <code>session_stopped</code> event. Caps are independent: set only the ones you want, each a positive number; an absent cap is unlimited.</p>
+    <p><code>max_cost_usd</code> is the spend cap: it stops the session once the lineage's cumulative estimated spend in USD exceeds it. The number is the claude CLI's own cost accounting — every model, subagent, and cache tier the session used, priced by the CLI's built-in per-model rates — so it tracks what the run actually costs, and it is exactly as current as your installed CLI. Unlike the other caps it does not reset on rotation: successors started by <code>rotate</code> or <code>recover</code> inherit the predecessor's total, so the cap bounds the whole mission. One-shot handover distillations run outside the session's own accounting and are not counted. On subscription auth the figure is the API-equivalent estimate. A stream that reports no cost can never trip the cap, and every session's running total is visible in <code>claw-drive status</code> whether or not a cap is set.</p>
 
     <h2 id="rotation">Context rotation (<code>rotation</code>)</h2>
     <p>An optional <code>rotation</code> block bounds how much context a single driven session accumulates before handing off to a fresh successor — the policy half of <a href="driving-patterns.html#rotation">Driving patterns → Context rotation</a>. <strong>Off by default:</strong> a policy without the block gets no context tracking, no threshold events, and no <code>rotate</code> — nothing about the session behaves differently.</p>
