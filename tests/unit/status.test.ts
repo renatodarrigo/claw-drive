@@ -728,6 +728,39 @@ describe("status — CD-8 rationale + diff in pending decisions", () => {
   });
 });
 
+describe("cost display (cost-cap)", () => {
+  const snap = (over: Record<string, unknown>) =>
+    ({
+      session_id: "sess_costshow01",
+      status: "running",
+      cwd: "/home/x/p",
+      policy_label: null,
+      policy_digest: "sha256:aa",
+      runner_pid: 1,
+      created_at: new Date().toISOString(),
+      last_activity_at: null,
+      turns: 1,
+      current_turn: null,
+      last_completed_turn: null,
+      pending_decisions: [],
+      recent_errors: [],
+      ...over,
+    }) as never;
+
+  it("summary table shows a COST column, $-formatted to cents, '-' when absent", () => {
+    const table = renderSummaryTable([snap({ cost_usd: 1.837 }), snap({})], Date.now());
+    const [header, row1, row2] = table.split("\n");
+    expect(header).toContain("COST");
+    expect(row1).toContain("$1.84");
+    expect(row2.split("\t")).toContain("-");
+  });
+
+  it("detailed block renders a Cost line only when stamped", () => {
+    expect(renderDetailedBlock(snap({ cost_usd: 0.5 }))).toContain("Cost:          $0.50");
+    expect(renderDetailedBlock(snap({}))).not.toContain("Cost:");
+  });
+});
+
 describe("status — CD-10 alias display", () => {
   it("buildSessionSnapshot includes alias when state has one, omits it otherwise", () => {
     const withAlias = buildSessionSnapshot(baseState({ alias: "reviewer" }), [], NOW_MS)!;

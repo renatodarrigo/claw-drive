@@ -57,6 +57,8 @@ export interface SessionSnapshot {
   turns: number;
   /** Context rotation: present only on rotation-lineage sessions. */
   context_tokens?: number;
+  /** Cost-cap: lineage-cumulative spend, present iff stamped. */
+  cost_usd?: number;
   rotation_threshold?: number;
   generation?: number;
   root_session_id?: string;
@@ -296,6 +298,7 @@ export function buildSessionSnapshot(
     last_activity_at: state.last_event_at,
     turns: state.turns,
     ...(state.context_tokens !== undefined ? { context_tokens: state.context_tokens } : {}),
+    ...(state.cost_usd !== undefined ? { cost_usd: state.cost_usd } : {}),
     ...(state.policy !== "bypass" && state.policy.rotation
       ? { rotation_threshold: state.policy.rotation.threshold_tokens }
       : {}),
@@ -340,10 +343,14 @@ function fmtContext(s: SessionSnapshot): string {
   return s.rotation_threshold ? `${k(s.context_tokens)}/${k(s.rotation_threshold)}` : k(s.context_tokens);
 }
 
+function fmtCost(s: SessionSnapshot): string {
+  return s.cost_usd === undefined ? "-" : `$${s.cost_usd.toFixed(2)}`;
+}
+
 export function renderSummaryTable(snaps: SessionSnapshot[], nowMs: number): string {
   if (snaps.length === 0) return NO_SESSIONS_MSG;
   const rows: string[][] = [];
-  rows.push(["SESSION_ID", "STATUS", "TURNS", "CONTEXT", "PENDING", "ERRORS", "LAST_ACTIVITY", "CWD"]);
+  rows.push(["SESSION_ID", "STATUS", "TURNS", "CONTEXT", "COST", "PENDING", "ERRORS", "LAST_ACTIVITY", "CWD"]);
   for (const s of snaps) {
     const idShort = s.session_id.length > 20 ? s.session_id.slice(0, 19) + "…" : s.session_id;
     // CD-10: append the alias to the id cell when present; un-aliased rows are
@@ -354,6 +361,7 @@ export function renderSummaryTable(snaps: SessionSnapshot[], nowMs: number): str
       s.status,
       String(s.turns),
       fmtContext(s),
+      fmtCost(s),
       String(s.pending_decisions.length),
       String(s.recent_errors.length),
       relativeTime(s.last_activity_at, nowMs),
@@ -395,6 +403,9 @@ export function renderDetailedBlock(s: SessionSnapshot): string {
   }
   if (s.context_tokens !== undefined) {
     lines.push(`Context:       ${fmtContext(s)} tokens`);
+  }
+  if (s.cost_usd !== undefined) {
+    lines.push(`Cost:          ${fmtCost(s)}`);
   }
   if (s.compactions !== undefined && s.compactions > 0) {
     lines.push(`Compactions:   ${s.compactions} (native auto-compact fired — rotation lost the race)`);
