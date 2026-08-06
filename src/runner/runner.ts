@@ -906,6 +906,7 @@ export async function handleRequest(
               generation: generation + 1,
               root_session_id: ctx.state.root_session_id ?? ctx.sessionId,
               rotated_from: ctx.sessionId,
+              ...(ctx.state.cost_usd !== undefined ? { cost_usd_base: ctx.state.cost_usd } : {}),
             },
           });
           spawnRunnerDetached(newId);

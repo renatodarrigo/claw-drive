@@ -151,6 +151,7 @@ export async function recoverSession(input: RecoverInput): Promise<RecoverOutcom
       generation,
       root_session_id: state.root_session_id ?? input.sessionId,
       rotated_from: input.sessionId,
+      ...(state.cost_usd !== undefined ? { cost_usd_base: state.cost_usd } : {}),
     },
   });
   spawnRunnerDetached(newId);
