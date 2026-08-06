@@ -102,6 +102,10 @@ export interface RunnerContext {
    * suppresses threshold re-fires during the handover turn. turnWaiters lets
    * the rotate choreography await a specific turn's completion. */
   lastContextTokens: number | null;
+  /** Cost-cap: latest cumulative USD reading from B's result lines (null until
+   * the first result line with a finite total_cost_usd). Lineage total =
+   * (state.cost_usd_base ?? 0) + this. */
+  lastCostUsd: number | null;
   completedTurns: number;
   turnInFlight: boolean;
   firstTurnContextTokens: number | null;
@@ -222,7 +226,7 @@ function teardownSession(ctx: RunnerContext, reason: string): void {
  * and reap B via the shared teardown. No-op without a budget, once a breach is
  * recorded, or once a stop is already in flight.
  */
-async function enforceBudget(ctx: RunnerContext, ev: Event): Promise<void> {
+export async function enforceBudget(ctx: RunnerContext, ev: Event): Promise<void> {
   // bExited: nothing is left to enforce against a dead B, and a breach here
   // would clobber the crash teardown's exit_reason and re-enter teardown.
   if (!ctx.budget || ctx.budgetBreached || ctx.stopping || ctx.bExited) return;
@@ -292,6 +296,13 @@ async function runStdoutLoop(ctx: RunnerContext): Promise<void> {
       if (out.main_context_tokens !== undefined) {
         ctx.lastContextTokens = out.main_context_tokens;
       }
+      if (out.cumulative_cost_usd !== undefined) {
+        ctx.lastCostUsd = out.cumulative_cost_usd;
+        // Recorded BEFORE the same line's events are emitted, so the
+        // turn_completed carried by this very result line is checked against
+        // the updated lineage total (same ordering as main_context_tokens).
+        ctx.budget?.recordCost((ctx.state.cost_usd_base ?? 0) + out.cumulative_cost_usd);
+      }
       if (out.compact_boundary) {
         // Native auto-compact won the race (or rotation isn't configured).
         ctx.state.compactions = (ctx.state.compactions ?? 0) + 1;
@@ -330,8 +341,17 @@ export async function afterEventBookkeeping(ctx: RunnerContext, ev: Event): Prom
   // dogfood's post-interrupt abort WAS a turn_failed, seconds before B died).
   ctx.lastInterruptAt = null;
   ctx.completedTurns += 1;
-  if (ctx.lastContextTokens !== null) {
-    ctx.state.context_tokens = ctx.lastContextTokens;
+  const costBase = ctx.state.cost_usd_base;
+  const hasCost = ctx.lastCostUsd != null || costBase !== undefined;
+  if (ctx.lastContextTokens !== null || hasCost) {
+    if (ctx.lastContextTokens !== null) {
+      ctx.state.context_tokens = ctx.lastContextTokens;
+    }
+    if (hasCost) {
+      // Lineage total; `!= null` (not `!== null`) deliberately also covers
+      // harness-built contexts that predate the field (undefined).
+      ctx.state.cost_usd = (costBase ?? 0) + (ctx.lastCostUsd ?? 0);
+    }
     await writeState(statePath(ctx.sessionId), ctx.state);
   }
   if (ctx.completedTurns === 1) {
@@ -886,6 +906,7 @@ export async function handleRequest(
               generation: generation + 1,
               root_session_id: ctx.state.root_session_id ?? ctx.sessionId,
               rotated_from: ctx.sessionId,
+              ...(ctx.state.cost_usd !== undefined ? { cost_usd_base: ctx.state.cost_usd } : {}),
             },
           });
           spawnRunnerDetached(newId);
@@ -1252,6 +1273,7 @@ export async function runRunner(sessionId: string): Promise<void> {
     budget: budgetCfg ? createBudgetTracker(budgetCfg) : null,
     budgetBreached: false,
     lastContextTokens: null,
+    lastCostUsd: null,
     completedTurns: 0,
     turnInFlight: false,
     firstTurnContextTokens: null,

@@ -220,3 +220,53 @@ describe("stream-parser context-rotation usage side-channel", () => {
     expect(out.compact_boundary).toBeUndefined();
   });
 });
+
+describe("cumulative_cost_usd extraction (cost-cap)", () => {
+  it("extracts total_cost_usd from a success result line", () => {
+    const out = parseClaudeLine(
+      { type: "result", subtype: "success", is_error: false, total_cost_usd: 0.1681 },
+      "turn_1"
+    );
+    expect(out.cumulative_cost_usd).toBe(0.1681);
+    expect(out.events[0]).toMatchObject({ kind: "turn_completed", turn_id: "turn_1" });
+  });
+
+  it("extracts total_cost_usd from an ERROR result line too (error results still carry usage)", () => {
+    const out = parseClaudeLine(
+      { type: "result", subtype: "error_during_execution", is_error: true, total_cost_usd: 0.42 },
+      "turn_2"
+    );
+    expect(out.cumulative_cost_usd).toBe(0.42);
+    expect(out.events[0]).toMatchObject({ kind: "turn_failed", turn_id: "turn_2" });
+  });
+
+  it("missing or malformed total_cost_usd produces NO reading (never zero)", () => {
+    expect(
+      parseClaudeLine({ type: "result", subtype: "success", is_error: false }, "t").cumulative_cost_usd
+    ).toBeUndefined();
+    expect(
+      parseClaudeLine(
+        { type: "result", subtype: "success", is_error: false, total_cost_usd: "0.10" },
+        "t"
+      ).cumulative_cost_usd
+    ).toBeUndefined();
+    expect(
+      parseClaudeLine(
+        { type: "result", subtype: "success", is_error: false, total_cost_usd: Infinity },
+        "t"
+      ).cumulative_cost_usd
+    ).toBeUndefined();
+  });
+
+  it("non-result lines never carry a cost reading", () => {
+    const out = parseClaudeLine(
+      {
+        type: "assistant",
+        parent_tool_use_id: null,
+        message: { content: [], usage: { input_tokens: 5 } },
+      },
+      "t"
+    );
+    expect(out.cumulative_cost_usd).toBeUndefined();
+  });
+});

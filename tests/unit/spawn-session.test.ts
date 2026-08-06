@@ -118,3 +118,38 @@ describe("scaffoldSessionDir", () => {
     expect(state!.original_brief).toBeUndefined();
   });
 });
+
+describe("cost_usd_base lineage stamp (cost-cap)", () => {
+  it("stamps cost_usd_base on a successor when provided", async () => {
+    const id = "sess_20260729T000000_dddddd";
+    await scaffoldSessionDir({
+      sessionId: id,
+      cwd: process.env.HOME as string,
+      policy: { escalate_default: true },
+      decisionTimeoutSeconds: 3600,
+      model: null,
+      lineage: {
+        generation: 2,
+        root_session_id: "sess_root0001",
+        rotated_from: "sess_root0001",
+        cost_usd_base: 3.21,
+      },
+    });
+    const state = await readState(statePath(id));
+    expect(state?.cost_usd_base).toBeCloseTo(3.21, 10);
+  });
+
+  it("omits cost_usd_base when the lineage stamp has none (fresh starts and cost-less predecessors)", async () => {
+    const id = "sess_20260729T000000_eeeeee";
+    await scaffoldSessionDir({
+      sessionId: id,
+      cwd: process.env.HOME as string,
+      policy: { escalate_default: true },
+      decisionTimeoutSeconds: 3600,
+      model: null,
+      lineage: { generation: 2, root_session_id: "sess_root0002", rotated_from: "sess_root0002" },
+    });
+    const state = await readState(statePath(id));
+    expect(state?.cost_usd_base).toBeUndefined();
+  });
+});

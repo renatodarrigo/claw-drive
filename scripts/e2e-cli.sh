@@ -218,4 +218,62 @@ expect_file_contains "rotate refuses INTERRUPT_GRACE right after an interrupt" "
 expect_exit "stop cleans up" 0 "$BIN" stop "$SID_INT"
 rm -rf "$STUB3_DIR" "$INT_CWD"
 
+section "cost-cap breach (stub session process)"
+# A stub `claude` whose every turn ends in a result line reporting cumulative
+# spend beyond the cap. One driven turn must trip budget_exceeded:max_cost_usd:
+# error event, session_stopped, runner exit — the full breaker choreography.
+COST_STUB_DIR="$(mktemp -d)"
+COST_CWD="$(mktemp -d "$HOME/.cache/claw-e2e-cwd.XXXXXX")"
+cat > "$COST_STUB_DIR/claude" <<'EOF'
+#!/bin/sh
+IFS= read -r _line
+printf '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"result":"ok","total_cost_usd":0.25}\n'
+IFS= read -r _wait
+EOF
+chmod +x "$COST_STUB_DIR/claude"
+COSTPOLICY="$TMPHOME/cost-policy.json"
+printf '{"escalate_default":true,"budget":{"max_cost_usd":0.10}}\n' > "$COSTPOLICY"
+
+SID_COST="$(PATH="$COST_STUB_DIR:$PATH" "$BIN" start --cwd "$COST_CWD" --policy "$COSTPOLICY")"
+if [[ "$SID_COST" == sess_* ]]; then
+  pass "stub session starts (id: $SID_COST)"
+else
+  fail "stub session starts (got: $SID_COST)"
+fi
+
+"$BIN" send "$SID_COST" "spend" >/dev/null 2>&1 || true
+STATE_COST="$TMPHOME/sessions/$SID_COST/state.json"
+for _ in $(seq 1 50); do
+  grep -q "budget_exceeded:max_cost_usd" "$STATE_COST" 2>/dev/null && break
+  sleep 0.2
+done
+
+# Settle on the runner's actual exit — by construction this happens after
+# every state/event write in the breach choreography — before asserting on
+# file contents below, closing the ms-margin race the budget_exceeded poll
+# above (the earliest write, not the last) leaves open.
+CRPID="$(cat "$TMPHOME/sessions/$SID_COST/runner.pid" 2>/dev/null || true)"
+if [[ -n "$CRPID" ]]; then
+  for _ in $(seq 1 25); do
+    kill -0 "$CRPID" 2>/dev/null || break
+    sleep 0.2
+  done
+  if kill -0 "$CRPID" 2>/dev/null; then
+    fail "runner exits after cost breach (undead runner, pid $CRPID)"
+    kill -9 "$CRPID" 2>/dev/null || true
+  else
+    pass "runner exits after cost breach"
+  fi
+else
+  fail "runner exits after cost breach (no runner.pid recorded)"
+fi
+
+expect_file_contains "state records budget_exceeded:max_cost_usd" "$STATE_COST" "budget_exceeded:max_cost_usd"
+expect_file_contains "state stamped the lineage spend" "$STATE_COST" "\"cost_usd\": 0.25"
+EVJ_COST="$TMPHOME/sessions/$SID_COST/events.jsonl"
+expect_file_contains "breach emits the breaker error event" "$EVJ_COST" "session budget exceeded: max_cost_usd"
+expect_file_contains "session_stopped recorded" "$EVJ_COST" '"kind":"session_stopped"'
+
+rm -rf "$COST_STUB_DIR" "$COST_CWD"
+
 summary

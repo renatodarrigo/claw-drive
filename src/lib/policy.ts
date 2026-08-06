@@ -43,6 +43,8 @@ export interface PolicyObject {
     max_tool_calls?: number;
     max_wall_clock_seconds?: number;
     max_consecutive_errors?: number;
+    /** Cost-cap: lineage-cumulative estimated spend ceiling in USD. */
+    max_cost_usd?: number;
   };
   /**
    * Optional per-segment Bash composition mode. Absent ⇒ "off" (today's
@@ -457,7 +459,12 @@ export function validatePolicy(p: unknown): { ok: true } | { ok: false; error: s
       return { ok: false, error: "budget must be an object" };
     }
     const b = obj.budget as Record<string, unknown>;
-    for (const field of ["max_tool_calls", "max_wall_clock_seconds", "max_consecutive_errors"] as const) {
+    for (const field of [
+      "max_tool_calls",
+      "max_wall_clock_seconds",
+      "max_consecutive_errors",
+      "max_cost_usd",
+    ] as const) {
       const v = b[field];
       if (v === undefined) continue;
       if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) {

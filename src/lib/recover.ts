@@ -129,6 +129,12 @@ export async function recoverSession(input: RecoverInput): Promise<RecoverOutcom
     state.original_brief ??
     (state as unknown as { scenario_brief?: string }).scenario_brief ??
     "(no original brief was recorded at session start)";
+  // Best-known lineage total to hand the successor: cost_usd if the
+  // predecessor completed at least one turn, else fall back to its own
+  // inherited cost_usd_base — the predecessor died before any turn could
+  // stamp a cost_usd, which is exactly the crash window recover exists for.
+  // Omit the key entirely when neither is set (see below), not undefined.
+  const inheritedCost = state.cost_usd ?? state.cost_usd_base;
   await scaffoldSessionDir({
     sessionId: newId,
     cwd: state.cwd,
@@ -151,6 +157,7 @@ export async function recoverSession(input: RecoverInput): Promise<RecoverOutcom
       generation,
       root_session_id: state.root_session_id ?? input.sessionId,
       rotated_from: input.sessionId,
+      ...(inheritedCost !== undefined ? { cost_usd_base: inheritedCost } : {}),
     },
   });
   spawnRunnerDetached(newId);

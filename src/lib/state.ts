@@ -50,6 +50,14 @@ export interface SessionState {
    * original_brief: the lineage's verbatim original mission; stamped at scaffold
    * time for rotation-configured or lineage sessions; successors inherit it
    * unchanged.
+   *
+   * Cost-cap (additive-optional, absent on pre-feature state files).
+   * cost_usd: lineage-cumulative estimated spend in USD as of the last
+   * completed turn (= cost_usd_base + the process's latest cumulative
+   * reading). Stamped whenever a reading or a base exists.
+   * cost_usd_base: dollars inherited from the predecessor at scaffold time;
+   * absent for generation 1 and for successors whose predecessor never
+   * stamped a cost_usd.
    */
   context_tokens?: number;
   generation?: number;
@@ -58,6 +66,8 @@ export interface SessionState {
   rotated_to?: string;
   compactions?: number;
   original_brief?: string;
+  cost_usd?: number;
+  cost_usd_base?: number;
 }
 
 export async function readState(statePath: string): Promise<SessionState | null> {

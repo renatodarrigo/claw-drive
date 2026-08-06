@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { recoverSession } from "../../src/lib/recover.js";
 import { cmdRecover } from "../../src/cli/commands/recover.js";
 import { sessionDir, statePath, crashHandoverPath } from "../../src/lib/paths.js";
+import { readState } from "../../src/lib/state.js";
 
 let home: string;
 let savedEnv: string | undefined;
@@ -75,7 +76,7 @@ describe("recoverSession successor scaffolding (stub runner bin)", () => {
 
   it("threads the predecessor's mcp.json mcpServers into the successor", async () => {
     const id = "sess_20200101T000000_eeeeee";
-    await deadSession(id);
+    await deadSession(id, { cost_usd: 4.5 });
     await fs.writeFile(crashHandoverPath(id), "## Current objective\nresume");
     await fs.writeFile(
       path.join(sessionDir(id), "mcp.json"),
@@ -88,6 +89,30 @@ describe("recoverSession successor scaffolding (stub runner bin)", () => {
       await fs.readFile(path.join(sessionDir(newId), "mcp.json"), "utf-8")
     ) as { mcpServers: Record<string, unknown> };
     expect(mcp.mcpServers).toMatchObject({ extra: { command: "x" } });
+    const succ = await readState(statePath(newId));
+    expect(succ?.cost_usd_base).toBeCloseTo(4.5, 10);
+  });
+
+  it("carries the predecessor's own cost_usd_base as the successor's base when the predecessor never stamped a cost_usd", async () => {
+    const id = "sess_20200101T000000_gggggg";
+    await deadSession(id, { cost_usd_base: 3.0 });
+    await fs.writeFile(crashHandoverPath(id), "## Current objective\nresume");
+    const r = await recoverSession({ sessionId: id });
+    expect(r.ok).toBe(true);
+    const newId = (r as { result: { new_session_id: string } }).result.new_session_id;
+    const succ = await readState(statePath(newId));
+    expect(succ?.cost_usd_base).toBeCloseTo(3.0, 10);
+  });
+
+  it("omits cost_usd_base on the successor when the predecessor never stamped a cost_usd", async () => {
+    const id = "sess_20200101T000000_ffffff";
+    await deadSession(id);
+    await fs.writeFile(crashHandoverPath(id), "## Current objective\nresume");
+    const r = await recoverSession({ sessionId: id });
+    expect(r.ok).toBe(true);
+    const newId = (r as { result: { new_session_id: string } }).result.new_session_id;
+    const succ = await readState(statePath(newId));
+    expect(succ?.cost_usd_base).toBeUndefined();
   });
 });
 

@@ -239,7 +239,8 @@ An optional `budget` block caps a single driven run, so a session that loops, we
   "budget": {
     "max_tool_calls": 500,
     "max_wall_clock_seconds": 1800,
-    "max_consecutive_errors": 8
+    "max_consecutive_errors": 8,
+    "max_cost_usd": 5.00
   }
 }
 ```
@@ -249,6 +250,8 @@ An optional `budget` block caps a single driven run, so a session that loops, we
 - **`max_consecutive_errors`** — consecutive errored tool calls; a clean turn resets the count to zero.
 
 When a cap is exceeded the runner stops the session and records `exit_reason: "budget_exceeded:<cap>"` (e.g. `budget_exceeded:max_tool_calls`), surfaced like any other stop through a `session_stopped` event. Caps are independent — set only the ones you want, each a positive number; an absent cap is unlimited.
+
+`max_cost_usd` is the spend cap: it stops the session once the lineage's cumulative estimated spend in USD exceeds it. The number is the claude CLI's own cost accounting — every model, subagent, and cache tier the session used, priced by the CLI's built-in per-model rates — so it tracks what the run actually costs, and it is exactly as current as your installed CLI. Unlike the other caps it does not reset on rotation: successors started by `rotate` or `recover` inherit the predecessor's total, so the cap bounds the whole mission. One-shot handover distillations run outside the session's own accounting and are not counted. On subscription auth the figure is the API-equivalent estimate. A stream that reports no cost can never trip the cap, and every session's running total is visible in `claw-drive status` whether or not a cap is set.
 
 ### Linting a policy
 

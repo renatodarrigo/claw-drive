@@ -53,8 +53,10 @@ export interface ScaffoldInput {
   wrapper?: boolean;
   alias?: string;
   mcpServers?: Record<string, unknown>;
-  /** Context rotation: lineage stamp for rotation/recover successors. Absent on fresh starts. */
-  lineage?: { generation: number; root_session_id: string; rotated_from: string };
+  /** Context rotation: lineage stamp for rotation/recover successors. Absent on
+   * fresh starts. cost_usd_base: the predecessor's lineage-cumulative spend at
+   * handover time (cost-cap) — omitted when the predecessor never stamped one. */
+  lineage?: { generation: number; root_session_id: string; rotated_from: string; cost_usd_base?: number };
 }
 
 export async function scaffoldSessionDir(input: ScaffoldInput): Promise<void> {
@@ -117,6 +119,9 @@ export async function scaffoldSessionDir(input: ScaffoldInput): Promise<void> {
     state.generation = input.lineage.generation;
     state.root_session_id = input.lineage.root_session_id;
     state.rotated_from = input.lineage.rotated_from;
+    if (input.lineage.cost_usd_base !== undefined) {
+      state.cost_usd_base = input.lineage.cost_usd_base;
+    }
   } else if (input.policy !== "bypass" && input.policy.rotation) {
     // Context rotation: a rotation-configured fresh start begins its lineage at
     // generation 1 so displays can show "alias (1)" from the first session.
