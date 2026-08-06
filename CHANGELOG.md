@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **A session process dying mid-rotation no longer strands anything.** If B exits during the handover turn, the in-flight `rotate` settles promptly with `ROTATION_FAILED` (previously the client blocked toward its 25-minute timeout), `rotation_failed` is recorded ahead of the terminal `session_stopped` (previously no rotation event was recorded at all), no successor is ever spawned off a dead predecessor, and the runner process exits as soon as the terminal record is written. Previously the runner could outlive its own `session_stopped` — an "undead" runner that absorbed every SIGTERM and whose delayed state writes could clobber a later `recover`'s lineage stamp.
+- **Teardown survives dead and unresponsive session processes, and runner signals tear down for real.** Teardown is idempotent (a second stop or signal never double-arms timers or double-emits), short-circuits a session process that is already dead (previously a stop against one hung forever waiting on an exit event that had already fired), and still escalates SIGTERM→SIGKILL against one that ignores stdin EOF. SIGTERM/SIGINT to the runner now performs the same graceful teardown, recording a truthful `runner_sigterm`/`runner_sigint` as the stop reason and `state.exit_reason`; a second signal force-exits. Previously the signal path forwarded a single unescalated SIGTERM, never exited on its own, and silently absorbed every signal after the first.
+- **`recover --model` without a value is an argument error** (exit 2, usage on stderr) instead of silently falling back to the dead session's own model — including when `--model` would have swallowed a following flag.
+- **Rotation and recover successors inherit the predecessor's extra MCP servers.** Servers passed at start via `mcp_extra_config` live only in the session's own `mcp.json`; successors now read them back from there instead of silently starting without them.
+
+### Added
+
+- **`INTERRUPT_GRACE`.** `rotate` / `rotate_session` refuses for ~15 s after an `interrupt_turn` — an interrupted claude process can exit on its very next turn, so a rotate issued straight after an interrupt could kill the session it meant to preserve (the crash net caught exactly this in live use; the refusal now prevents the death instead of surviving it). A completed turn is proof of life and clears the window early, and the rotation's internal handover retry waits out the same settle window after its own interrupt. Additive refusal code beside `TURN_IN_FLIGHT` / `DECISIONS_PENDING`; documented in `COMPATIBILITY.md` and the CLI contract notes.
+
 ## [1.4.0] — 2026-08-05
 
 ### Added
