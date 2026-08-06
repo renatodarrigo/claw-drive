@@ -247,12 +247,11 @@ for _ in $(seq 1 50); do
   grep -q "budget_exceeded:max_cost_usd" "$STATE_COST" 2>/dev/null && break
   sleep 0.2
 done
-expect_file_contains "state records budget_exceeded:max_cost_usd" "$STATE_COST" "budget_exceeded:max_cost_usd"
-expect_file_contains "state stamped the lineage spend" "$STATE_COST" "\"cost_usd\": 0.25"
-EVJ_COST="$TMPHOME/sessions/$SID_COST/events.jsonl"
-expect_file_contains "breach emits the breaker error event" "$EVJ_COST" "session budget exceeded: max_cost_usd"
-expect_file_contains "session_stopped recorded" "$EVJ_COST" '"kind":"session_stopped"'
 
+# Settle on the runner's actual exit — by construction this happens after
+# every state/event write in the breach choreography — before asserting on
+# file contents below, closing the ms-margin race the budget_exceeded poll
+# above (the earliest write, not the last) leaves open.
 CRPID="$(cat "$TMPHOME/sessions/$SID_COST/runner.pid" 2>/dev/null || true)"
 if [[ -n "$CRPID" ]]; then
   for _ in $(seq 1 25); do
@@ -268,6 +267,13 @@ if [[ -n "$CRPID" ]]; then
 else
   fail "runner exits after cost breach (no runner.pid recorded)"
 fi
+
+expect_file_contains "state records budget_exceeded:max_cost_usd" "$STATE_COST" "budget_exceeded:max_cost_usd"
+expect_file_contains "state stamped the lineage spend" "$STATE_COST" "\"cost_usd\": 0.25"
+EVJ_COST="$TMPHOME/sessions/$SID_COST/events.jsonl"
+expect_file_contains "breach emits the breaker error event" "$EVJ_COST" "session budget exceeded: max_cost_usd"
+expect_file_contains "session_stopped recorded" "$EVJ_COST" '"kind":"session_stopped"'
+
 rm -rf "$COST_STUB_DIR" "$COST_CWD"
 
 summary
