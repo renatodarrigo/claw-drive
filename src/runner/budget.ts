@@ -12,25 +12,32 @@
 export type BudgetCap =
   | "max_tool_calls"
   | "max_wall_clock_seconds"
-  | "max_consecutive_errors";
+  | "max_consecutive_errors"
+  | "max_cost_usd";
 
 export interface Budget {
   max_tool_calls?: number;
   max_wall_clock_seconds?: number;
   max_consecutive_errors?: number;
+  /** Cost-cap: lineage-cumulative estimated spend ceiling in USD (see
+   * runner cost tracking). Strictly-greater-than breaches, like the others. */
+  max_cost_usd?: number;
 }
 
 export interface BudgetCounters {
   toolCalls: number;
   elapsedSeconds: number;
   consecutiveErrors: number;
+  /** Cost-cap: lineage-cumulative USD as of the latest result-line reading
+   * (inherited base + latest per-process reading). 0 until a reading exists. */
+  costUsd: number;
 }
 
 /**
  * Pure cap-check. Returns the first breached cap, or null when within budget
  * (or when there is no budget). "Exceeding" a cap is strictly greater than it,
  * so a cap of N permits exactly N. Caps are checked in a stable order:
- * tool_calls, then wall_clock, then consecutive_errors.
+ * tool_calls, then wall_clock, then consecutive_errors, then cost.
  */
 export function checkBudget(
   budget: Budget | undefined,
@@ -45,6 +52,9 @@ export function checkBudget(
   }
   if (budget.max_consecutive_errors !== undefined && counters.consecutiveErrors > budget.max_consecutive_errors) {
     return "max_consecutive_errors";
+  }
+  if (budget.max_cost_usd !== undefined && counters.costUsd > budget.max_cost_usd) {
+    return "max_cost_usd";
   }
   return null;
 }
@@ -61,10 +71,13 @@ export interface BudgetTracker {
   recordError(): void;
   /** Reset the consecutive-error count to 0 (call on a clean turn_completed). */
   recordCleanTurn(): void;
+  /** Cost-cap: SET the lineage-cumulative USD total (base + latest reading).
+   * A set, not an increment — the underlying reading is already cumulative. */
+  recordCost(lineageTotalUsd: number): void;
   /** Check the caps against the current counters and the given elapsed seconds. */
   check(elapsedSeconds: number): BudgetCap | null;
   /** Current counter snapshot (wall-clock is supplied per check, not held). */
-  readonly counters: { toolCalls: number; consecutiveErrors: number };
+  readonly counters: { toolCalls: number; consecutiveErrors: number; costUsd: number };
 }
 
 /**
@@ -74,6 +87,7 @@ export interface BudgetTracker {
 export function createBudgetTracker(budget: Budget | undefined): BudgetTracker {
   let toolCalls = 0;
   let consecutiveErrors = 0;
+  let costUsd = 0;
   return {
     recordToolCall() {
       toolCalls += 1;
@@ -84,11 +98,14 @@ export function createBudgetTracker(budget: Budget | undefined): BudgetTracker {
     recordCleanTurn() {
       consecutiveErrors = 0;
     },
+    recordCost(lineageTotalUsd: number) {
+      costUsd = lineageTotalUsd;
+    },
     check(elapsedSeconds: number): BudgetCap | null {
-      return checkBudget(budget, { toolCalls, elapsedSeconds, consecutiveErrors });
+      return checkBudget(budget, { toolCalls, elapsedSeconds, consecutiveErrors, costUsd });
     },
     get counters() {
-      return { toolCalls, consecutiveErrors };
+      return { toolCalls, consecutiveErrors, costUsd };
     },
   };
 }

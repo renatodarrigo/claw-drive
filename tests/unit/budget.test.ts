@@ -99,6 +99,47 @@ describe("createBudgetTracker — counters + breach", () => {
     const t = createBudgetTracker({ max_tool_calls: 100 });
     t.recordToolCall();
     t.recordError();
-    expect(t.counters).toEqual({ toolCalls: 1, consecutiveErrors: 1 });
+    expect(t.counters).toEqual({ toolCalls: 1, consecutiveErrors: 1, costUsd: 0 });
+  });
+});
+
+describe("max_cost_usd (cost-cap)", () => {
+  it("checkBudget: at the cap is not over it; strictly-greater breaches", () => {
+    const b: Budget = { max_cost_usd: 1.5 };
+    expect(checkBudget(b, { toolCalls: 0, elapsedSeconds: 0, consecutiveErrors: 0, costUsd: 1.5 })).toBeNull();
+    expect(checkBudget(b, { toolCalls: 0, elapsedSeconds: 0, consecutiveErrors: 0, costUsd: 1.51 })).toBe("max_cost_usd");
+  });
+
+  it("checkBudget: cost is checked LAST in the stable order", () => {
+    const b: Budget = { max_tool_calls: 1, max_cost_usd: 0.01 };
+    expect(
+      checkBudget(b, { toolCalls: 2, elapsedSeconds: 0, consecutiveErrors: 0, costUsd: 5 })
+    ).toBe("max_tool_calls");
+  });
+
+  it("budgetExceededReason maps the new cap", () => {
+    expect(budgetExceededReason("max_cost_usd")).toBe("budget_exceeded:max_cost_usd");
+  });
+
+  it("tracker: recordCost SETS the lineage total (idempotent, not additive)", () => {
+    const t = createBudgetTracker({ max_cost_usd: 1.0 });
+    t.recordCost(0.4);
+    t.recordCost(0.9); // cumulative reading replaces, does not add
+    expect(t.check(0)).toBeNull(); // 0.9 <= 1.0
+    t.recordCost(1.01);
+    expect(t.check(0)).toBe("max_cost_usd");
+  });
+
+  it("tracker: a regressed reading is taken as-is (undercount, no clamp)", () => {
+    const t = createBudgetTracker({ max_cost_usd: 1.0 });
+    t.recordCost(0.9);
+    t.recordCost(0.5);
+    expect(t.counters.costUsd).toBe(0.5);
+  });
+
+  it("tracker without a budget ignores recordCost", () => {
+    const t = createBudgetTracker(undefined);
+    t.recordCost(1e9);
+    expect(t.check(0)).toBeNull();
   });
 });
