@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
@@ -19,6 +19,8 @@ let stubDir: string;
 let prevHome: string | undefined;
 let prevPath: string | undefined;
 let prevBin: string | undefined;
+let exitCalls: Array<number | undefined>;
+let processKills: Array<[number, string | number]>;
 
 interface FakeB {
   writes: string[];
@@ -106,9 +108,23 @@ beforeEach(async () => {
   process.env.PATH = `${stubDir}:${process.env.PATH}`;
   // Successor spawns must never launch a real runner from a unit test.
   process.env.CLAW_DRIVE_BIN = "/bin/false";
+  exitCalls = [];
+  processKills = [];
+  vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+    exitCalls.push(code);
+  }) as never);
+  vi.spyOn(process, "kill").mockImplementation(((pid: number, sig?: string | number) => {
+    processKills.push([pid, sig ?? "SIGTERM"]);
+    return true;
+  }) as never);
+  // Only the clock is faked — setImmediate and fs callbacks stay real so
+  // teardown's async fs work can drain via settle().
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 });
 
 afterEach(async () => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
   if (prevHome === undefined) delete process.env.CLAW_DRIVE_HOME;
   else process.env.CLAW_DRIVE_HOME = prevHome;
   if (prevPath === undefined) delete process.env.PATH;
