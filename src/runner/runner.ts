@@ -115,6 +115,10 @@ export interface RunnerContext {
    * stop, a signal after a stop) are no-ops instead of re-arming timers or
    * double-emitting the terminal event. */
   tearingDown: boolean;
+  /** Epoch ms of the last interrupt_turn SIGINT; null when none happened or a
+   * later turn_completed proved B alive. Gates rotate (INTERRUPT_GRACE) —
+   * an interrupted claude process can exit on its next turn. */
+  lastInterruptAt: number | null;
 }
 
 // Placeholder type; populated in Task 13 when the approval flow lands.
@@ -296,7 +300,7 @@ async function runStdoutLoop(ctx: RunnerContext): Promise<void> {
  * turn while above threshold (suppressed during the rotate choreography's
  * own handover turn).
  */
-async function afterEventBookkeeping(ctx: RunnerContext, ev: Event): Promise<void> {
+export async function afterEventBookkeeping(ctx: RunnerContext, ev: Event): Promise<void> {
   if (ev.kind !== "turn_completed" && ev.kind !== "turn_failed") return;
   ctx.turnInFlight = false;
   const turnId = (ev as { turn_id?: string }).turn_id;
@@ -308,6 +312,10 @@ async function afterEventBookkeeping(ctx: RunnerContext, ev: Event): Promise<voi
     }
   }
   if (ev.kind !== "turn_completed") return;
+  // Proof of life: a COMPLETED turn means B survived any earlier interrupt —
+  // clear the rotate gate's grace window. A failed turn proves nothing (the
+  // dogfood's post-interrupt abort WAS a turn_failed, seconds before B died).
+  ctx.lastInterruptAt = null;
   ctx.completedTurns += 1;
   if (ctx.lastContextTokens !== null) {
     ctx.state.context_tokens = ctx.lastContextTokens;
@@ -423,7 +431,13 @@ async function runHandoverTurn(
         return null;
       }
       // Ignore the interrupted turn's actual outcome (completed or failed) —
-      // attempt 2 starts fresh regardless.
+      // attempt 2 starts fresh regardless. But give B the same settle window
+      // the rotate gate enforces after an external interrupt
+      // (INTERRUPT_GRACE): a just-SIGINT'd claude can exit on its very next
+      // stdin message (dogfood 2026-08-04) — sending attempt 2 immediately
+      // would reproduce exactly that kill pattern. The loop-top bExited guard
+      // covers a death during this settle.
+      await sleepTimeout(HANDOVER_INTERRUPT_GRACE_MS);
       continue;
     }
     ctx.turnWaiters.delete(turnId); // no-op (afterEventBookkeeping already deleted it on resolve)
@@ -656,6 +670,9 @@ export async function handleRequest(
     }
 
     case "interrupt_turn": {
+      // Stamp first, unconditionally: rotate's INTERRUPT_GRACE gate must
+      // cover the request even when the SIGINT itself is a no-op.
+      ctx.lastInterruptAt = Date.now();
       if (ctx.b.pid) {
         try {
           process.kill(ctx.b.pid, "SIGINT");
@@ -682,12 +699,15 @@ export async function handleRequest(
         pendingCallIds: [...ctx.pendingApprovals.keys()],
         generation: ctx.state.generation ?? 1,
         firstTurnContextTokens: ctx.firstTurnContextTokens,
+        msSinceInterrupt:
+          ctx.lastInterruptAt === null ? null : Date.now() - ctx.lastInterruptAt,
       });
       if (
         blocker &&
         (blocker.code === "NO_ROTATION_CONFIG" ||
           blocker.code === "TURN_IN_FLIGHT" ||
-          blocker.code === "DECISIONS_PENDING")
+          blocker.code === "DECISIONS_PENDING" ||
+          blocker.code === "INTERRUPT_GRACE")
       ) {
         // Transient / config blockers: plain error, no event.
         return { id: req.id, ok: false, error: blocker.code, message: blocker.message };
@@ -1196,6 +1216,7 @@ export async function runRunner(sessionId: string): Promise<void> {
     turnWaiters: new Map(),
     bExited: false,
     tearingDown: false,
+    lastInterruptAt: null,
   };
 
   // Start the stdout loop; run it in the background. If it fails, emit an

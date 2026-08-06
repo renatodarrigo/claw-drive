@@ -43,6 +43,25 @@ describe("checkRotateGate", () => {
     generation: 1,
     firstTurnContextTokens: null as number | null,
   };
+  // A3 (dogfood 2026-08-04): SIGINT + a rotate seconds later killed B — the
+  // handover turn landed on a claude process that was about to exit. Rotation
+  // must refuse inside a settle window after an interrupt.
+  it("refuses INTERRUPT_GRACE within 15s of an interrupt", () => {
+    const b = checkRotateGate({ ...base, msSinceInterrupt: 3_000 });
+    expect(b?.code).toBe("INTERRUPT_GRACE");
+    expect(b?.message).toContain("interrupt");
+  });
+  it("passes once the grace window has elapsed", () => {
+    expect(checkRotateGate({ ...base, msSinceInterrupt: 15_000 })).toBeNull();
+  });
+  it("passes when no interrupt was recorded (null or omitted)", () => {
+    expect(checkRotateGate({ ...base, msSinceInterrupt: null })).toBeNull();
+    expect(checkRotateGate(base)).toBeNull();
+  });
+  it("TURN_IN_FLIGHT outranks the grace window", () => {
+    const b = checkRotateGate({ ...base, turnInFlight: true, msSinceInterrupt: 1_000 });
+    expect(b?.code).toBe("TURN_IN_FLIGHT");
+  });
   it("passes a clean gate", () => {
     expect(checkRotateGate(base)).toBeNull();
   });

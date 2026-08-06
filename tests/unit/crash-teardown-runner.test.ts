@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
@@ -90,6 +90,7 @@ async function makeCtx(fake: FakeB): Promise<RunnerContext> {
     turnWaiters: new Map(),
     bExited: false,
     tearingDown: false,
+    lastInterruptAt: null,
   } as RunnerContext;
 }
 
@@ -251,4 +252,53 @@ describe("handleUnexpectedBExit — crash during rotate (dogfood gen-2)", () => 
     },
     10_000
   );
+
+  it("handover attempt 2 waits out the interrupt settle window before sending (A3 kill pattern)", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const kills: Array<[number, string | number]> = [];
+    vi.spyOn(process, "kill").mockImplementation(((pid: number, sig?: string | number) => {
+      kills.push([pid, sig ?? "SIGTERM"]);
+      return true;
+    }) as never);
+    // Real-time drains (timers are faked): drainUntil for progress,
+    // drainFor to prove NOTHING happens across a genuine time window.
+    const drainUntil = async (cond: () => boolean) => {
+      const dl = Date.now() + 5000;
+      while (!cond()) {
+        if (Date.now() > dl) throw new Error("drainUntil: condition not reached");
+        await new Promise((r) => setImmediate(r));
+      }
+    };
+    const drainFor = async (ms: number) => {
+      const dl = Date.now() + ms;
+      while (Date.now() < dl) await new Promise((r) => setImmediate(r));
+    };
+    try {
+      const fake = makeFakeB();
+      const ctx = await makeCtx(fake);
+      const rotate = handleRequest(ctx, { id: "r1", op: "rotate" });
+      await drainUntil(() => fake.writes.length === 1);
+      // Attempt 1 times out (600s) → the runner SIGINTs B…
+      await vi.advanceTimersByTimeAsync(600_000);
+      await drainUntil(() => kills.some(([, sig]) => sig === "SIGINT"));
+      // …and the interrupted turn terminates late, within the grace window.
+      const waiter = ctx.turnWaiters.get("turn_1")!;
+      waiter("failed");
+      // Attempt 2 must NOT go out immediately — a just-SIGINT'd claude can
+      // exit on its next stdin message. 500ms of real time is far more than
+      // an immediate send would need to surface.
+      await drainFor(500);
+      expect(fake.writes).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(15_000);
+      await drainUntil(() => fake.writes.length === 2);
+      // Fail attempt 2's turn too: the rotation ends cleanly, no dangling op.
+      const waiter2 = ctx.turnWaiters.get("turn_2")!;
+      waiter2("failed");
+      const resp = await rotate;
+      expect(resp).toMatchObject({ ok: false, error: "ROTATION_FAILED" });
+    } finally {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    }
+  });
 });

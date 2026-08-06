@@ -190,4 +190,32 @@ else
 fi
 rm -rf "$STUB2_DIR" "$SIG_CWD"
 
+section "interrupt grace gates rotate (stub session process)"
+# Dogfood 2026-08-04: SIGINT + a rotate seconds later killed B. The gate must
+# refuse INTERRUPT_GRACE inside the settle window. The stub traps INT so the
+# interrupt itself leaves it alive (a real claude survives the SIGINT too —
+# the hazard is the NEXT turn).
+STUB3_DIR="$(mktemp -d)"
+INT_CWD="$(mktemp -d "$HOME/.cache/claw-e2e-cwd.XXXXXX")"
+cat > "$STUB3_DIR/claude" <<'EOF'
+#!/bin/sh
+trap '' INT
+while read -r _l; do :; done
+exit 0
+EOF
+chmod +x "$STUB3_DIR/claude"
+
+SID_INT="$(PATH="$STUB3_DIR:$PATH" "$BIN" start --cwd "$INT_CWD" --policy "$ROTPOLICY")"
+if [[ "$SID_INT" == sess_* ]]; then
+  pass "stub session starts (id: $SID_INT)"
+else
+  fail "stub session starts (got: $SID_INT)"
+fi
+expect_exit "interrupt succeeds" 0 "$BIN" interrupt "$SID_INT" turn_1
+INT_OUT="$TMPHOME/interrupt-rotate-out.txt"
+"$BIN" rotate "$SID_INT" >"$INT_OUT" 2>&1 || true
+expect_file_contains "rotate refuses INTERRUPT_GRACE right after an interrupt" "$INT_OUT" "INTERRUPT_GRACE"
+expect_exit "stop cleans up" 0 "$BIN" stop "$SID_INT"
+rm -rf "$STUB3_DIR" "$INT_CWD"
+
 summary

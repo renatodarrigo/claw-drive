@@ -215,6 +215,16 @@ the `init` event lists each server with `{"name":"...","status":"connected"|"pen
    stdin back on stdout. Not needed for claw-drive's current architecture but
    noted for reference.
 
+8. **SIGINT can leave the process one turn from exiting** (observed 2026-08-04
+   against claude 2.1.220, live dogfood). A SIGINT mid-turn aborts the turn
+   cleanly (`result` with `error_during_execution`), but a user message sent
+   seconds later can make the process exit 0 instead of answering — the
+   interrupt leaves it in a terminating state for a window after the abort.
+   claw-drive defends at two levels: `rotate` refuses with `INTERRUPT_GRACE`
+   for 15s after an `interrupt_turn` (a completed turn clears it early), and
+   the handover retry waits out the same settle window after its own
+   internal SIGINT.
+
 ## Open questions answered vs still-open
 
 ### Answered
