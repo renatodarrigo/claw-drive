@@ -150,6 +150,11 @@ The `notification_contract` shape is described in the
 
 Stop a session. Reaps the Claude Code process; keeps the session directory.
 
+A stop (or a runner SIGTERM) that lands while the crash path is mid-flight —
+including its ≤180s best-effort crash distillation — defers to it: the crash
+teardown owns the terminal record, so the recorded reason stays `crashed:*`.
+A second signal force-exits the runner.
+
 **Required input:** `session_id: string`
 
 **Response:** `{ "ok": true }`
@@ -277,6 +282,11 @@ stamped, alias re-claimed if free).
 `events.jsonl` (vs. an existing `crash-handover.md`). `new_session_id`,
 `alias`, `generation`, and `watch_command` are present only when a successor
 was spawned (i.e. `no_start` was not set).
+
+`recover` deliberately ignores `max_generations`: it is human-initiated
+remediation, not an automatic rotation, so its error set omits
+`MAX_GENERATIONS` — a recovered successor past the cap simply renders
+"generation N of M" with N > M and the final-generation wrap-up guidance.
 
 Errors:
 

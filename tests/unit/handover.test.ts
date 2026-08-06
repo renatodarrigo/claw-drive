@@ -73,6 +73,9 @@ describe("composeSuccessorBrief", () => {
     expect(composeSuccessorBrief({ ...base, generation: 10 })).toContain("FINAL GENERATION");
     expect(composeSuccessorBrief(base)).not.toContain("FINAL GENERATION");
   });
+  it("keeps the final-generation notice on an overshoot (N > M, reachable via recover)", () => {
+    expect(composeSuccessorBrief({ ...base, generation: 12 })).toContain("FINAL GENERATION");
+  });
   it("renders an uncapped lineage without a cap number or notice", () => {
     const b = composeSuccessorBrief({ ...base, maxGenerations: 0, generation: 7 });
     expect(b).toContain("generation 7 (no generation cap)");

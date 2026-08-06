@@ -126,6 +126,31 @@ export async function scaffoldSessionDir(input: ScaffoldInput): Promise<void> {
   await writeState(statePath(input.sessionId), state);
 }
 
+/**
+ * Context rotation: a session's extra MCP servers (start's mcp_extra_config)
+ * live only in its own mcp.json — state.json never carried them. Read them
+ * back so rotation and recover successors inherit the same tool surface.
+ * Absent, empty, or corrupt → undefined (the successor gets the default
+ * empty set, same as before).
+ */
+export async function readSessionMcpServers(
+  sessionId: string
+): Promise<Record<string, unknown> | undefined> {
+  try {
+    const raw = JSON.parse(
+      await fs.readFile(mcpConfigPath(sessionId), "utf-8")
+    ) as { mcpServers?: Record<string, unknown> };
+    if (
+      raw.mcpServers &&
+      typeof raw.mcpServers === "object" &&
+      Object.keys(raw.mcpServers).length > 0
+    ) {
+      return raw.mcpServers;
+    }
+  } catch { /* absent/corrupt — fall through */ }
+  return undefined;
+}
+
 export function spawnRunnerDetached(sessionId: string): void {
   const child = spawn(clawDriveBinPath(), ["runner", sessionId], {
     detached: true,

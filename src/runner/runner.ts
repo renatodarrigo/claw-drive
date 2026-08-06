@@ -25,7 +25,7 @@ import { createBudgetTracker, budgetExceededReason, type BudgetTracker } from ".
 import { rotationConfigOf, isOverThreshold, checkRotateGate, effectiveMaxGenerations } from "./context-tracker.js";
 import { buildHandoverInstruction, extractHandover, composeSuccessorBrief } from "../lib/handover.js";
 import { buildCrashDigest, buildDistillerPrompt, runDistiller } from "../lib/distill.js";
-import { newSessionId, scaffoldSessionDir, spawnRunnerDetached, waitForReady } from "../lib/spawn-session.js";
+import { newSessionId, readSessionMcpServers, scaffoldSessionDir, spawnRunnerDetached, waitForReady } from "../lib/spawn-session.js";
 import type { ControlRequest, ControlResponse } from "../lib/socket-protocol.js";
 import { buildDecisionContext } from "../lib/decision-context.js";
 import { installRunnerLogCapture } from "../lib/runner-log.js";
@@ -848,6 +848,7 @@ export async function handleRequest(
             originalBrief,
             wrapper: ctx.state.wrapper,
             alias,
+            mcpServers: await readSessionMcpServers(ctx.sessionId),
             lineage: {
               generation: generation + 1,
               root_session_id: ctx.state.root_session_id ?? ctx.sessionId,
@@ -1261,6 +1262,10 @@ export async function runRunner(sessionId: string): Promise<void> {
       void (async () => {
         try {
           await handleUnexpectedBExit(ctx, code, signal);
+        } catch {
+          // Best-effort — a failed terminal write (session dir already gone,
+          // disk full) must not unhandled-reject the runner; the finally
+          // still resolves so teardown and the process exit proceed.
         } finally {
           resolve();
         }

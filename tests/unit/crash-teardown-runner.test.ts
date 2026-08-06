@@ -30,6 +30,7 @@ let prevBin: string | undefined;
 
 interface FakeB {
   writes: string[];
+  emitter: EventEmitter;
   b: ChildProcess;
 }
 
@@ -38,6 +39,8 @@ function makeFakeB(): FakeB {
   const writes: string[] = [];
   const b = {
     pid: 424242,
+    exitCode: null,
+    signalCode: null,
     stdin: {
       write: (chunk: string) => {
         writes.push(chunk);
@@ -49,7 +52,7 @@ function makeFakeB(): FakeB {
     on: emitter.on.bind(emitter),
     once: emitter.once.bind(emitter),
   } as unknown as ChildProcess;
-  return { writes, b };
+  return { writes, emitter, b };
 }
 
 async function makeCtx(fake: FakeB): Promise<RunnerContext> {
@@ -252,6 +255,44 @@ describe("handleUnexpectedBExit — crash during rotate (dogfood gen-2)", () => 
     },
     10_000
   );
+
+  it("threads the predecessor's mcp.json mcpServers into a rotation successor", async () => {
+    // Successor spawn "succeeds" via a stub runner bin that touches the ready
+    // marker; the fake B then exits so the deferred self-teardown finishes.
+    const stub = path.join(stubDir, "fake-runner");
+    await fs.writeFile(stub, '#!/bin/sh\ntouch "$CLAW_DRIVE_HOME/sessions/$2/ready"\n', {
+      mode: 0o755,
+    });
+    await fs.chmod(stub, 0o755);
+    process.env.CLAW_DRIVE_BIN = stub;
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+    try {
+      const fake = makeFakeB();
+      const ctx = await makeCtx(fake);
+      await fs.writeFile(
+        path.join(root, "sessions", SID, "mcp.json"),
+        JSON.stringify({ mcpServers: { extra: { command: "x" } } })
+      );
+      const rotate = handleRequest(ctx, { id: "r1", op: "rotate" });
+      await waitUntil(() => ctx.turnWaiters.size === 1);
+      await appendAssistantHandover("turn_1");
+      const waiter = ctx.turnWaiters.get("turn_1")!;
+      ctx.turnWaiters.delete("turn_1");
+      waiter("completed");
+      const resp = await withTimeout(rotate, 8000, "rotate");
+      expect(resp).toMatchObject({ ok: true });
+      const newId = (resp as { result: { new_session_id: string } }).result.new_session_id;
+      const mcp = JSON.parse(
+        await fs.readFile(path.join(root, "sessions", newId, "mcp.json"), "utf-8")
+      ) as { mcpServers: Record<string, unknown> };
+      expect(mcp.mcpServers).toMatchObject({ extra: { command: "x" } });
+      // Let the predecessor's deferred self-teardown run to completion.
+      fake.emitter.emit("exit", 0, null);
+      await waitUntil(() => exitSpy.mock.calls.length > 0);
+    } finally {
+      exitSpy.mockRestore();
+    }
+  }, 10_000);
 
   it("handover attempt 2 waits out the interrupt settle window before sending (A3 kill pattern)", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });

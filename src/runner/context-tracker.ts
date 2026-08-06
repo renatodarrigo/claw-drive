@@ -4,13 +4,10 @@
  * Config is passed per call, never captured: update_policy can change the
  * rotation block live on a running session and the next check sees it.
  */
-import type { Policy } from "../lib/policy.js";
+import type { Policy, PolicyObject } from "../lib/policy.js";
 
-export interface RotationConfig {
-  threshold_tokens: number;
-  max_generations?: number;
-  mode?: "manual";
-}
+/** Derived from the policy schema so the two can never drift. */
+export type RotationConfig = NonNullable<PolicyObject["rotation"]>;
 
 export const DEFAULT_MAX_GENERATIONS = 10;
 
