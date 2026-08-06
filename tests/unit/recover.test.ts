@@ -93,6 +93,17 @@ describe("recoverSession successor scaffolding (stub runner bin)", () => {
     expect(succ?.cost_usd_base).toBeCloseTo(4.5, 10);
   });
 
+  it("carries the predecessor's own cost_usd_base as the successor's base when the predecessor never stamped a cost_usd", async () => {
+    const id = "sess_20200101T000000_gggggg";
+    await deadSession(id, { cost_usd_base: 3.0 });
+    await fs.writeFile(crashHandoverPath(id), "## Current objective\nresume");
+    const r = await recoverSession({ sessionId: id });
+    expect(r.ok).toBe(true);
+    const newId = (r as { result: { new_session_id: string } }).result.new_session_id;
+    const succ = await readState(statePath(newId));
+    expect(succ?.cost_usd_base).toBeCloseTo(3.0, 10);
+  });
+
   it("omits cost_usd_base on the successor when the predecessor never stamped a cost_usd", async () => {
     const id = "sess_20200101T000000_ffffff";
     await deadSession(id);
