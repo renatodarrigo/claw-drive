@@ -14,6 +14,11 @@ export interface ParserOutput {
   main_context_tokens?: number;
   /** Context rotation: this line is a native auto-compact marker (system:compact_boundary). */
   compact_boundary?: boolean;
+  /** Cost-cap: cumulative USD spend of the claude process as self-reported on a
+   * `result` line's total_cost_usd (success AND error results). Missing or
+   * malformed → no reading (undefined), never zero, so a weird line cannot
+   * reset cost tracking. Cumulative-per-process by CLI semantics. */
+  cumulative_cost_usd?: number;
 }
 
 /**
@@ -57,6 +62,10 @@ export function parseClaudeLine(line: unknown, turnId: string): ParserOutput {
     case "result": {
       const subtype = String(obj.subtype ?? "");
       const isError = obj.is_error === true || subtype.startsWith("error_");
+      const costRead =
+        typeof obj.total_cost_usd === "number" && Number.isFinite(obj.total_cost_usd)
+          ? { cumulative_cost_usd: obj.total_cost_usd }
+          : {};
       if (isError) {
         return {
           events: [
@@ -66,6 +75,7 @@ export function parseClaudeLine(line: unknown, turnId: string): ParserOutput {
               error: subtype || "unknown",
             } as PartialEvent,
           ],
+          ...costRead,
         };
       }
       return {
@@ -76,6 +86,7 @@ export function parseClaudeLine(line: unknown, turnId: string): ParserOutput {
             stop_reason: subtype || "success",
           } as PartialEvent,
         ],
+        ...costRead,
       };
     }
 
