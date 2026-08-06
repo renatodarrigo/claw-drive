@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type { ChildProcess } from "node:child_process";
-import { handleRequest, type RunnerContext } from "../../src/runner/runner.js";
+import { afterEventBookkeeping, handleRequest, type RunnerContext } from "../../src/runner/runner.js";
+import type { Event } from "../../src/lib/events.js";
 import type { SessionState } from "../../src/lib/state.js";
 
 function fakeCtx(overrides: Partial<RunnerContext> & { policy?: SessionState["policy"] }): RunnerContext {
@@ -35,6 +36,10 @@ function fakeCtx(overrides: Partial<RunnerContext> & { policy?: SessionState["po
     firstTurnContextTokens: null,
     rotating: false,
     turnWaiters: new Map(),
+    bExited: false,
+    tearingDown: false,
+    lastInterruptAt: null,
+    rotationSettled: null,
     ...overrides,
   } as RunnerContext;
 }
@@ -63,6 +68,31 @@ describe("rotate op — pre-I/O gate paths", () => {
   it("errors ROTATION_IN_PROGRESS on re-entry", async () => {
     const resp = await handleRequest(fakeCtx({ rotating: true }), ROTATE);
     expect(resp).toMatchObject({ ok: false, error: "ROTATION_IN_PROGRESS" });
+  });
+
+  // A3 (dogfood 2026-08-04): SIGINT + a rotate 3s later killed B — the
+  // handover turn landed on a claude process that was about to exit.
+  it("interrupt_turn stamps the interrupt; an immediate rotate refuses INTERRUPT_GRACE", async () => {
+    const ctx = fakeCtx({});
+    await handleRequest(ctx, { id: "i", op: "interrupt_turn", turn_id: "turn_1" });
+    const resp = await handleRequest(ctx, ROTATE);
+    expect(resp).toMatchObject({ ok: false, error: "INTERRUPT_GRACE" });
+  });
+
+  it("a completed turn clears the interrupt stamp (proof of life)", async () => {
+    const ctx = fakeCtx({ lastInterruptAt: Date.now() });
+    await afterEventBookkeeping(ctx, { kind: "turn_completed", turn_id: "turn_9" } as Event);
+    expect(ctx.lastInterruptAt).toBeNull();
+    const resp = await handleRequest(ctx, ROTATE);
+    expect(resp).not.toMatchObject({ error: "INTERRUPT_GRACE" });
+  });
+
+  it("a failed turn does NOT clear the interrupt stamp (the dogfood abort was turn_failed)", async () => {
+    const ctx = fakeCtx({ lastInterruptAt: Date.now() });
+    await afterEventBookkeeping(ctx, { kind: "turn_failed", turn_id: "turn_9" } as Event);
+    expect(ctx.lastInterruptAt).not.toBeNull();
+    const resp = await handleRequest(ctx, ROTATE);
+    expect(resp).toMatchObject({ ok: false, error: "INTERRUPT_GRACE" });
   });
 
   it("ROTATION_IN_PROGRESS outranks a simultaneous refusal condition (no second terminal handover attempt)", async () => {

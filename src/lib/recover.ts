@@ -19,6 +19,7 @@ import { buildCrashDigest, buildDistillerPrompt, runDistiller } from "./distill.
 import { composeSuccessorBrief } from "./handover.js";
 import {
   newSessionId,
+  readSessionMcpServers,
   scaffoldSessionDir,
   spawnRunnerDetached,
   waitForReady,
@@ -145,6 +146,7 @@ export async function recoverSession(input: RecoverInput): Promise<RecoverOutcom
     originalBrief,
     wrapper: state.wrapper,
     alias,
+    mcpServers: await readSessionMcpServers(input.sessionId),
     lineage: {
       generation,
       root_session_id: state.root_session_id ?? input.sessionId,

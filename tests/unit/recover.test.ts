@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { recoverSession } from "../../src/lib/recover.js";
+import { cmdRecover } from "../../src/cli/commands/recover.js";
 import { sessionDir, statePath, crashHandoverPath } from "../../src/lib/paths.js";
 
 let home: string;
@@ -30,6 +31,65 @@ async function deadSession(id: string, extra: Record<string, unknown> = {}): Pro
     })
   );
 }
+
+describe("cmdRecover arg parsing", () => {
+  it("errors when --model is missing its value (final arg)", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const code = await cmdRecover(["sess_20200101T000000_aaaaaa", "--model"]);
+      expect(code).toBe(2);
+      expect(spy.mock.calls.flat().join("\n")).toMatch(/--model/);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+  it("errors when --model would swallow a following flag", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const code = await cmdRecover(["sess_20200101T000000_aaaaaa", "--model", "--no-start"]);
+      expect(code).toBe(2);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+describe("recoverSession successor scaffolding (stub runner bin)", () => {
+  let stubDir: string;
+  let prevBin: string | undefined;
+  beforeEach(async () => {
+    prevBin = process.env.CLAW_DRIVE_BIN;
+    stubDir = await fs.mkdtemp(path.join(os.tmpdir(), "cd11-recover-stub-"));
+    const stub = path.join(stubDir, "fake-runner");
+    await fs.writeFile(stub, '#!/bin/sh\ntouch "$CLAW_DRIVE_HOME/sessions/$2/ready"\n', {
+      mode: 0o755,
+    });
+    await fs.chmod(stub, 0o755);
+    process.env.CLAW_DRIVE_BIN = stub;
+  });
+  afterEach(async () => {
+    if (prevBin === undefined) delete process.env.CLAW_DRIVE_BIN;
+    else process.env.CLAW_DRIVE_BIN = prevBin;
+    await fs.rm(stubDir, { recursive: true, force: true });
+  });
+
+  it("threads the predecessor's mcp.json mcpServers into the successor", async () => {
+    const id = "sess_20200101T000000_eeeeee";
+    await deadSession(id);
+    await fs.writeFile(crashHandoverPath(id), "## Current objective\nresume");
+    await fs.writeFile(
+      path.join(sessionDir(id), "mcp.json"),
+      JSON.stringify({ mcpServers: { extra: { command: "x" } } })
+    );
+    const r = await recoverSession({ sessionId: id });
+    expect(r.ok).toBe(true);
+    const newId = (r as { result: { new_session_id: string } }).result.new_session_id;
+    const mcp = JSON.parse(
+      await fs.readFile(path.join(sessionDir(newId), "mcp.json"), "utf-8")
+    ) as { mcpServers: Record<string, unknown> };
+    expect(mcp.mcpServers).toMatchObject({ extra: { command: "x" } });
+  });
+});
 
 describe("recoverSession error paths (no claude spawned)", () => {
   it("SESSION_NOT_FOUND for a missing session", async () => {

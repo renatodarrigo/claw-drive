@@ -150,6 +150,13 @@ The `notification_contract` shape is described in the
 
 Stop a session. Reaps the Claude Code process; keeps the session directory.
 
+A stop (or a runner SIGTERM) that lands while the crash path is mid-flight —
+including its ≤180s best-effort crash distillation — defers to it: the crash
+teardown owns the terminal record, so the recorded reason stays `crashed:*`.
+A runner torn down by a signal records `runner_sigterm` / `runner_sigint` as
+the `session_stopped` reason and `state.exit_reason`; a second signal
+force-exits the runner.
+
 **Required input:** `session_id: string`
 
 **Response:** `{ "ok": true }`
@@ -249,10 +256,11 @@ Structured refusals leave the session running:
 - `NO_ROTATION_CONFIG` — policy has no rotation block.
 - `TURN_IN_FLIGHT` — retry at the turn boundary.
 - `DECISIONS_PENDING` — resolve the listed call_ids first.
+- `INTERRUPT_GRACE` — a turn was interrupted moments ago; wait ~15s after an interrupt (or complete a turn) and retry. An interrupted claude process can exit on its next turn.
 - `ROTATION_IN_PROGRESS` — a rotation is already running for this session; wait for its outcome.
 - `MAX_GENERATIONS` — cap reached; a terminal handover is still written; raise the cap via `update_policy` or re-brief a fresh lineage.
 - `BOOTSTRAP_EXCEEDS_THRESHOLD` — first turn already over threshold; raise it.
-- `ROTATION_FAILED` — handover generation failed; B continues toward native auto-compact.
+- `ROTATION_FAILED` — handover generation failed and B continues toward native auto-compact — or the session process exited mid-rotation, in which case use `recover_session`.
 
 #### `recover_session`
 
@@ -276,6 +284,11 @@ stamped, alias re-claimed if free).
 `events.jsonl` (vs. an existing `crash-handover.md`). `new_session_id`,
 `alias`, `generation`, and `watch_command` are present only when a successor
 was spawned (i.e. `no_start` was not set).
+
+`recover` deliberately ignores `max_generations`: it is human-initiated
+remediation, not an automatic rotation, so its error set omits
+`MAX_GENERATIONS` — a recovered successor past the cap simply renders
+"generation N of M" with N > M and the final-generation wrap-up guidance.
 
 Errors:
 

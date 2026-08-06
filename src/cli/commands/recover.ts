@@ -7,8 +7,15 @@ export async function cmdRecover(argv: string[]): Promise<number> {
   let model: string | undefined;
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--no-start") noStart = true;
-    else if (argv[i] === "--model") model = argv[++i];
-    else if (!argv[i].startsWith("--")) ref = argv[i];
+    else if (argv[i] === "--model") {
+      const value = argv[i + 1];
+      if (value === undefined || value.startsWith("--")) {
+        console.error("--model requires a value: claw-drive recover <session_id> [--no-start] [--model M]");
+        return 2;
+      }
+      model = value;
+      i++;
+    } else if (!argv[i].startsWith("--")) ref = argv[i];
   }
   if (!ref) {
     console.error("usage: claw-drive recover <session_id> [--no-start] [--model M]");

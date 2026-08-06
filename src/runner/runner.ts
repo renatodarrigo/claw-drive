@@ -22,10 +22,10 @@ import { startSocketServer } from "./socket-server.js";
 import { buildClaudeArgs } from "./runner-args.js";
 import { scheduleDecisionTimeout } from "./decision-timeout.js";
 import { createBudgetTracker, budgetExceededReason, type BudgetTracker } from "./budget.js";
-import { rotationConfigOf, isOverThreshold, checkRotateGate, effectiveMaxGenerations } from "./context-tracker.js";
+import { rotationConfigOf, isOverThreshold, checkRotateGate, effectiveMaxGenerations, INTERRUPT_GRACE_MS } from "./context-tracker.js";
 import { buildHandoverInstruction, extractHandover, composeSuccessorBrief } from "../lib/handover.js";
 import { buildCrashDigest, buildDistillerPrompt, runDistiller } from "../lib/distill.js";
-import { newSessionId, scaffoldSessionDir, spawnRunnerDetached, waitForReady } from "../lib/spawn-session.js";
+import { newSessionId, readSessionMcpServers, scaffoldSessionDir, spawnRunnerDetached, waitForReady } from "../lib/spawn-session.js";
 import type { ControlRequest, ControlResponse } from "../lib/socket-protocol.js";
 import { buildDecisionContext } from "../lib/decision-context.js";
 import { installRunnerLogCapture } from "../lib/runner-log.js";
@@ -107,6 +107,23 @@ export interface RunnerContext {
   firstTurnContextTokens: number | null;
   rotating: boolean;
   turnWaiters: Map<string, (outcome: "completed" | "failed") => void>;
+  /** Set synchronously the moment B's process exits (any path). Once true no
+   * turn can ever terminate again — handover attempts and the rotate
+   * choreography must fail fast instead of waiting out turn timeouts. */
+  bExited: boolean;
+  /** Set by teardownSession's first engagement; later engagements (a second
+   * stop, a signal after a stop) are no-ops instead of re-arming timers or
+   * double-emitting the terminal event. */
+  tearingDown: boolean;
+  /** Epoch ms of the last interrupt_turn SIGINT; null when none happened or a
+   * later turn_completed proved B alive. Gates rotate (INTERRUPT_GRACE) —
+   * an interrupted claude process can exit on its next turn. */
+  lastInterruptAt: number | null;
+  /** Resolves when the in-flight rotate op settles (success, refusal, or
+   * failure). The crash teardown awaits this before writing session_stopped:
+   * the rotate op is the single owner of rotation-outcome events, and the
+   * terminal event must come last. Null when no rotate is in flight. */
+  rotationSettled: Promise<void> | null;
 }
 
 // Placeholder type; populated in Task 13 when the approval flow lands.
@@ -139,10 +156,46 @@ async function emitEvent(
 /**
  * Tear down Session B: stop input, escalate SIGTERM→SIGKILL, and on exit write
  * the terminal state + a session_stopped(reason) event and exit the runner.
- * Shared by the stop_session control op and the CD-4 budget breaker.
+ * Shared by the stop_session control op, the CD-4 budget breaker, the rotate
+ * choreography's self-stop, and the runner's signal handlers. Idempotent — a
+ * second stop or signal never re-arms timers or double-emits — and safe
+ * against a B that is already dead (the once("exit") of a dead child never
+ * fires; waiting on it is how a stop used to wedge forever).
  */
 function teardownSession(ctx: RunnerContext, reason: string): void {
   ctx.stopping = true;
+  if (ctx.tearingDown) return;
+  ctx.tearingDown = true;
+  if (ctx.bExited) {
+    // The crash teardown (handleUnexpectedBExit → runRunner's exit path)
+    // already owns the terminal record and the process exit.
+    return;
+  }
+  const finish = async (code: number | null) => {
+    try {
+      ctx.state.status = "stopped";
+      ctx.state.exit_code = code;
+      await writeState(statePath(ctx.sessionId), ctx.state);
+      await emitEvent(ctx, {
+        kind: "session_stopped",
+        reason,
+        exit_code: code,
+      } as Omit<Event, "seq" | "at">);
+      await fs.rm(readyMarkerPath(ctx.sessionId), { force: true });
+    } catch {
+      // A failed terminal write (dir gone, disk full) must not leave the
+      // runner alive-but-wedged as an unhandled rejection.
+      process.exit(1);
+    }
+    process.exit(0);
+  };
+  if (ctx.b.exitCode !== null || ctx.b.signalCode !== null) {
+    // B died without the crash path running (it exited on the same tick a
+    // stop landed, before any listener registered) — the terminal record
+    // must still be written; an exit event will never be observed.
+    void finish(ctx.b.exitCode);
+    return;
+  }
   try {
     ctx.b.stdin?.end();
   } catch { /* */ }
@@ -156,19 +209,10 @@ function teardownSession(ctx: RunnerContext, reason: string): void {
       try { process.kill(ctx.b.pid, "SIGKILL"); } catch { /* */ }
     }
   }, 20_000);
-  ctx.b.once("exit", async (code) => {
+  ctx.b.once("exit", (code) => {
     clearTimeout(killSigterm);
     clearTimeout(killSigkill);
-    ctx.state.status = "stopped";
-    ctx.state.exit_code = code;
-    await writeState(statePath(ctx.sessionId), ctx.state);
-    await emitEvent(ctx, {
-      kind: "session_stopped",
-      reason,
-      exit_code: code,
-    } as Omit<Event, "seq" | "at">);
-    await fs.rm(readyMarkerPath(ctx.sessionId), { force: true });
-    process.exit(0);
+    void finish(code);
   });
 }
 
@@ -179,7 +223,9 @@ function teardownSession(ctx: RunnerContext, reason: string): void {
  * recorded, or once a stop is already in flight.
  */
 async function enforceBudget(ctx: RunnerContext, ev: Event): Promise<void> {
-  if (!ctx.budget || ctx.budgetBreached || ctx.stopping) return;
+  // bExited: nothing is left to enforce against a dead B, and a breach here
+  // would clobber the crash teardown's exit_reason and re-enter teardown.
+  if (!ctx.budget || ctx.budgetBreached || ctx.stopping || ctx.bExited) return;
   switch (ev.kind) {
     case "tool_call_requested":
       ctx.budget.recordToolCall();
@@ -267,7 +313,7 @@ async function runStdoutLoop(ctx: RunnerContext): Promise<void> {
  * turn while above threshold (suppressed during the rotate choreography's
  * own handover turn).
  */
-async function afterEventBookkeeping(ctx: RunnerContext, ev: Event): Promise<void> {
+export async function afterEventBookkeeping(ctx: RunnerContext, ev: Event): Promise<void> {
   if (ev.kind !== "turn_completed" && ev.kind !== "turn_failed") return;
   ctx.turnInFlight = false;
   const turnId = (ev as { turn_id?: string }).turn_id;
@@ -279,6 +325,10 @@ async function afterEventBookkeeping(ctx: RunnerContext, ev: Event): Promise<voi
     }
   }
   if (ev.kind !== "turn_completed") return;
+  // Proof of life: a COMPLETED turn means B survived any earlier interrupt —
+  // clear the rotate gate's grace window. A failed turn proves nothing (the
+  // dogfood's post-interrupt abort WAS a turn_failed, seconds before B died).
+  ctx.lastInterruptAt = null;
   ctx.completedTurns += 1;
   if (ctx.lastContextTokens !== null) {
     ctx.state.context_tokens = ctx.lastContextTokens;
@@ -358,9 +408,16 @@ async function turnAssistantText(sessionId: string, turnId: string): Promise<str
  */
 async function runHandoverTurn(
   ctx: RunnerContext,
-  flags?: { wedged?: boolean }
+  flags?: { wedged?: boolean; bExited?: boolean }
 ): Promise<string | null> {
   for (const attempt of [1, 2] as const) {
+    if (ctx.bExited) {
+      // B is dead (handleUnexpectedBExit fails the pending waiter, so a
+      // killed attempt lands back here) — never send another turn at a
+      // closed stdin, and never wait out a turn timeout that cannot fire.
+      if (flags) flags.bExited = true;
+      return null;
+    }
     const turnId = `turn_${ctx.state.turns + 1}`;
     const done = new Promise<"completed" | "failed">((resolve) =>
       ctx.turnWaiters.set(turnId, resolve)
@@ -387,7 +444,13 @@ async function runHandoverTurn(
         return null;
       }
       // Ignore the interrupted turn's actual outcome (completed or failed) —
-      // attempt 2 starts fresh regardless.
+      // attempt 2 starts fresh regardless. But give B the same settle window
+      // the rotate gate enforces after an external interrupt
+      // (INTERRUPT_GRACE_MS): a just-SIGINT'd claude can exit on its very
+      // next stdin message (dogfood 2026-08-04) — sending attempt 2
+      // immediately would reproduce exactly that kill pattern. The loop-top
+      // bExited guard covers a death during this settle.
+      await sleepTimeout(INTERRUPT_GRACE_MS);
       continue;
     }
     ctx.turnWaiters.delete(turnId); // no-op (afterEventBookkeeping already deleted it on resolve)
@@ -620,6 +683,9 @@ export async function handleRequest(
     }
 
     case "interrupt_turn": {
+      // Stamp first, unconditionally: rotate's INTERRUPT_GRACE gate must
+      // cover the request even when the SIGINT itself is a no-op.
+      ctx.lastInterruptAt = Date.now();
       if (ctx.b.pid) {
         try {
           process.kill(ctx.b.pid, "SIGINT");
@@ -639,6 +705,20 @@ export async function handleRequest(
     }
 
     case "rotate": {
+      if (ctx.bExited) {
+        // Checked BEFORE the gate: a death that killed an in-flight turn
+        // leaves turnInFlight latched, and TURN_IN_FLIGHT's "retry at the
+        // turn boundary" advice is unfollowable on a dead session. The
+        // session process is gone (crash teardown in flight) — a rotation
+        // can never start, and its events are terminal. Plain error, no
+        // event.
+        return {
+          id: req.id,
+          ok: false,
+          error: "ROTATION_FAILED",
+          message: "session process has exited; rotation cannot start — use recover",
+        };
+      }
       const cfg = rotationConfigOf(ctx.state.policy);
       const blocker = checkRotateGate({
         cfg,
@@ -646,12 +726,15 @@ export async function handleRequest(
         pendingCallIds: [...ctx.pendingApprovals.keys()],
         generation: ctx.state.generation ?? 1,
         firstTurnContextTokens: ctx.firstTurnContextTokens,
+        msSinceInterrupt:
+          ctx.lastInterruptAt === null ? null : Date.now() - ctx.lastInterruptAt,
       });
       if (
         blocker &&
         (blocker.code === "NO_ROTATION_CONFIG" ||
           blocker.code === "TURN_IN_FLIGHT" ||
-          blocker.code === "DECISIONS_PENDING")
+          blocker.code === "DECISIONS_PENDING" ||
+          blocker.code === "INTERRUPT_GRACE")
       ) {
         // Transient / config blockers: plain error, no event.
         return { id: req.id, ok: false, error: blocker.code, message: blocker.message };
@@ -665,6 +748,8 @@ export async function handleRequest(
         };
       }
       ctx.rotating = true;
+      let settleRotation!: () => void;
+      ctx.rotationSettled = new Promise<void>((r) => (settleRotation = r));
       try {
         if (blocker) {
           // MAX_GENERATIONS or BOOTSTRAP_EXCEEDS_THRESHOLD — policy-level
@@ -702,9 +787,25 @@ export async function handleRequest(
         let freedAlias: string | undefined;
         let scaffoldedId: string | undefined;
         try {
-          const handoverFlags: { wedged?: boolean } = {};
+          const handoverFlags: { wedged?: boolean; bExited?: boolean } = {};
           const handover = await runHandoverTurn(ctx, handoverFlags);
           if (!handover) {
+            if (handoverFlags.bExited) {
+              // This op owns the rotation-outcome event; the crash teardown
+              // holds session_stopped until this op settles, so the failure
+              // is recorded first.
+              await emitEvent(ctx, {
+                kind: "rotation_failed",
+                reason: "b_exited: session process exited during the handover turn",
+              } as Omit<Event, "seq" | "at">);
+              return {
+                id: req.id,
+                ok: false,
+                error: "ROTATION_FAILED",
+                message:
+                  "session process exited during the handover turn; rotation cannot complete — use recover (a crash handover is distilled best-effort)",
+              };
+            }
             // Truthful reason: the wedged-interrupt abort never ran attempt 2,
             // so it must not be reported as the genuine both-attempts case.
             const reason = handoverFlags.wedged
@@ -724,6 +825,24 @@ export async function handleRequest(
             };
           }
           await fs.writeFile(handoverPath(ctx.sessionId), handover);
+          if (ctx.bExited) {
+            // B died between completing the handover turn and the successor
+            // scaffold. Abort: a successor must never be spawned by a
+            // rotation whose predecessor-side choreography (alias handoff,
+            // self-teardown) can no longer run. The handover text survives in
+            // events.jsonl, so recover's distillation loses nothing.
+            await emitEvent(ctx, {
+              kind: "rotation_failed",
+              reason: "b_exited: session process exited after the handover turn; successor not started",
+            } as Omit<Event, "seq" | "at">);
+            return {
+              id: req.id,
+              ok: false,
+              error: "ROTATION_FAILED",
+              message:
+                "session process exited after writing the handover; successor not started — use recover",
+            };
+          }
 
           const generation = ctx.state.generation ?? 1;
           const maxG = effectiveMaxGenerations(cfg!);
@@ -762,6 +881,7 @@ export async function handleRequest(
             originalBrief,
             wrapper: ctx.state.wrapper,
             alias,
+            mcpServers: await readSessionMcpServers(ctx.sessionId),
             lineage: {
               generation: generation + 1,
               root_session_id: ctx.state.root_session_id ?? ctx.sessionId,
@@ -853,6 +973,8 @@ export async function handleRequest(
         }
       } finally {
         ctx.rotating = false;
+        ctx.rotationSettled = null;
+        settleRotation();
       }
     }
 
@@ -955,6 +1077,107 @@ export async function handleRequest(
 }
 
 /**
+ * Runner signal handling (SIGTERM/SIGINT). First signal: graceful teardown
+ * through teardownSession — stdin EOF, SIGTERM→SIGKILL escalation, terminal
+ * state + session_stopped("runner_sigterm"/"runner_sigint"), process exit.
+ * Second signal (or a signal while a stop is already engaged): the operator
+ * insists — force-exit immediately. Before this, the signal path sent B a
+ * single unescalated SIGTERM and never exited by itself, so a runner whose B
+ * ignored SIGTERM — or one already past its main loop — absorbed every
+ * subsequent SIGTERM forever (July's orphaned runners needed SIGKILL).
+ * Exported for unit tests; runRunner registers the returned closure.
+ */
+export function makeSignalHandler(
+  ctx: RunnerContext,
+  signal: "SIGTERM" | "SIGINT"
+): () => void {
+  return () => {
+    if (ctx.stopping) {
+      process.exit(1);
+      return;
+    }
+    const reason = signal === "SIGTERM" ? "runner_sigterm" : "runner_sigint";
+    if (!ctx.bExited) {
+      // Never clobber a crash's truthful reason: a signal landing during the
+      // crash teardown (≤180s distillation window) defers to it, and the
+      // recorded reason must stay crashed:* (COMPATIBILITY promises this).
+      ctx.state.exit_reason = reason;
+    }
+    teardownSession(ctx, reason);
+  };
+}
+
+/**
+ * Context rotation: the UNEXPECTED B-death path — best-effort crash
+ * distillation, then terminal state + session_stopped. Exported so the crash
+ * choreography is unit-testable without spawning a real runner; runRunner's
+ * b.on("exit") handler is the only production caller.
+ */
+export async function handleUnexpectedBExit(
+  ctx: RunnerContext,
+  code: number | null,
+  signal: NodeJS.Signals | null
+): Promise<void> {
+  // Mark the death and fail every pending turn waiter FIRST, synchronously:
+  // B's stdout is closed, so no terminating event can ever arrive — an
+  // in-flight rotate must unblock now, not at its 600s handover timeout
+  // (dogfood 2026-08-04: the hung rotate client).
+  ctx.bExited = true;
+  const waiters = [...ctx.turnWaiters.values()];
+  ctx.turnWaiters.clear();
+  for (const w of waiters) w("failed");
+  const sess = ctx.state;
+  // Capture the truthful reason in a local: concurrent stampers (a signal
+  // handler, the budget breaker) must not be able to falsify the terminal
+  // record written below.
+  const exitReason = `crashed:${code ?? signal ?? "unknown"}`;
+  sess.exit_code = code;
+  sess.status = "stopped";
+  sess.exit_reason = exitReason;
+  if (ctx.rotating && ctx.rotationSettled) {
+    // The woken rotate op owns the rotation-outcome event (rotation_failed,
+    // rotation_refused, or session_rotated — only it knows the outcome).
+    // Hold the terminal session_stopped until it settles so the outcome is
+    // recorded first. Bounded: every rotate path fails fast once bExited is
+    // set (worst case one settle-window sleep plus a successor spawn wait).
+    await Promise.race([ctx.rotationSettled, sleepTimeout(30_000)]);
+  }
+  let handover_path: string | undefined;
+  if (rotationConfigOf(sess.policy)) {
+    try {
+      const { events } = await readEventsSince(eventsPath(ctx.sessionId), 0);
+      const brief =
+        sess.original_brief ??
+        (sess as unknown as { scenario_brief?: string }).scenario_brief ??
+        "";
+      const text = await runDistiller({
+        model: sess.model,
+        prompt: buildDistillerPrompt({ digest: buildCrashDigest(events), originalBrief: brief }),
+        // Neutral cwd: the (crashing) session's own dir always exists and
+        // holds no CLAUDE.md / .claude/ of its own (see runDistiller's doc comment).
+        cwd: sessionDir(ctx.sessionId),
+      });
+      if (text) {
+        await fs.writeFile(crashHandoverPath(ctx.sessionId), text);
+        handover_path = crashHandoverPath(ctx.sessionId);
+      }
+    } catch { /* best-effort — never block teardown on distillation */ }
+  }
+  sess.last_event_at = new Date().toISOString();
+  sess.exit_reason = exitReason;
+  await writeState(statePath(ctx.sessionId), sess);
+  ctx.seq += 1;
+  await appendEvent(eventsPath(ctx.sessionId), {
+    seq: ctx.seq,
+    at: new Date().toISOString(),
+    kind: "session_stopped",
+    reason: exitReason,
+    exit_code: code,
+    ...(handover_path ? { handover_path } : {}),
+  } as Event);
+}
+
+/**
  * Per-session runner entry. Launched as a detached child of the MCP server
  * (or by the `claw-drive runner <id>` CLI mode during tests).
  *
@@ -1034,6 +1257,10 @@ export async function runRunner(sessionId: string): Promise<void> {
     firstTurnContextTokens: null,
     rotating: false,
     turnWaiters: new Map(),
+    bExited: false,
+    tearingDown: false,
+    lastInterruptAt: null,
+    rotationSettled: null,
   };
 
   // Start the stdout loop; run it in the background. If it fails, emit an
@@ -1069,49 +1296,19 @@ export async function runRunner(sessionId: string): Promise<void> {
   }
 
   await new Promise<void>((resolve) => {
-    process.on("SIGTERM", () => resolve());
-    process.on("SIGINT", () => resolve());
+    process.on("SIGTERM", makeSignalHandler(ctx, "SIGTERM"));
+    process.on("SIGINT", makeSignalHandler(ctx, "SIGINT"));
     b.on("exit", (code, signal) => {
       // stop_session and rotate own their teardown; this branch is the
       // UNEXPECTED death path (Context rotation: crash → best-effort distillation).
       if (ctx.stopping) return;
       void (async () => {
         try {
-          sess.exit_code = code;
-          sess.status = "stopped";
-          sess.exit_reason = `crashed:${code ?? signal ?? "unknown"}`;
-          let handover_path: string | undefined;
-          if (rotationConfigOf(sess.policy)) {
-            try {
-              const { events } = await readEventsSince(eventsPath(sessionId), 0);
-              const brief =
-                sess.original_brief ??
-                (sess as unknown as { scenario_brief?: string }).scenario_brief ??
-                "";
-              const text = await runDistiller({
-                model: sess.model,
-                prompt: buildDistillerPrompt({ digest: buildCrashDigest(events), originalBrief: brief }),
-                // Neutral cwd: the (crashing) session's own dir always exists and
-                // holds no CLAUDE.md / .claude/ of its own (see runDistiller's doc comment).
-                cwd: sessionDir(sessionId),
-              });
-              if (text) {
-                await fs.writeFile(crashHandoverPath(sessionId), text);
-                handover_path = crashHandoverPath(sessionId);
-              }
-            } catch { /* best-effort — never block teardown on distillation */ }
-          }
-          sess.last_event_at = new Date().toISOString();
-          await writeState(statePath(sessionId), sess);
-          ctx.seq += 1;
-          await appendEvent(eventsPath(sessionId), {
-            seq: ctx.seq,
-            at: new Date().toISOString(),
-            kind: "session_stopped",
-            reason: sess.exit_reason,
-            exit_code: code,
-            ...(handover_path ? { handover_path } : {}),
-          } as Event);
+          await handleUnexpectedBExit(ctx, code, signal);
+        } catch {
+          // Best-effort — a failed terminal write (session dir already gone,
+          // disk full) must not unhandled-reject the runner; the finally
+          // still resolves so teardown and the process exit proceed.
         } finally {
           resolve();
         }
@@ -1119,12 +1316,16 @@ export async function runRunner(sessionId: string): Promise<void> {
     });
   });
 
-  // Teardown (only reached when NOT in a stop_session flow). The runner-log
-  // capture is closed by the process.once("exit") hook installed at startup, so
-  // it's torn down exactly once across every exit path.
+  // Only the crash path resolves the promise above — stop_session and the
+  // signal handlers exit inside teardownSession. B is gone and the terminal
+  // record is written: close the listener socket and exit NOW. Lingering
+  // would leave an "undead" runner — a still-open control connection (e.g. a
+  // woken rotate client's) keeps the event loop alive while the installed
+  // signal listeners absorb every subsequent SIGTERM. The runner-log capture
+  // is closed by the process.once("exit") hook installed at startup.
   try { server.close(); } catch { /* */ }
-  try { b.kill("SIGTERM"); } catch { /* already dead */ }
   await fs.rm(readyMarkerPath(sessionId), { force: true });
+  process.exit(0);
 }
 
 // Standalone entry for `claw-drive runner <session_id>` (wired by dispatcher in Task 26)
