@@ -107,6 +107,10 @@ export interface RunnerContext {
   firstTurnContextTokens: number | null;
   rotating: boolean;
   turnWaiters: Map<string, (outcome: "completed" | "failed") => void>;
+  /** Set synchronously the moment B's process exits (any path). Once true no
+   * turn can ever terminate again — handover attempts and the rotate
+   * choreography must fail fast instead of waiting out turn timeouts. */
+  bExited: boolean;
 }
 
 // Placeholder type; populated in Task 13 when the approval flow lands.
@@ -358,9 +362,16 @@ async function turnAssistantText(sessionId: string, turnId: string): Promise<str
  */
 async function runHandoverTurn(
   ctx: RunnerContext,
-  flags?: { wedged?: boolean }
+  flags?: { wedged?: boolean; bExited?: boolean }
 ): Promise<string | null> {
   for (const attempt of [1, 2] as const) {
+    if (ctx.bExited) {
+      // B is dead (handleUnexpectedBExit fails the pending waiter, so a
+      // killed attempt lands back here) — never send another turn at a
+      // closed stdin, and never wait out a turn timeout that cannot fire.
+      if (flags) flags.bExited = true;
+      return null;
+    }
     const turnId = `turn_${ctx.state.turns + 1}`;
     const done = new Promise<"completed" | "failed">((resolve) =>
       ctx.turnWaiters.set(turnId, resolve)
@@ -702,9 +713,21 @@ export async function handleRequest(
         let freedAlias: string | undefined;
         let scaffoldedId: string | undefined;
         try {
-          const handoverFlags: { wedged?: boolean } = {};
+          const handoverFlags: { wedged?: boolean; bExited?: boolean } = {};
           const handover = await runHandoverTurn(ctx, handoverFlags);
           if (!handover) {
+            if (handoverFlags.bExited) {
+              // The crash path (handleUnexpectedBExit) already recorded
+              // rotation_failed ahead of session_stopped — respond to the
+              // client without emitting a second event.
+              return {
+                id: req.id,
+                ok: false,
+                error: "ROTATION_FAILED",
+                message:
+                  "session process exited during the handover turn; rotation cannot complete — use recover (a crash handover is distilled best-effort)",
+              };
+            }
             // Truthful reason: the wedged-interrupt abort never ran attempt 2,
             // so it must not be reported as the genuine both-attempts case.
             const reason = handoverFlags.wedged
@@ -724,6 +747,24 @@ export async function handleRequest(
             };
           }
           await fs.writeFile(handoverPath(ctx.sessionId), handover);
+          if (ctx.bExited) {
+            // B died between completing the handover turn and the successor
+            // scaffold. Abort: a successor must never be spawned by a
+            // rotation whose predecessor-side choreography (alias handoff,
+            // self-teardown) can no longer run. The handover text survives in
+            // events.jsonl, so recover's distillation loses nothing.
+            await emitEvent(ctx, {
+              kind: "rotation_failed",
+              reason: "b_exited: session process exited after the handover turn; successor not started",
+            } as Omit<Event, "seq" | "at">);
+            return {
+              id: req.id,
+              ok: false,
+              error: "ROTATION_FAILED",
+              message:
+                "session process exited after writing the handover; successor not started — use recover",
+            };
+          }
 
           const generation = ctx.state.generation ?? 1;
           const maxG = effectiveMaxGenerations(cfg!);
@@ -955,6 +996,75 @@ export async function handleRequest(
 }
 
 /**
+ * Context rotation: the UNEXPECTED B-death path — best-effort crash
+ * distillation, then terminal state + session_stopped. Exported so the crash
+ * choreography is unit-testable without spawning a real runner; runRunner's
+ * b.on("exit") handler is the only production caller.
+ */
+export async function handleUnexpectedBExit(
+  ctx: RunnerContext,
+  code: number | null,
+  signal: NodeJS.Signals | null
+): Promise<void> {
+  // Mark the death and fail every pending turn waiter FIRST, synchronously:
+  // B's stdout is closed, so no terminating event can ever arrive — an
+  // in-flight rotate must unblock now, not at its 600s handover timeout
+  // (dogfood 2026-08-04: the hung rotate client).
+  ctx.bExited = true;
+  const waiters = [...ctx.turnWaiters.values()];
+  ctx.turnWaiters.clear();
+  for (const w of waiters) w("failed");
+  const sess = ctx.state;
+  sess.exit_code = code;
+  sess.status = "stopped";
+  sess.exit_reason = `crashed:${code ?? signal ?? "unknown"}`;
+  if (waiters.length > 0 && ctx.rotating) {
+    // The crash killed a rotation's in-flight handover turn. Record the
+    // rotation's failure BEFORE the terminal session_stopped; the woken
+    // rotate op responds to its client but deliberately does not emit.
+    ctx.seq += 1;
+    await appendEvent(eventsPath(ctx.sessionId), {
+      seq: ctx.seq,
+      at: new Date().toISOString(),
+      kind: "rotation_failed",
+      reason: "b_exited: session process exited during the handover turn",
+    } as Event);
+  }
+  let handover_path: string | undefined;
+  if (rotationConfigOf(sess.policy)) {
+    try {
+      const { events } = await readEventsSince(eventsPath(ctx.sessionId), 0);
+      const brief =
+        sess.original_brief ??
+        (sess as unknown as { scenario_brief?: string }).scenario_brief ??
+        "";
+      const text = await runDistiller({
+        model: sess.model,
+        prompt: buildDistillerPrompt({ digest: buildCrashDigest(events), originalBrief: brief }),
+        // Neutral cwd: the (crashing) session's own dir always exists and
+        // holds no CLAUDE.md / .claude/ of its own (see runDistiller's doc comment).
+        cwd: sessionDir(ctx.sessionId),
+      });
+      if (text) {
+        await fs.writeFile(crashHandoverPath(ctx.sessionId), text);
+        handover_path = crashHandoverPath(ctx.sessionId);
+      }
+    } catch { /* best-effort — never block teardown on distillation */ }
+  }
+  sess.last_event_at = new Date().toISOString();
+  await writeState(statePath(ctx.sessionId), sess);
+  ctx.seq += 1;
+  await appendEvent(eventsPath(ctx.sessionId), {
+    seq: ctx.seq,
+    at: new Date().toISOString(),
+    kind: "session_stopped",
+    reason: sess.exit_reason,
+    exit_code: code,
+    ...(handover_path ? { handover_path } : {}),
+  } as Event);
+}
+
+/**
  * Per-session runner entry. Launched as a detached child of the MCP server
  * (or by the `claw-drive runner <id>` CLI mode during tests).
  *
@@ -1034,6 +1144,7 @@ export async function runRunner(sessionId: string): Promise<void> {
     firstTurnContextTokens: null,
     rotating: false,
     turnWaiters: new Map(),
+    bExited: false,
   };
 
   // Start the stdout loop; run it in the background. If it fails, emit an
@@ -1077,41 +1188,7 @@ export async function runRunner(sessionId: string): Promise<void> {
       if (ctx.stopping) return;
       void (async () => {
         try {
-          sess.exit_code = code;
-          sess.status = "stopped";
-          sess.exit_reason = `crashed:${code ?? signal ?? "unknown"}`;
-          let handover_path: string | undefined;
-          if (rotationConfigOf(sess.policy)) {
-            try {
-              const { events } = await readEventsSince(eventsPath(sessionId), 0);
-              const brief =
-                sess.original_brief ??
-                (sess as unknown as { scenario_brief?: string }).scenario_brief ??
-                "";
-              const text = await runDistiller({
-                model: sess.model,
-                prompt: buildDistillerPrompt({ digest: buildCrashDigest(events), originalBrief: brief }),
-                // Neutral cwd: the (crashing) session's own dir always exists and
-                // holds no CLAUDE.md / .claude/ of its own (see runDistiller's doc comment).
-                cwd: sessionDir(sessionId),
-              });
-              if (text) {
-                await fs.writeFile(crashHandoverPath(sessionId), text);
-                handover_path = crashHandoverPath(sessionId);
-              }
-            } catch { /* best-effort — never block teardown on distillation */ }
-          }
-          sess.last_event_at = new Date().toISOString();
-          await writeState(statePath(sessionId), sess);
-          ctx.seq += 1;
-          await appendEvent(eventsPath(sessionId), {
-            seq: ctx.seq,
-            at: new Date().toISOString(),
-            kind: "session_stopped",
-            reason: sess.exit_reason,
-            exit_code: code,
-            ...(handover_path ? { handover_path } : {}),
-          } as Event);
+          await handleUnexpectedBExit(ctx, code, signal);
         } finally {
           resolve();
         }
@@ -1125,6 +1202,12 @@ export async function runRunner(sessionId: string): Promise<void> {
   try { server.close(); } catch { /* */ }
   try { b.kill("SIGTERM"); } catch { /* already dead */ }
   await fs.rm(readyMarkerPath(sessionId), { force: true });
+  // Crash path: B is gone and the terminal event is written — exit NOW.
+  // Without this, a still-open control connection (e.g. a woken rotate
+  // client's) keeps the event loop alive and the runner outlives its own
+  // session_stopped ("undead runner"), swallowing every later SIGTERM via the
+  // already-resolved signal listeners.
+  if (ctx.bExited) process.exit(0);
 }
 
 // Standalone entry for `claw-drive runner <session_id>` (wired by dispatcher in Task 26)

@@ -79,4 +79,72 @@ expect_exit "reject <bogus> fails (exit 1)"    1 "$BIN" reject nonexistent-call-
 expect_exit "rotate <bogus> fails (exit 2)"    2 "$BIN" rotate nonexistent-session-id
 expect_exit "recover <bogus> fails (exit 2)"   2 "$BIN" recover nonexistent-session-id
 
+section "crash-during-rotate teardown (stub session process)"
+# A stub `claude` that reads ONE stdin line then exits 0 — it stands in for a
+# session process that dies right as the rotation's handover turn arrives.
+# Asserts the full crash choreography at the process level: the rotate client
+# settles promptly, rotation_failed precedes session_stopped, and the runner
+# process itself exits (no undead runner holding the control socket).
+STUB_DIR="$(mktemp -d)"
+# start enforces cwd-inside-$HOME, so the stub session's cwd cannot be in /tmp.
+mkdir -p "$HOME/.cache"
+CRASH_CWD="$(mktemp -d "$HOME/.cache/claw-e2e-cwd.XXXXXX")"
+cat > "$STUB_DIR/claude" <<'EOF'
+#!/bin/sh
+read -r _line
+exit 0
+EOF
+chmod +x "$STUB_DIR/claude"
+ROTPOLICY="$TMPHOME/rotation-policy.json"
+printf '{"rotation":{"threshold_tokens":120000}}\n' > "$ROTPOLICY"
+
+SID_CRASH="$(PATH="$STUB_DIR:$PATH" "$BIN" start --cwd "$CRASH_CWD" --policy "$ROTPOLICY")"
+if [[ "$SID_CRASH" == sess_* ]]; then
+  pass "stub session starts (id: $SID_CRASH)"
+else
+  fail "stub session starts (got: $SID_CRASH)"
+fi
+
+ROT_OUT="$TMPHOME/rotate-out.txt"
+( "$BIN" rotate "$SID_CRASH" >"$ROT_OUT" 2>&1; echo "EXIT=$?" >>"$ROT_OUT" ) &
+ROT_PID=$!
+for _ in $(seq 1 50); do
+  kill -0 "$ROT_PID" 2>/dev/null || break
+  sleep 0.2
+done
+if kill -0 "$ROT_PID" 2>/dev/null; then
+  fail "rotate client settles promptly after B crash (still blocked after 10s)"
+  kill -9 "$ROT_PID" 2>/dev/null || true
+else
+  pass "rotate client settles promptly after B crash"
+fi
+expect_file_contains "rotate reports ROTATION_FAILED"  "$ROT_OUT" "ROTATION_FAILED"
+expect_file_contains "rotate names the process exit"   "$ROT_OUT" "exited"
+
+EVJ="$TMPHOME/sessions/$SID_CRASH/events.jsonl"
+FIRST_TERMINAL="$(grep -oE '"kind":"(rotation_failed|session_stopped)"' "$EVJ" 2>/dev/null | head -1 || true)"
+if [[ "$FIRST_TERMINAL" == *rotation_failed* ]]; then
+  pass "rotation_failed precedes session_stopped in events.jsonl"
+else
+  fail "rotation_failed precedes session_stopped in events.jsonl (first terminal kind: ${FIRST_TERMINAL:-none})"
+fi
+expect_file_contains "state records crashed:0" "$TMPHOME/sessions/$SID_CRASH/state.json" "crashed:0"
+
+RPID="$(cat "$TMPHOME/sessions/$SID_CRASH/runner.pid" 2>/dev/null || true)"
+if [[ -n "$RPID" ]]; then
+  for _ in $(seq 1 25); do
+    kill -0 "$RPID" 2>/dev/null || break
+    sleep 0.2
+  done
+  if kill -0 "$RPID" 2>/dev/null; then
+    fail "runner process exits after the crash (undead runner, pid $RPID)"
+    kill -9 "$RPID" 2>/dev/null || true
+  else
+    pass "runner process exits after the crash (no undead runner)"
+  fi
+else
+  fail "runner process exits after the crash (no runner.pid recorded)"
+fi
+rm -rf "$STUB_DIR" "$CRASH_CWD"
+
 summary
