@@ -91,6 +91,7 @@ async function makeCtx(fake: FakeB): Promise<RunnerContext> {
     bExited: false,
     tearingDown: false,
     lastInterruptAt: null,
+    rotationSettled: null,
   } as RunnerContext;
 }
 
@@ -230,8 +231,12 @@ describe("makeSignalHandler (runner SIGTERM/SIGINT)", () => {
     const ctx = await makeCtx(fake);
     (ctx as { bExited?: boolean }).bExited = true;
     fake.b.exitCode = 0;
+    // The crash path already stamped the truthful reason; the signal must
+    // not clobber it (COMPATIBILITY: "the recorded reason stays crashed:*").
+    ctx.state.exit_reason = "crashed:0";
     const onTerm = makeSignalHandler(ctx, "SIGTERM");
     onTerm();
+    expect(ctx.state.exit_reason).toBe("crashed:0");
     await settle();
     expect(fake.stdinEnds).toBe(0);
     expect(exitCalls).toEqual([]);

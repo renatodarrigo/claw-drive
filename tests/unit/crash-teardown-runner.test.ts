@@ -94,6 +94,7 @@ async function makeCtx(fake: FakeB): Promise<RunnerContext> {
     bExited: false,
     tearingDown: false,
     lastInterruptAt: null,
+    rotationSettled: null,
   } as RunnerContext;
 }
 
@@ -293,6 +294,74 @@ describe("handleUnexpectedBExit — crash during rotate (dogfood gen-2)", () => 
       exitSpy.mockRestore();
     }
   }, 10_000);
+
+  it("a crash during the attempt-2 settle window still records exactly one rotation_failed before session_stopped", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    vi.spyOn(process, "kill").mockImplementation((() => true) as never);
+    const drain = async (rounds = 300) => {
+      for (let i = 0; i < rounds; i++) await new Promise((r) => setImmediate(r));
+    };
+    try {
+      const fake = makeFakeB();
+      const ctx = await makeCtx(fake);
+      const rotate = handleRequest(ctx, { id: "r1", op: "rotate" });
+      await drain();
+      expect(fake.writes).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(600_000); // attempt 1 times out → SIGINT
+      await drain();
+      const waiter = ctx.turnWaiters.get("turn_1")!;
+      waiter("failed"); // interrupted turn terminates late → 15s settle begins
+      await drain();
+      // B dies inside the settle window — no waiter is armed, so this is the
+      // loop-top-discovery path. The crash teardown must hold session_stopped
+      // until the woken rotate op has recorded the rotation's outcome.
+      const crashDone = handleUnexpectedBExit(ctx, 0, null);
+      await drain();
+      expect(await eventKinds()).not.toContain("session_stopped");
+      await vi.advanceTimersByTimeAsync(15_000); // settle elapses → loop-top sees bExited
+      const resp = await withTimeout(rotate, 4000, "rotate");
+      expect(resp).toMatchObject({ ok: false, error: "ROTATION_FAILED" });
+      await crashDone;
+      const kinds = await eventKinds();
+      expect(kinds.filter((k) => k === "rotation_failed")).toHaveLength(1);
+      expect(kinds.indexOf("rotation_failed")).toBeLessThan(kinds.indexOf("session_stopped"));
+    } finally {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("a rotate arriving after B's death refuses without appending post-terminal events", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake);
+    await handleUnexpectedBExit(ctx, 0, null); // session_stopped is the last event
+    const before = (await eventKinds()).length;
+    const resp = await withTimeout(
+      handleRequest(ctx, { id: "r2", op: "rotate" }),
+      2000,
+      "rotate"
+    );
+    expect(resp).toMatchObject({ ok: false, error: "ROTATION_FAILED" });
+    expect((resp as { message: string }).message).toMatch(/recover/);
+    expect((await eventKinds()).length).toBe(before);
+    expect(fake.writes).toHaveLength(0);
+  });
+
+  it("a crash during the MAX_GENERATIONS terminal handover records rotation_refused, not rotation_failed", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake);
+    ctx.state.generation = 10; // at the default cap → rotate takes the refusal path
+    const rotate = handleRequest(ctx, { id: "r1", op: "rotate" });
+    await waitUntil(() => ctx.turnWaiters.size === 1); // terminal handover turn armed
+    const crashDone = handleUnexpectedBExit(ctx, 0, null);
+    const resp = await withTimeout(rotate, 4000, "rotate");
+    expect(resp).toMatchObject({ ok: false, error: "MAX_GENERATIONS" });
+    await crashDone;
+    const kinds = await eventKinds();
+    expect(kinds).toContain("rotation_refused");
+    expect(kinds).not.toContain("rotation_failed");
+    expect(kinds.indexOf("rotation_refused")).toBeLessThan(kinds.indexOf("session_stopped"));
+  });
 
   it("handover attempt 2 waits out the interrupt settle window before sending (A3 kill pattern)", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });

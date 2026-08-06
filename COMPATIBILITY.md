@@ -153,7 +153,9 @@ Stop a session. Reaps the Claude Code process; keeps the session directory.
 A stop (or a runner SIGTERM) that lands while the crash path is mid-flight —
 including its ≤180s best-effort crash distillation — defers to it: the crash
 teardown owns the terminal record, so the recorded reason stays `crashed:*`.
-A second signal force-exits the runner.
+A runner torn down by a signal records `runner_sigterm` / `runner_sigint` as
+the `session_stopped` reason and `state.exit_reason`; a second signal
+force-exits the runner.
 
 **Required input:** `session_id: string`
 
