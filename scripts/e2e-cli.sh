@@ -147,4 +147,47 @@ else
 fi
 rm -rf "$STUB_DIR" "$CRASH_CWD"
 
+section "runner SIGTERM teardown (stub session process)"
+# A stub that idles on stdin (exits on EOF) — a live session. One SIGTERM to
+# the runner must end B's stdin, write the terminal record with reason
+# runner_sigterm, and exit the runner within seconds. Pre-hardening, orphaned
+# runners absorbed every SIGTERM and needed SIGKILL.
+STUB2_DIR="$(mktemp -d)"
+SIG_CWD="$(mktemp -d "$HOME/.cache/claw-e2e-cwd.XXXXXX")"
+cat > "$STUB2_DIR/claude" <<'EOF'
+#!/bin/sh
+while read -r _l; do :; done
+exit 0
+EOF
+chmod +x "$STUB2_DIR/claude"
+
+SID_SIG="$(PATH="$STUB2_DIR:$PATH" "$BIN" start --cwd "$SIG_CWD" --policy "$ROTPOLICY")"
+if [[ "$SID_SIG" == sess_* ]]; then
+  pass "stub session starts (id: $SID_SIG)"
+else
+  fail "stub session starts (got: $SID_SIG)"
+fi
+RPID2="$(cat "$TMPHOME/sessions/$SID_SIG/runner.pid" 2>/dev/null || true)"
+STUB2_PID="$(pgrep -f "$STUB2_DIR/claude" | head -1 || true)"
+kill -TERM "$RPID2" 2>/dev/null || true
+for _ in $(seq 1 25); do
+  kill -0 "$RPID2" 2>/dev/null || break
+  sleep 0.2
+done
+if kill -0 "$RPID2" 2>/dev/null; then
+  fail "runner exits on one SIGTERM (wedged, pid $RPID2)"
+  kill -9 "$RPID2" 2>/dev/null || true
+else
+  pass "runner exits on one SIGTERM"
+fi
+expect_file_contains "state records runner_sigterm"           "$TMPHOME/sessions/$SID_SIG/state.json"    "runner_sigterm"
+expect_file_contains "session_stopped carries runner_sigterm" "$TMPHOME/sessions/$SID_SIG/events.jsonl"  "runner_sigterm"
+if [[ -n "$STUB2_PID" ]] && kill -0 "$STUB2_PID" 2>/dev/null; then
+  fail "B process reaped with the runner (stub still alive, pid $STUB2_PID)"
+  kill -9 "$STUB2_PID" 2>/dev/null || true
+else
+  pass "B process reaped with the runner"
+fi
+rm -rf "$STUB2_DIR" "$SIG_CWD"
+
 summary

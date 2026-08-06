@@ -111,6 +111,10 @@ export interface RunnerContext {
    * turn can ever terminate again — handover attempts and the rotate
    * choreography must fail fast instead of waiting out turn timeouts. */
   bExited: boolean;
+  /** Set by teardownSession's first engagement; later engagements (a second
+   * stop, a signal after a stop) are no-ops instead of re-arming timers or
+   * double-emitting the terminal event. */
+  tearingDown: boolean;
 }
 
 // Placeholder type; populated in Task 13 when the approval flow lands.
@@ -143,10 +147,40 @@ async function emitEvent(
 /**
  * Tear down Session B: stop input, escalate SIGTERM→SIGKILL, and on exit write
  * the terminal state + a session_stopped(reason) event and exit the runner.
- * Shared by the stop_session control op and the CD-4 budget breaker.
+ * Shared by the stop_session control op, the CD-4 budget breaker, the rotate
+ * choreography's self-stop, and the runner's signal handlers. Idempotent — a
+ * second stop or signal never re-arms timers or double-emits — and safe
+ * against a B that is already dead (the once("exit") of a dead child never
+ * fires; waiting on it is how a stop used to wedge forever).
  */
 function teardownSession(ctx: RunnerContext, reason: string): void {
   ctx.stopping = true;
+  if (ctx.tearingDown) return;
+  ctx.tearingDown = true;
+  if (ctx.bExited) {
+    // The crash teardown (handleUnexpectedBExit → runRunner's exit path)
+    // already owns the terminal record and the process exit.
+    return;
+  }
+  const finish = async (code: number | null) => {
+    ctx.state.status = "stopped";
+    ctx.state.exit_code = code;
+    await writeState(statePath(ctx.sessionId), ctx.state);
+    await emitEvent(ctx, {
+      kind: "session_stopped",
+      reason,
+      exit_code: code,
+    } as Omit<Event, "seq" | "at">);
+    await fs.rm(readyMarkerPath(ctx.sessionId), { force: true });
+    process.exit(0);
+  };
+  if (ctx.b.exitCode !== null || ctx.b.signalCode !== null) {
+    // B died without the crash path running (it exited on the same tick a
+    // stop landed, before any listener registered) — the terminal record
+    // must still be written; an exit event will never be observed.
+    void finish(ctx.b.exitCode);
+    return;
+  }
   try {
     ctx.b.stdin?.end();
   } catch { /* */ }
@@ -160,19 +194,10 @@ function teardownSession(ctx: RunnerContext, reason: string): void {
       try { process.kill(ctx.b.pid, "SIGKILL"); } catch { /* */ }
     }
   }, 20_000);
-  ctx.b.once("exit", async (code) => {
+  ctx.b.once("exit", (code) => {
     clearTimeout(killSigterm);
     clearTimeout(killSigkill);
-    ctx.state.status = "stopped";
-    ctx.state.exit_code = code;
-    await writeState(statePath(ctx.sessionId), ctx.state);
-    await emitEvent(ctx, {
-      kind: "session_stopped",
-      reason,
-      exit_code: code,
-    } as Omit<Event, "seq" | "at">);
-    await fs.rm(readyMarkerPath(ctx.sessionId), { force: true });
-    process.exit(0);
+    void finish(code);
   });
 }
 
@@ -996,6 +1021,31 @@ export async function handleRequest(
 }
 
 /**
+ * Runner signal handling (SIGTERM/SIGINT). First signal: graceful teardown
+ * through teardownSession — stdin EOF, SIGTERM→SIGKILL escalation, terminal
+ * state + session_stopped("runner_sigterm"/"runner_sigint"), process exit.
+ * Second signal (or a signal while a stop is already engaged): the operator
+ * insists — force-exit immediately. Before this, the signal path sent B a
+ * single unescalated SIGTERM and never exited by itself, so a runner whose B
+ * ignored SIGTERM — or one already past its main loop — absorbed every
+ * subsequent SIGTERM forever (July's orphaned runners needed SIGKILL).
+ * Exported for unit tests; runRunner registers the returned closure.
+ */
+export function makeSignalHandler(
+  ctx: RunnerContext,
+  signal: "SIGTERM" | "SIGINT"
+): () => void {
+  return () => {
+    if (ctx.stopping) {
+      process.exit(1);
+      return;
+    }
+    ctx.state.exit_reason = signal === "SIGTERM" ? "runner_sigterm" : "runner_sigint";
+    teardownSession(ctx, ctx.state.exit_reason);
+  };
+}
+
+/**
  * Context rotation: the UNEXPECTED B-death path — best-effort crash
  * distillation, then terminal state + session_stopped. Exported so the crash
  * choreography is unit-testable without spawning a real runner; runRunner's
@@ -1145,6 +1195,7 @@ export async function runRunner(sessionId: string): Promise<void> {
     rotating: false,
     turnWaiters: new Map(),
     bExited: false,
+    tearingDown: false,
   };
 
   // Start the stdout loop; run it in the background. If it fails, emit an
@@ -1180,8 +1231,8 @@ export async function runRunner(sessionId: string): Promise<void> {
   }
 
   await new Promise<void>((resolve) => {
-    process.on("SIGTERM", () => resolve());
-    process.on("SIGINT", () => resolve());
+    process.on("SIGTERM", makeSignalHandler(ctx, "SIGTERM"));
+    process.on("SIGINT", makeSignalHandler(ctx, "SIGINT"));
     b.on("exit", (code, signal) => {
       // stop_session and rotate own their teardown; this branch is the
       // UNEXPECTED death path (Context rotation: crash → best-effort distillation).
@@ -1196,18 +1247,16 @@ export async function runRunner(sessionId: string): Promise<void> {
     });
   });
 
-  // Teardown (only reached when NOT in a stop_session flow). The runner-log
-  // capture is closed by the process.once("exit") hook installed at startup, so
-  // it's torn down exactly once across every exit path.
+  // Only the crash path resolves the promise above — stop_session and the
+  // signal handlers exit inside teardownSession. B is gone and the terminal
+  // record is written: close the listener socket and exit NOW. Lingering
+  // would leave an "undead" runner — a still-open control connection (e.g. a
+  // woken rotate client's) keeps the event loop alive while the installed
+  // signal listeners absorb every subsequent SIGTERM. The runner-log capture
+  // is closed by the process.once("exit") hook installed at startup.
   try { server.close(); } catch { /* */ }
-  try { b.kill("SIGTERM"); } catch { /* already dead */ }
   await fs.rm(readyMarkerPath(sessionId), { force: true });
-  // Crash path: B is gone and the terminal event is written — exit NOW.
-  // Without this, a still-open control connection (e.g. a woken rotate
-  // client's) keeps the event loop alive and the runner outlives its own
-  // session_stopped ("undead runner"), swallowing every later SIGTERM via the
-  // already-resolved signal listeners.
-  if (ctx.bExited) process.exit(0);
+  process.exit(0);
 }
 
 // Standalone entry for `claw-drive runner <session_id>` (wired by dispatcher in Task 26)

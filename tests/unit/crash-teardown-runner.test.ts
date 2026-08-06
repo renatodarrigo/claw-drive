@@ -89,6 +89,7 @@ async function makeCtx(fake: FakeB): Promise<RunnerContext> {
     rotating: false,
     turnWaiters: new Map(),
     bExited: false,
+    tearingDown: false,
   } as RunnerContext;
 }
 
