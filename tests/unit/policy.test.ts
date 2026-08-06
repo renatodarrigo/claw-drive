@@ -1613,3 +1613,18 @@ describe("starter template", () => {
     expect(validatePolicy(policy).ok).toBe(true);
   });
 });
+
+describe("budget.max_cost_usd validation (cost-cap)", () => {
+  it("accepts a positive float cap", () => {
+    const r = validatePolicy({ escalate_default: true, budget: { max_cost_usd: 0.5 } });
+    expect(r.ok).toBe(true);
+  });
+
+  it("rejects zero, negative, and non-number caps", () => {
+    for (const bad of [0, -1, "5", null, NaN]) {
+      const r = validatePolicy({ escalate_default: true, budget: { max_cost_usd: bad } } as never);
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.error).toBe("budget.max_cost_usd must be a positive number");
+    }
+  });
+});
