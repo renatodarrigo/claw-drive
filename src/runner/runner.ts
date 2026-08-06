@@ -705,6 +705,20 @@ export async function handleRequest(
     }
 
     case "rotate": {
+      if (ctx.bExited) {
+        // Checked BEFORE the gate: a death that killed an in-flight turn
+        // leaves turnInFlight latched, and TURN_IN_FLIGHT's "retry at the
+        // turn boundary" advice is unfollowable on a dead session. The
+        // session process is gone (crash teardown in flight) — a rotation
+        // can never start, and its events are terminal. Plain error, no
+        // event.
+        return {
+          id: req.id,
+          ok: false,
+          error: "ROTATION_FAILED",
+          message: "session process has exited; rotation cannot start — use recover",
+        };
+      }
       const cfg = rotationConfigOf(ctx.state.policy);
       const blocker = checkRotateGate({
         cfg,
@@ -731,17 +745,6 @@ export async function handleRequest(
           ok: false,
           error: "ROTATION_IN_PROGRESS",
           message: "a rotation is already running for this session",
-        };
-      }
-      if (ctx.bExited) {
-        // The session process is already gone (crash teardown in flight) — a
-        // rotation can never start, and its events are terminal. Plain error,
-        // no event.
-        return {
-          id: req.id,
-          ok: false,
-          error: "ROTATION_FAILED",
-          message: "session process has exited; rotation cannot start — use recover",
         };
       }
       ctx.rotating = true;

@@ -335,6 +335,11 @@ describe("handleUnexpectedBExit — crash during rotate (dogfood gen-2)", () => 
     const fake = makeFakeB();
     const ctx = await makeCtx(fake);
     await handleUnexpectedBExit(ctx, 0, null); // session_stopped is the last event
+    // The death killed an in-flight turn: turnInFlight stays latched (the
+    // crash path bypasses afterEventBookkeeping). The refusal must still be
+    // the truthful use-recover one, not TURN_IN_FLIGHT's unfollowable
+    // "retry at the turn boundary".
+    ctx.turnInFlight = true;
     const before = (await eventKinds()).length;
     const resp = await withTimeout(
       handleRequest(ctx, { id: "r2", op: "rotate" }),
