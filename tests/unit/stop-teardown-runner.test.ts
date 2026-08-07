@@ -289,6 +289,30 @@ describe("observeBExit (B-exit invariant)", () => {
     observeBExit(ctx);
     expect(outcomes).toEqual(["failed", "failed"]);
   });
+
+  it("teardown's own exit handler observes the exit when it is the sole listener (socket-boot window)", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake);
+    // The socket starts serving before the runner attaches its main
+    // b.on("exit") listener, so a stop landing inside that window leaves
+    // teardown's own once("exit") as the ONLY observer of B's death. The
+    // invariant — every exit path observes the exit — must hold there too,
+    // not merely by sibling-listener ordering outside the window.
+    const outcomes: string[] = [];
+    ctx.turnWaiters.set("turn_1", (o) => outcomes.push(o));
+    teardownSession(ctx, "stop_session");
+    expect(fake.emitter.listenerCount("exit")).toBe(1); // no sibling observer
+    expect(ctx.bExited).toBe(false);
+    fake.b.exitCode = 0;
+    fake.emitter.emit("exit", 0, null);
+    expect(ctx.bExited).toBe(true);
+    expect(outcomes).toEqual(["failed"]);
+    expect(ctx.turnWaiters.size).toBe(0);
+    // …and the handler still does its own job: the terminal record is written.
+    await settleUntil(() => exitCalls.length > 0);
+    expect(await eventKinds()).toContain("session_stopped");
+    expect(exitCalls).toEqual([0]);
+  });
 });
 
 describe("teardown finish holds for an in-flight rotation", () => {

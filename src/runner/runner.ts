@@ -235,6 +235,13 @@ export function teardownSession(ctx: RunnerContext, reason: string): void {
     }
   }, 20_000);
   ctx.b.once("exit", (code) => {
+    // Record the exit here too. The socket serves before runRunner attaches
+    // its own b.on("exit"), so a stop landing in that boot window leaves this
+    // handler as the SOLE observer of B's death — without this the invariant
+    // ("every exit path observes B's exit") would hold only by sibling-
+    // listener ordering. observeBExit latches once, so double-observation
+    // alongside that sibling is a no-op by design.
+    observeBExit(ctx);
     clearTimeout(killSigterm);
     clearTimeout(killSigkill);
     void finish(code);
