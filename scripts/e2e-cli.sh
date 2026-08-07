@@ -304,8 +304,9 @@ N_SESSIONS_BEFORE="$(ls "$TMPHOME/sessions" | wc -l | tr -d ' ')"
 
 RC_OUT="$TMPHOME/rotcost-out.txt"
 "$BIN" rotate "$SID_RC" >"$RC_OUT" 2>&1 || true
-expect_file_contains "rotate reports ROTATION_FAILED"       "$RC_OUT" "ROTATION_FAILED"
-expect_file_contains "rotate says the session is stopping"  "$RC_OUT" "stopping"
+expect_file_contains "rotate reports ROTATION_FAILED (mid-rotation breach)" "$RC_OUT" "ROTATION_FAILED"
+expect_file_contains "rotate says the session is stopping"                  "$RC_OUT" "stopping"
+expect_file_contains "rotate message pins the checkpoint"                   "$RC_OUT" "after writing the handover"
 
 # Settle on the runner's actual exit before one-shot file asserts (the
 # SIGTERM-section pattern — every write in the breach choreography lands
@@ -328,13 +329,14 @@ fi
 
 RC_STATE="$TMPHOME/sessions/$SID_RC/state.json"
 RC_EVJ="$TMPHOME/sessions/$SID_RC/events.jsonl"
-expect_file_contains "state records budget_exceeded:max_cost_usd" "$RC_STATE" "budget_exceeded:max_cost_usd"
-expect_file_contains "rotation_failed names session_stopping"     "$RC_EVJ"   "session_stopping"
+expect_file_contains "mid-rotation state records budget_exceeded:max_cost_usd" "$RC_STATE" "budget_exceeded:max_cost_usd"
+expect_file_contains "rotation_failed names session_stopping"                  "$RC_EVJ"   "session_stopping"
+expect_file_contains "session_stopped recorded after the mid-rotation breach"  "$RC_EVJ"   '"kind":"session_stopped"'
 RC_FIRST="$(grep -oE '"kind":"(rotation_failed|session_stopped)"' "$RC_EVJ" 2>/dev/null | head -1 || true)"
 if [[ "$RC_FIRST" == *rotation_failed* ]]; then
-  pass "rotation_failed precedes session_stopped in events.jsonl"
+  pass "rotation_failed precedes session_stopped in events.jsonl (mid-rotation breach)"
 else
-  fail "rotation_failed precedes session_stopped in events.jsonl (first terminal kind: ${RC_FIRST:-none})"
+  fail "rotation_failed precedes session_stopped in events.jsonl (mid-rotation breach; first terminal kind: ${RC_FIRST:-none})"
 fi
 N_SESSIONS_AFTER="$(ls "$TMPHOME/sessions" | wc -l | tr -d ' ')"
 if [[ "$N_SESSIONS_AFTER" == "$N_SESSIONS_BEFORE" ]]; then
