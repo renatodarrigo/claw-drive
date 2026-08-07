@@ -288,6 +288,96 @@ describe("breach on the handover turn's own result line", () => {
   });
 });
 
+describe("cost carried across the rotation handoff", () => {
+  it("hands the inherited base to the successor when no reading of its own was ever stamped", async () => {
+    // Real timers: the successor spawn is a real child process, and the
+    // handoff's readiness wait polls the ready marker on a real 50ms timer.
+    vi.useRealTimers();
+    // Stub runner: touching the ready marker is all the handoff waits for.
+    const stubRunner = path.join(stubDir, "fake-runner");
+    await fs.writeFile(stubRunner, '#!/bin/sh\ntouch "$CLAW_DRIVE_HOME/sessions/$2/ready"\n', {
+      mode: 0o755,
+    });
+    await fs.chmod(stubRunner, 0o755);
+    process.env.CLAW_DRIVE_BIN = stubRunner;
+    const fake = makeFakeB();
+    // A session dir written before successors were born carrying cost_usd: it
+    // holds the base it inherited and nothing else, and no priced result line
+    // during the handover turn ever stamps a cost_usd of its own.
+    const ctx = await makeCtx(fake, { cost_usd_base: 2.5 });
+    expect(ctx.state.cost_usd).toBeUndefined();
+    const rotP = handleRequest(ctx, { id: "r1", op: "rotate" });
+    await settleUntil(() => ctx.turnWaiters.has("turn_1"));
+    await appendAssistantHandover("turn_1");
+    const waiter = ctx.turnWaiters.get("turn_1")!;
+    ctx.turnWaiters.delete("turn_1");
+    waiter("completed");
+    const resp = await rotP;
+    expect(resp).toMatchObject({ ok: true });
+    const newId = (resp as { result: { new_session_id: string } }).result.new_session_id;
+    const succ = await readState(statePath(newId));
+    expect(succ?.cost_usd_base).toBeCloseTo(2.5, 10);
+    expect(succ?.cost_usd).toBeCloseTo(2.5, 10);
+    // Selected, never summed: the predecessor's own state is untouched.
+    expect(ctx.state.cost_usd).toBeUndefined();
+    expect(ctx.state.cost_usd_base).toBeCloseTo(2.5, 10);
+    // Let the predecessor's deferred self-teardown run to completion.
+    fake.emitter.emit("exit", 0, null);
+    await settleUntil(() => exitCalls.length > 0);
+  });
+
+  it("prefers the predecessor's own cost_usd over its inherited base", async () => {
+    vi.useRealTimers();
+    const stubRunner = path.join(stubDir, "fake-runner");
+    await fs.writeFile(stubRunner, '#!/bin/sh\ntouch "$CLAW_DRIVE_HOME/sessions/$2/ready"\n', {
+      mode: 0o755,
+    });
+    await fs.chmod(stubRunner, 0o755);
+    process.env.CLAW_DRIVE_BIN = stubRunner;
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake, { cost_usd_base: 2.5, cost_usd: 4.0 });
+    const rotP = handleRequest(ctx, { id: "r1", op: "rotate" });
+    await settleUntil(() => ctx.turnWaiters.has("turn_1"));
+    await appendAssistantHandover("turn_1");
+    const waiter = ctx.turnWaiters.get("turn_1")!;
+    ctx.turnWaiters.delete("turn_1");
+    waiter("completed");
+    const resp = await rotP;
+    expect(resp).toMatchObject({ ok: true });
+    const newId = (resp as { result: { new_session_id: string } }).result.new_session_id;
+    const succ = await readState(statePath(newId));
+    expect(succ?.cost_usd_base).toBeCloseTo(4.0, 10);
+    fake.emitter.emit("exit", 0, null);
+    await settleUntil(() => exitCalls.length > 0);
+  });
+
+  it("omits the successor's base when the predecessor carried neither field", async () => {
+    vi.useRealTimers();
+    const stubRunner = path.join(stubDir, "fake-runner");
+    await fs.writeFile(stubRunner, '#!/bin/sh\ntouch "$CLAW_DRIVE_HOME/sessions/$2/ready"\n', {
+      mode: 0o755,
+    });
+    await fs.chmod(stubRunner, 0o755);
+    process.env.CLAW_DRIVE_BIN = stubRunner;
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake);
+    const rotP = handleRequest(ctx, { id: "r1", op: "rotate" });
+    await settleUntil(() => ctx.turnWaiters.has("turn_1"));
+    await appendAssistantHandover("turn_1");
+    const waiter = ctx.turnWaiters.get("turn_1")!;
+    ctx.turnWaiters.delete("turn_1");
+    waiter("completed");
+    const resp = await rotP;
+    expect(resp).toMatchObject({ ok: true });
+    const newId = (resp as { result: { new_session_id: string } }).result.new_session_id;
+    const succ = await readState(statePath(newId));
+    expect(succ?.cost_usd_base).toBeUndefined();
+    expect(succ?.cost_usd).toBeUndefined();
+    fake.emitter.emit("exit", 0, null);
+    await settleUntil(() => exitCalls.length > 0);
+  });
+});
+
 describe("enforcement-site base term (lineage total = base + reading)", () => {
   it("breaches when the inherited base pushes an under-cap reading over the cap", async () => {
     const fake = makeFakeB();

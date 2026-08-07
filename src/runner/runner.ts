@@ -937,6 +937,13 @@ export async function handleRequest(
             ctx.state.original_brief ??
             (ctx.state as unknown as { scenario_brief?: string }).scenario_brief ??
             "(no original brief was recorded at session start)";
+          // Best-known lineage total to hand the successor: cost_usd once any
+          // priced result line has been read, else the base this session was
+          // itself born with — a session that has read no price of its own has
+          // still spent every inherited dollar. Selected, never summed: a
+          // chain of costless handoffs carries the same base unchanged.
+          // Mirrors recover's inheritedCost; omit the key when neither is set.
+          const inheritedCost = ctx.state.cost_usd ?? ctx.state.cost_usd_base;
           const alias = ctx.state.alias;
           if (alias !== undefined) {
             // Free the alias BEFORE scaffolding the successor: alias uniqueness
@@ -968,7 +975,7 @@ export async function handleRequest(
               generation: generation + 1,
               root_session_id: ctx.state.root_session_id ?? ctx.sessionId,
               rotated_from: ctx.sessionId,
-              ...(ctx.state.cost_usd !== undefined ? { cost_usd_base: ctx.state.cost_usd } : {}),
+              ...(inheritedCost !== undefined ? { cost_usd_base: inheritedCost } : {}),
             },
           });
           spawnRunnerDetached(newId);
