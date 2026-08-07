@@ -52,12 +52,13 @@ export interface SessionState {
    * unchanged.
    *
    * Cost-cap (additive-optional, absent on pre-feature state files).
-   * cost_usd: lineage-cumulative estimated spend in USD as of the last
-   * completed turn (= cost_usd_base + the process's latest cumulative
-   * reading). Stamped whenever a reading or a base exists.
+   * cost_usd: lineage-cumulative estimated spend in USD as of the latest
+   * result-line reading (error results included) — successors are born with
+   * the inherited base (= cost_usd_base + the process's latest cumulative
+   * reading).
    * cost_usd_base: dollars inherited from the predecessor at scaffold time;
-   * absent for generation 1 and for successors whose predecessor never
-   * stamped a cost_usd.
+   * absent for generation 1 and for successors whose predecessor carried
+   * neither.
    */
   context_tokens?: number;
   generation?: number;

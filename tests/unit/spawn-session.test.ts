@@ -152,4 +152,37 @@ describe("cost_usd_base lineage stamp (cost-cap)", () => {
     const state = await readState(statePath(id));
     expect(state?.cost_usd_base).toBeUndefined();
   });
+
+  it("a successor is born with cost_usd = cost_usd_base (lineage total visible before its first reading)", async () => {
+    const id = "sess_20260729T000000_ffffff";
+    await scaffoldSessionDir({
+      sessionId: id,
+      cwd: process.env.HOME as string,
+      policy: { escalate_default: true },
+      decisionTimeoutSeconds: 3600,
+      model: null,
+      lineage: {
+        generation: 2,
+        root_session_id: "sess_root0003",
+        rotated_from: "sess_root0003",
+        cost_usd_base: 3.21,
+      },
+    });
+    const state = await readState(statePath(id));
+    expect(state?.cost_usd).toBeCloseTo(3.21, 10);
+  });
+
+  it("no base, no birth cost_usd", async () => {
+    const id = "sess_20260729T000000_jjjjjj";
+    await scaffoldSessionDir({
+      sessionId: id,
+      cwd: process.env.HOME as string,
+      policy: { escalate_default: true },
+      decisionTimeoutSeconds: 3600,
+      model: null,
+      lineage: { generation: 2, root_session_id: "sess_root0004", rotated_from: "sess_root0004" },
+    });
+    const state = await readState(statePath(id));
+    expect(state?.cost_usd).toBeUndefined();
+  });
 });
