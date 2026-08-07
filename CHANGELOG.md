@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **A rotation aborted by a dead session process names the death, not a stop that merely followed it.** When the session process crashes mid-rotation, the `rotation_failed` reason and the returned message report `b_exited:` and point at `recover` — including when a `stop_session` or a runner signal lands while the crash teardown is still settling, which marks the session as stopping on top of a death it did not cause. A rotation aborted by a genuine stop or budget breach keeps its `session_stopping:` reason, and a crashed session's terminal record still reads `crashed:*` either way.
+
 ## [1.5.1] — 2026-08-07
 
 ### Fixed
