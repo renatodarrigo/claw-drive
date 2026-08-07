@@ -119,10 +119,10 @@ describe("recoverSession successor scaffolding (stub runner bin)", () => {
     const id = "sess_20260101T000000_chain1";
     await deadSession(id, { cost_usd_base: 3.0, cost_usd: 3.0 });
     await fs.writeFile(crashHandoverPath(id), "## Current objective\nresume");
-    const out = await recoverSession({ sessionId: id });
-    expect(out.ok).toBe(true);
-    const succId = (out as { result: { new_session_id: string } }).result.new_session_id;
-    const succ = await readState(statePath(succId));
+    const r = await recoverSession({ sessionId: id });
+    expect(r.ok).toBe(true);
+    const newId = (r as { result: { new_session_id: string } }).result.new_session_id;
+    const succ = await readState(statePath(newId));
     expect(succ?.cost_usd_base).toBeCloseTo(3.0, 10);
     expect(succ?.cost_usd).toBeCloseTo(3.0, 10);
   });
