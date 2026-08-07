@@ -260,7 +260,9 @@ Structured refusals leave the session running:
 - `ROTATION_IN_PROGRESS` — a rotation is already running for this session; wait for its outcome.
 - `MAX_GENERATIONS` — cap reached; a terminal handover is still written; raise the cap via `update_policy` or re-brief a fresh lineage.
 - `BOOTSTRAP_EXCEEDS_THRESHOLD` — first turn already over threshold; raise it.
-- `ROTATION_FAILED` — handover generation failed and B continues toward native auto-compact — or the session process exited mid-rotation, in which case use `recover_session`.
+- `ROTATION_FAILED` — handover generation failed and B continues toward native auto-compact — or the session process exited mid-rotation (reason `b_exited:`), in which case use `recover_session` — or a stop or circuit-breaker teardown engaged mid-rotation (reason `session_stopping:`), in which case the stop wins and no successor is started.
+
+Stops are session-scoped, not lineage-scoped. A `stop_session` (or runner signal) landing while a rotation is in flight wins over the rotation: before a successor exists the rotation aborts with `rotation_failed`, recorded ahead of the terminal `session_stopped`; a successor already live when the stop lands survives and is fully recorded (`session_rotated` and `rotated_to` land before the terminal event). Stop the successor explicitly if the whole lineage should end.
 
 #### `recover_session`
 
