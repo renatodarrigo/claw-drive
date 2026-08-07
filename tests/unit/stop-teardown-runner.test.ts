@@ -373,3 +373,65 @@ describe("stop_session mid-rotation (session-scoped stop)", () => {
     expect(ctx.state.turns).toBe(1); // no attempt-2 send at an ended stdin
   });
 });
+
+// e2e (Task 6) exposed a real-timing hole the unit harness above could never
+// reach: with a REAL child process, teardownSession's stdin.end() (triggered
+// by an engaged stop/breaker) makes the stub `claude` exit within ms — the
+// main loop's b.on("exit") observes it and latches bExited via observeBExit
+// BEFORE the rotate op reaches its abort checkpoints. Both ctx.bExited and
+// ctx.stopping end up true, and B's exit there is the teardown's OWN doing
+// (not an independent crash), so the reported cause must stay "stopping".
+// These tests construct that both-flags cell deterministically at each of
+// the two abort points.
+describe("stop racing B's own teardown-caused exit (both bExited and stopping true)", () => {
+  it("bExited latched by the teardown's own stdin-EOF exit still reports stopping at the loop-top", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake);
+    const rotP = handleRequest(ctx, { id: "r1", op: "rotate" });
+    await settleUntil(() => ctx.turnWaiters.has("turn_1"));
+    await handleRequest(ctx, { id: "s1", op: "stop_session" });
+    await settle();
+    // observeBExit's own flush resolves the pending waiter "failed" (B's
+    // stdout is closed, so no terminating event can ever arrive) — the same
+    // sequence the real b.on("exit") handler runs. Attempt 1 thus fails and
+    // the loop re-enters attempt 2, discovering both flags at the top.
+    observeBExit(ctx);
+    fake.b.exitCode = 0;
+    const resp = await rotP;
+    expect(resp).toMatchObject({ ok: false, error: "ROTATION_FAILED" });
+    expect((resp as { message?: string }).message).toContain("stopping");
+    const evs = (await readEventsSince(eventsPath(SID), 0)).events;
+    const rf = evs.find((e) => e.kind === "rotation_failed");
+    expect((rf as unknown as { reason: string }).reason).toBe(
+      "session_stopping: stop or circuit breaker engaged during the handover turn"
+    );
+  });
+
+  it("bExited latched right after the handover turn completes still reports stopping at the checkpoint", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake);
+    const rotP = handleRequest(ctx, { id: "r1", op: "rotate" });
+    await settleUntil(() => ctx.turnWaiters.has("turn_1"));
+    await appendAssistantHandover("turn_1");
+    await handleRequest(ctx, { id: "s1", op: "stop_session" });
+    await settle();
+    // Resolve the turn "completed" FIRST (capturing the raw waiter, exactly
+    // like the checkpoint test above) so that outcome locks in — a Promise
+    // settles once, so observeBExit's internal re-flush of the very same
+    // waiter (still map-resident; nothing has deleted it yet) is a no-op.
+    // This lands B's death between turn completion and the checkpoint,
+    // mirroring the e2e race exactly.
+    const waiter = ctx.turnWaiters.get("turn_1")!;
+    waiter("completed");
+    observeBExit(ctx);
+    fake.b.exitCode = 0;
+    const resp = await rotP;
+    expect(resp).toMatchObject({ ok: false, error: "ROTATION_FAILED" });
+    expect((resp as { message?: string }).message).toContain("stopping");
+    const evs = (await readEventsSince(eventsPath(SID), 0)).events;
+    const rf = evs.find((e) => e.kind === "rotation_failed");
+    expect((rf as unknown as { reason: string }).reason).toBe(
+      "session_stopping: stop or circuit breaker engaged after the handover turn; successor not started"
+    );
+  });
+});

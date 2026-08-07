@@ -459,10 +459,13 @@ async function runHandoverTurn(
       // attempt lands back here) — or a stop/breaker teardown is in flight
       // and stdin may already be ended. Never send another turn at a closed
       // stdin, and never wait out a turn timeout that cannot fire.
-      // Precedence: a dead B is the stronger, truthful cause when both hold.
+      // Precedence: an engaged stop/breaker teardown is the truthful cause
+      // when both hold — B's exit is the teardown's own doing (stdin EOF
+      // races the real process's exit ahead of this check, dogfood e2e);
+      // bExited without stopping is the independent-crash path.
       if (flags) {
-        if (ctx.bExited) flags.bExited = true;
-        else flags.stopping = true;
+        if (ctx.stopping) flags.stopping = true;
+        else flags.bExited = true;
       }
       return null;
     }
@@ -895,20 +898,24 @@ export async function handleRequest(
             // predecessor-side choreography (alias handoff, self-teardown)
             // can no longer run. The handover text survives in handover.md
             // and events.jsonl, so recover's distillation loses nothing.
-            // Precedence: a dead B is the stronger, truthful cause.
+            // Precedence: an engaged stop/breaker teardown is the truthful
+            // cause when both hold — B's exit is the teardown's own doing
+            // (stdin EOF races the real process's exit ahead of this check,
+            // dogfood e2e); bExited without stopping is the independent-
+            // crash path.
             await emitEvent(ctx, {
               kind: "rotation_failed",
-              reason: ctx.bExited
-                ? "b_exited: session process exited after the handover turn; successor not started"
-                : "session_stopping: stop or circuit breaker engaged after the handover turn; successor not started",
+              reason: ctx.stopping
+                ? "session_stopping: stop or circuit breaker engaged after the handover turn; successor not started"
+                : "b_exited: session process exited after the handover turn; successor not started",
             } as Omit<Event, "seq" | "at">);
             return {
               id: req.id,
               ok: false,
               error: "ROTATION_FAILED",
-              message: ctx.bExited
-                ? "session process exited after writing the handover; successor not started — use recover"
-                : "session is stopping after writing the handover; successor not started",
+              message: ctx.stopping
+                ? "session is stopping after writing the handover; successor not started"
+                : "session process exited after writing the handover; successor not started — use recover",
             };
           }
 
