@@ -8,7 +8,7 @@ import { handleRequest, makeSignalHandler, observeBExit, teardownSession, type R
 import { readState, type SessionState } from "../../src/lib/state.js";
 import { readEventsSince } from "../../src/lib/events.js";
 import { eventsPath, statePath } from "../../src/lib/paths.js";
-import { waitForReady, spawnRunnerDetached } from "../../src/lib/spawn-session.js";
+import { waitForReady } from "../../src/lib/spawn-session.js";
 
 // A2 hardening (July orphaned runners; SIGTERM wedge): the teardown path must
 // escalate SIGTERM→SIGKILL against an unresponsive B, and must short-circuit
