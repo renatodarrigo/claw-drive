@@ -87,6 +87,7 @@ async function makeCtx(fake: FakeB, statePatch?: Partial<SessionState>): Promise
     rotating: false,
     turnWaiters: new Map(),
     bExited: false,
+    crashTeardownEngaged: false,
     tearingDown: false,
     lastInterruptAt: null,
     rotationSettled: null,

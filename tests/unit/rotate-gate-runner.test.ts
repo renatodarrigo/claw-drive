@@ -37,6 +37,7 @@ function fakeCtx(overrides: Partial<RunnerContext> & { policy?: SessionState["po
     rotating: false,
     turnWaiters: new Map(),
     bExited: false,
+    crashTeardownEngaged: false,
     tearingDown: false,
     lastInterruptAt: null,
     rotationSettled: null,

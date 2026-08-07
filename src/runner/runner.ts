@@ -111,10 +111,17 @@ export interface RunnerContext {
   firstTurnContextTokens: number | null;
   rotating: boolean;
   turnWaiters: Map<string, (outcome: "completed" | "failed") => void>;
-  /** Set synchronously the moment B's process exits (any path). Once true no
+  /** Set synchronously the moment B's exit is observed (any path — crash,
+   * stop, or teardown's dead-B fast path; see observeBExit). Once true no
    * turn can ever terminate again — handover attempts and the rotate
    * choreography must fail fast instead of waiting out turn timeouts. */
   bExited: boolean;
+  /** Set synchronously the moment handleUnexpectedBExit engages — distinct
+   * from bExited, which now also latches on the stop path (a B death raced
+   * against a pending stop). teardownSession defers the terminal record to
+   * the crash choreography iff this is set; bExited alone no longer implies
+   * that. */
+  crashTeardownEngaged: boolean;
   /** Set by teardownSession's first engagement; later engagements (a second
    * stop, a signal after a stop) are no-ops instead of re-arming timers or
    * double-emitting the terminal event. */
@@ -124,9 +131,10 @@ export interface RunnerContext {
    * an interrupted claude process can exit on its next turn. */
   lastInterruptAt: number | null;
   /** Resolves when the in-flight rotate op settles (success, refusal, or
-   * failure). The crash teardown awaits this before writing session_stopped:
-   * the rotate op is the single owner of rotation-outcome events, and the
-   * terminal event must come last. Null when no rotate is in flight. */
+   * failure). The crash teardown and teardownSession's finish await this
+   * (bounded) before writing session_stopped: the rotate op is the single
+   * owner of rotation-outcome events, and the terminal event must come last.
+   * Null when no rotate is in flight. */
   rotationSettled: Promise<void> | null;
 }
 
@@ -164,18 +172,30 @@ async function emitEvent(
  * choreography's self-stop, and the runner's signal handlers. Idempotent — a
  * second stop or signal never re-arms timers or double-emits — and safe
  * against a B that is already dead (the once("exit") of a dead child never
- * fires; waiting on it is how a stop used to wedge forever).
+ * fires; waiting on it is how a stop used to wedge forever). When a rotate op
+ * is in flight, the terminal record holds (bounded) until it settles, so the
+ * rotation outcome is recorded first. Exported for unit tests; production
+ * callers are all module-internal.
  */
-function teardownSession(ctx: RunnerContext, reason: string): void {
+export function teardownSession(ctx: RunnerContext, reason: string): void {
   ctx.stopping = true;
   if (ctx.tearingDown) return;
   ctx.tearingDown = true;
-  if (ctx.bExited) {
+  if (ctx.crashTeardownEngaged) {
     // The crash teardown (handleUnexpectedBExit → runRunner's exit path)
-    // already owns the terminal record and the process exit.
+    // already owns the terminal record and the process exit. bExited alone
+    // does NOT imply this — a B death raced against a pending stop also
+    // latches bExited (main-loop exit handler), but never engages the crash
+    // choreography, so this dead-B teardown must still finish below.
     return;
   }
   const finish = async (code: number | null) => {
+    if (ctx.rotationSettled) {
+      // An in-flight rotate op owns the rotation-outcome event; hold the
+      // terminal record until it settles (bounded) so the outcome is
+      // recorded first — crash-path parity.
+      await Promise.race([ctx.rotationSettled, sleepTimeout(ROTATION_SETTLE_HOLD_MS)]);
+    }
     try {
       ctx.state.status = "stopped";
       ctx.state.exit_code = code;
@@ -197,6 +217,7 @@ function teardownSession(ctx: RunnerContext, reason: string): void {
     // B died without the crash path running (it exited on the same tick a
     // stop landed, before any listener registered) — the terminal record
     // must still be written; an exit event will never be observed.
+    observeBExit(ctx);
     void finish(ctx.b.exitCode);
     return;
   }
@@ -378,6 +399,10 @@ export async function afterEventBookkeeping(ctx: RunnerContext, ev: Event): Prom
 }
 
 const HANDOVER_TURN_TIMEOUT_MS = 600_000;
+/** Bound on how long a terminal record waits for an in-flight rotate op to
+ * settle (crash path and teardown finish alike). Every rotate path fails
+ * fast once bExited/stopping is set, so the bound has ample headroom. */
+const ROTATION_SETTLE_HOLD_MS = 30_000;
 /**
  * After a timed-out attempt's SIGINT, how long to wait for the INTERRUPTED
  * turn to actually terminate before giving up on it. See runHandoverTurn's
@@ -1129,6 +1154,21 @@ export function makeSignalHandler(
 }
 
 /**
+ * The single fact-recording step for a B exit, shared by every observer (the
+ * main loop's exit handler, the crash choreography, teardown's dead-B fast
+ * path): latch bExited and fail every pending turn waiter — B's stdout is
+ * closed, so no terminating event can ever arrive, and anything awaiting a
+ * turn must unblock now. Idempotent: re-latching and re-flushing an empty
+ * map are no-ops, so observers may call it in any order.
+ */
+export function observeBExit(ctx: RunnerContext): void {
+  ctx.bExited = true;
+  const waiters = [...ctx.turnWaiters.values()];
+  ctx.turnWaiters.clear();
+  for (const w of waiters) w("failed");
+}
+
+/**
  * Context rotation: the UNEXPECTED B-death path — best-effort crash
  * distillation, then terminal state + session_stopped. Exported so the crash
  * choreography is unit-testable without spawning a real runner; runRunner's
@@ -1143,10 +1183,8 @@ export async function handleUnexpectedBExit(
   // B's stdout is closed, so no terminating event can ever arrive — an
   // in-flight rotate must unblock now, not at its 600s handover timeout
   // (dogfood 2026-08-04: the hung rotate client).
-  ctx.bExited = true;
-  const waiters = [...ctx.turnWaiters.values()];
-  ctx.turnWaiters.clear();
-  for (const w of waiters) w("failed");
+  observeBExit(ctx);
+  ctx.crashTeardownEngaged = true;
   const sess = ctx.state;
   // Capture the truthful reason in a local: concurrent stampers (a signal
   // handler, the budget breaker) must not be able to falsify the terminal
@@ -1161,7 +1199,7 @@ export async function handleUnexpectedBExit(
     // Hold the terminal session_stopped until it settles so the outcome is
     // recorded first. Bounded: every rotate path fails fast once bExited is
     // set (worst case one settle-window sleep plus a successor spawn wait).
-    await Promise.race([ctx.rotationSettled, sleepTimeout(30_000)]);
+    await Promise.race([ctx.rotationSettled, sleepTimeout(ROTATION_SETTLE_HOLD_MS)]);
   }
   let handover_path: string | undefined;
   if (rotationConfigOf(sess.policy)) {
@@ -1280,6 +1318,7 @@ export async function runRunner(sessionId: string): Promise<void> {
     rotating: false,
     turnWaiters: new Map(),
     bExited: false,
+    crashTeardownEngaged: false,
     tearingDown: false,
     lastInterruptAt: null,
     rotationSettled: null,
@@ -1321,6 +1360,10 @@ export async function runRunner(sessionId: string): Promise<void> {
     process.on("SIGTERM", makeSignalHandler(ctx, "SIGTERM"));
     process.on("SIGINT", makeSignalHandler(ctx, "SIGINT"));
     b.on("exit", (code, signal) => {
+      // Record the exit and unblock turn awaiters on EVERY path first — on
+      // the stop path this is what lets an in-flight rotate fail fast
+      // instead of waiting out a turn timeout that can never fire.
+      observeBExit(ctx);
       // stop_session and rotate own their teardown; this branch is the
       // UNEXPECTED death path (Context rotation: crash → best-effort distillation).
       if (ctx.stopping) return;

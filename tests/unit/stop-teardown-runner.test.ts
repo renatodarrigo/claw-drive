@@ -4,7 +4,7 @@ import * as path from "node:path";
 import * as os from "node:os";
 import { EventEmitter } from "node:events";
 import type { ChildProcess } from "node:child_process";
-import { handleRequest, makeSignalHandler, type RunnerContext } from "../../src/runner/runner.js";
+import { handleRequest, makeSignalHandler, observeBExit, teardownSession, type RunnerContext } from "../../src/runner/runner.js";
 import type { SessionState } from "../../src/lib/state.js";
 import { readEventsSince } from "../../src/lib/events.js";
 import { eventsPath } from "../../src/lib/paths.js";
@@ -89,6 +89,7 @@ async function makeCtx(fake: FakeB): Promise<RunnerContext> {
     rotating: false,
     turnWaiters: new Map(),
     bExited: false,
+    crashTeardownEngaged: false,
     tearingDown: false,
     lastInterruptAt: null,
     rotationSettled: null,
@@ -174,6 +175,7 @@ describe("stop_session teardown", () => {
     const fake = makeFakeB();
     const ctx = await makeCtx(fake);
     (ctx as { bExited?: boolean }).bExited = true;
+    (ctx as { crashTeardownEngaged?: boolean }).crashTeardownEngaged = true;
     fake.b.exitCode = 0;
     const resp = await handleRequest(ctx, { id: "s1", op: "stop_session" });
     expect(resp).toMatchObject({ ok: true });
@@ -200,6 +202,22 @@ describe("stop_session teardown", () => {
     expect(exitCalls).toEqual([0]);
     vi.advanceTimersByTime(30_000);
     expect(processKills).toHaveLength(0);
+  });
+
+  it("a stop whose deferred teardown finds B already dead and latched still writes the terminal record (no wedge)", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake);
+    // Interleaving: stop_session set stopping and queued its teardown; B died
+    // in that gap, so the exit handler latched bExited and returned early on
+    // stopping — the crash path never engaged. The queued teardown must still
+    // terminal-record via the dead-B fast path.
+    ctx.stopping = true;
+    observeBExit(ctx);
+    fake.b.exitCode = 0;
+    teardownSession(ctx, "stop_session");
+    await settleUntil(() => exitCalls.length > 0);
+    expect(await eventKinds()).toContain("session_stopped");
+    expect(exitCalls).toEqual([0]);
   });
 });
 
@@ -230,6 +248,7 @@ describe("makeSignalHandler (runner SIGTERM/SIGINT)", () => {
     const fake = makeFakeB();
     const ctx = await makeCtx(fake);
     (ctx as { bExited?: boolean }).bExited = true;
+    (ctx as { crashTeardownEngaged?: boolean }).crashTeardownEngaged = true;
     fake.b.exitCode = 0;
     // The crash path already stamped the truthful reason; the signal must
     // not clobber it (COMPATIBILITY: "the recorded reason stays crashed:*").
@@ -242,5 +261,58 @@ describe("makeSignalHandler (runner SIGTERM/SIGINT)", () => {
     expect(exitCalls).toEqual([]);
     onTerm();
     expect(exitCalls).toEqual([1]);
+  });
+});
+
+describe("observeBExit (B-exit invariant)", () => {
+  it("latches bExited and fails every pending turn waiter; idempotent", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake);
+    const outcomes: string[] = [];
+    ctx.turnWaiters.set("turn_1", (o) => outcomes.push(o));
+    ctx.turnWaiters.set("turn_2", (o) => outcomes.push(o));
+    observeBExit(ctx);
+    expect(ctx.bExited).toBe(true);
+    expect(outcomes).toEqual(["failed", "failed"]);
+    expect(ctx.turnWaiters.size).toBe(0);
+    observeBExit(ctx);
+    expect(outcomes).toEqual(["failed", "failed"]);
+  });
+});
+
+describe("teardown finish holds for an in-flight rotation", () => {
+  it("writes the terminal record only after rotationSettled settles (outcome-before-terminal on the stop path)", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake);
+    let settleRotation!: () => void;
+    ctx.rotationSettled = new Promise<void>((r) => (settleRotation = r));
+    ctx.rotating = true;
+    await handleRequest(ctx, { id: "s1", op: "stop_session" });
+    await settle();
+    fake.b.exitCode = 0;
+    fake.emitter.emit("exit", 0, null);
+    await settle();
+    expect(await eventKinds()).not.toContain("session_stopped");
+    expect(exitCalls).toEqual([]);
+    settleRotation();
+    await settleUntil(() => exitCalls.length > 0);
+    expect(await eventKinds()).toContain("session_stopped");
+    expect(exitCalls).toEqual([0]);
+  });
+
+  it("the hold is bounded: the terminal record proceeds after 30s even if the rotation never settles", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake);
+    ctx.rotationSettled = new Promise<void>(() => {});
+    ctx.rotating = true;
+    await handleRequest(ctx, { id: "s1", op: "stop_session" });
+    await settle();
+    fake.b.exitCode = 0;
+    fake.emitter.emit("exit", 0, null);
+    await settle();
+    expect(exitCalls).toEqual([]);
+    vi.advanceTimersByTime(30_000);
+    await settleUntil(() => exitCalls.length > 0);
+    expect(await eventKinds()).toContain("session_stopped");
   });
 });
