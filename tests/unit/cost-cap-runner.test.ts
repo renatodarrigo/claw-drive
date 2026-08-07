@@ -287,3 +287,18 @@ describe("breach on the handover turn's own result line", () => {
     expect(dirs).toEqual([SID]);
   });
 });
+
+describe("enforcement-site base term (lineage total = base + reading)", () => {
+  it("breaches when the inherited base pushes an under-cap reading over the cap", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake, { cost_usd_base: 4.0 });
+    ctx.budget = createBudgetTracker({ max_cost_usd: 5.0 });
+    const loop = runStdoutLoop(ctx);
+    fake.stdout.write(resultLine(1.5));
+    fake.stdout.end();
+    await loop;
+    expect(ctx.budgetBreached).toBe(true);
+    expect(ctx.state.exit_reason).toBe("budget_exceeded:max_cost_usd");
+    expect(ctx.state.cost_usd).toBeCloseTo(5.5, 10);
+  });
+});
