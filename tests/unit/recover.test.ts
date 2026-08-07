@@ -114,6 +114,18 @@ describe("recoverSession successor scaffolding (stub runner bin)", () => {
     const succ = await readState(statePath(newId));
     expect(succ?.cost_usd_base).toBeUndefined();
   });
+
+  it("a recovered successor of a born-with-base turnless predecessor carries the base forward and is itself born with cost_usd (stable fixed point)", async () => {
+    const id = "sess_20260101T000000_chain1";
+    await deadSession(id, { cost_usd_base: 3.0, cost_usd: 3.0 });
+    await fs.writeFile(crashHandoverPath(id), "## Current objective\nresume");
+    const out = await recoverSession({ sessionId: id });
+    expect(out.ok).toBe(true);
+    const succId = (out as { result: { new_session_id: string } }).result.new_session_id;
+    const succ = await readState(statePath(succId));
+    expect(succ?.cost_usd_base).toBeCloseTo(3.0, 10);
+    expect(succ?.cost_usd).toBeCloseTo(3.0, 10);
+  });
 });
 
 describe("recoverSession error paths (no claude spawned)", () => {

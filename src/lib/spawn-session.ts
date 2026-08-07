@@ -121,6 +121,10 @@ export async function scaffoldSessionDir(input: ScaffoldInput): Promise<void> {
     state.rotated_from = input.lineage.rotated_from;
     if (input.lineage.cost_usd_base !== undefined) {
       state.cost_usd_base = input.lineage.cost_usd_base;
+      // Born carrying the lineage total: the base IS spent lineage dollars,
+      // so displays and recover read a truthful cost_usd before the
+      // successor's first priced result line refreshes it.
+      state.cost_usd = input.lineage.cost_usd_base;
     }
   } else if (input.policy !== "bypass" && input.policy.rotation) {
     // Context rotation: a rotation-configured fresh start begins its lineage at

@@ -3,8 +3,9 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
 import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import type { ChildProcess } from "node:child_process";
-import { enforceBudget, afterEventBookkeeping, type RunnerContext } from "../../src/runner/runner.js";
+import { enforceBudget, afterEventBookkeeping, runStdoutLoop, handleRequest, type RunnerContext } from "../../src/runner/runner.js";
 import { createBudgetTracker } from "../../src/runner/budget.js";
 import type { SessionState } from "../../src/lib/state.js";
 import { readEventsSince } from "../../src/lib/events.js";
@@ -25,16 +26,19 @@ let processKills: Array<[number, string | number]>;
 interface FakeB {
   writes: string[];
   emitter: EventEmitter;
+  stdout: PassThrough;
   b: ChildProcess;
 }
 
 function makeFakeB(): FakeB {
   const emitter = new EventEmitter();
   const writes: string[] = [];
+  const stdout = new PassThrough();
   const b = {
     pid: 424242,
     exitCode: null,
     signalCode: null,
+    stdout,
     stdin: {
       write: (chunk: string) => {
         writes.push(chunk);
@@ -46,7 +50,41 @@ function makeFakeB(): FakeB {
     on: emitter.on.bind(emitter),
     once: emitter.once.bind(emitter),
   } as unknown as ChildProcess;
-  return { writes, emitter, b };
+  return { writes, emitter, stdout, b };
+}
+
+/** Let real (non-faked) macrotasks — setImmediate, fs callbacks — drain. */
+async function settle(rounds = 30): Promise<void> {
+  for (let i = 0; i < rounds; i++) {
+    await new Promise((r) => setImmediate(r));
+  }
+}
+
+/** Drain real macrotasks until `cond` holds (Date.now-bounded; timers are faked). */
+async function settleUntil(cond: () => boolean, timeoutMs = 5000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!cond()) {
+    if (Date.now() > deadline) throw new Error("condition not reached while settling");
+    await new Promise((r) => setImmediate(r));
+  }
+}
+
+const resultLine = (cost: number, opts?: { error?: boolean }): string =>
+  JSON.stringify(
+    opts?.error
+      ? { type: "result", subtype: "error_during_execution", is_error: true, total_cost_usd: cost }
+      : { type: "result", subtype: "success", is_error: false, total_cost_usd: cost }
+  ) + "\n";
+
+async function appendAssistantHandover(turnId: string): Promise<void> {
+  const line = JSON.stringify({
+    seq: 90,
+    at: new Date().toISOString(),
+    kind: "assistant_text",
+    turn_id: turnId,
+    text: "<handover>state for the successor</handover>",
+  });
+  await fs.appendFile(eventsPath(SID), line + "\n");
 }
 
 async function makeCtx(fake: FakeB, statePatch?: Partial<SessionState>): Promise<RunnerContext> {
@@ -87,6 +125,7 @@ async function makeCtx(fake: FakeB, statePatch?: Partial<SessionState>): Promise
     rotating: false,
     turnWaiters: new Map(),
     bExited: false,
+    crashTeardownEngaged: false,
     tearingDown: false,
     lastInterruptAt: null,
     rotationSettled: null,
@@ -190,25 +229,76 @@ describe("cost-cap breach (enforceBudget)", () => {
   });
 });
 
-describe("cost stamping (afterEventBookkeeping)", () => {
-  it("stamps cost_usd = base + latest at turn completion", async () => {
+describe("cost stamping at the source (runStdoutLoop)", () => {
+  it("stamps cost_usd = base + reading on a success result line, persisted by the same line's events", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake, { cost_usd_base: 2.0 });
+    const loop = runStdoutLoop(ctx);
+    fake.stdout.write(resultLine(0.5));
+    fake.stdout.end();
+    await loop;
+    expect(ctx.state.cost_usd).toBeCloseTo(2.5, 10);
+    expect((await readState(statePath(SID)))?.cost_usd).toBeCloseTo(2.5, 10);
+  });
+
+  it("a FAILED turn's result line still stamps — error results carry cost", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake);
+    const loop = runStdoutLoop(ctx);
+    fake.stdout.write(resultLine(0.75, { error: true }));
+    fake.stdout.end();
+    await loop;
+    expect(ctx.state.cost_usd).toBeCloseTo(0.75, 10);
+    expect((await readState(statePath(SID)))?.cost_usd).toBeCloseTo(0.75, 10);
+  });
+
+  it("afterEventBookkeeping no longer stamps cost (single stamping site)", async () => {
     const fake = makeFakeB();
     const ctx = await makeCtx(fake, { cost_usd_base: 2.0 });
     ctx.lastCostUsd = 0.5;
     await afterEventBookkeeping(ctx, turnCompleted("t1"));
-    const persisted = await readState(statePath(SID));
-    expect(persisted?.cost_usd).toBeCloseTo(2.5, 10);
-  });
-
-  it("stamps base alone when no reading arrived yet; stamps nothing without either", async () => {
-    const fakeA = makeFakeB();
-    const ctxA = await makeCtx(fakeA, { cost_usd_base: 2.0 });
-    await afterEventBookkeeping(ctxA, turnCompleted("t1"));
-    expect((await readState(statePath(SID)))?.cost_usd).toBeCloseTo(2.0, 10);
-
-    const fakeB = makeFakeB();
-    const ctxB = await makeCtx(fakeB); // fresh gen-1, no base
-    await afterEventBookkeeping(ctxB, turnCompleted("t2"));
     expect((await readState(statePath(SID)))?.cost_usd).toBeUndefined();
+  });
+});
+
+describe("breach on the handover turn's own result line", () => {
+  it("aborts the rotation at the checkpoint before any successor exists", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake);
+    ctx.budget = createBudgetTracker({ max_cost_usd: 1.0 });
+    const loop = runStdoutLoop(ctx);
+    const rotP = handleRequest(ctx, { id: "r1", op: "rotate" });
+    await settleUntil(() => ctx.turnWaiters.has("turn_1"));
+    await appendAssistantHandover("turn_1");
+    fake.stdout.write(resultLine(1.5));
+    fake.stdout.end();
+    await loop;
+    const resp = await rotP;
+    expect(resp).toMatchObject({ ok: false, error: "ROTATION_FAILED" });
+    expect(ctx.state.exit_reason).toBe("budget_exceeded:max_cost_usd");
+    expect(ctx.state.cost_usd).toBeCloseTo(1.5, 10);
+    const evs = (await readEventsSince(eventsPath(SID), 0)).events;
+    const rf = evs.find((e) => e.kind === "rotation_failed");
+    expect(rf).toBeDefined();
+    expect((rf as unknown as { reason: string }).reason).toBe(
+      "session_stopping: stop or circuit breaker engaged after the handover turn; successor not started"
+    );
+    const dirs = await fs.readdir(path.join(root, "sessions"));
+    expect(dirs).toEqual([SID]);
+  });
+});
+
+describe("enforcement-site base term (lineage total = base + reading)", () => {
+  it("breaches when the inherited base pushes an under-cap reading over the cap", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake, { cost_usd_base: 4.0 });
+    ctx.budget = createBudgetTracker({ max_cost_usd: 5.0 });
+    const loop = runStdoutLoop(ctx);
+    fake.stdout.write(resultLine(1.5));
+    fake.stdout.end();
+    await loop;
+    expect(ctx.budgetBreached).toBe(true);
+    expect(ctx.state.exit_reason).toBe("budget_exceeded:max_cost_usd");
+    expect(ctx.state.cost_usd).toBeCloseTo(5.5, 10);
   });
 });

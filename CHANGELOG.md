@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **A stop or budget breach landing mid-rotation can no longer strand an unrecorded successor.** A cost (or wall-clock) breach on the handover turn's own result line — or a `stop_session`/signal during the choreography — now aborts the rotation before any successor is scaffolded, recording `rotation_failed` (reason `session_stopping:` or `b_exited:`) ahead of the terminal `session_stopped` on every path. A successor that is already live when a stop lands survives and is fully recorded (`session_rotated` + `rotated_to` land before the terminal event): stops are session-scoped, not lineage-scoped. Previously the runner could exit mid-choreography, leaving a live successor with no lineage record — or a rotation that vanished without any outcome event.
+- **`cost_usd` is stamped at the reading, not the turn boundary.** The lineage total now updates on every priced result line — failed turns included, since error results carry cost — so a breach's terminal state always records the reading that tripped it, and trailing failed turns no longer under-report the base a successor inherits.
+- **Successors are born showing their lineage spend.** A rotation/recover successor now starts with `cost_usd` equal to its inherited `cost_usd_base` instead of displaying `-` until its first completed turn.
+
 ## [1.5.0] — 2026-08-06
 
 ### Added
