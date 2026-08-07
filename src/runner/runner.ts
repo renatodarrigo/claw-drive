@@ -451,14 +451,19 @@ async function turnAssistantText(sessionId: string, turnId: string): Promise<str
  */
 async function runHandoverTurn(
   ctx: RunnerContext,
-  flags?: { wedged?: boolean; bExited?: boolean }
+  flags?: { wedged?: boolean; bExited?: boolean; stopping?: boolean }
 ): Promise<string | null> {
   for (const attempt of [1, 2] as const) {
-    if (ctx.bExited) {
-      // B is dead (handleUnexpectedBExit fails the pending waiter, so a
-      // killed attempt lands back here) — never send another turn at a
-      // closed stdin, and never wait out a turn timeout that cannot fire.
-      if (flags) flags.bExited = true;
+    if (ctx.bExited || ctx.stopping) {
+      // B is dead (observeBExit fails the pending waiter, so a killed
+      // attempt lands back here) — or a stop/breaker teardown is in flight
+      // and stdin may already be ended. Never send another turn at a closed
+      // stdin, and never wait out a turn timeout that cannot fire.
+      // Precedence: a dead B is the stronger, truthful cause when both hold.
+      if (flags) {
+        if (ctx.bExited) flags.bExited = true;
+        else flags.stopping = true;
+      }
       return null;
     }
     const turnId = `turn_${ctx.state.turns + 1}`;
@@ -830,7 +835,7 @@ export async function handleRequest(
         let freedAlias: string | undefined;
         let scaffoldedId: string | undefined;
         try {
-          const handoverFlags: { wedged?: boolean; bExited?: boolean } = {};
+          const handoverFlags: { wedged?: boolean; bExited?: boolean; stopping?: boolean } = {};
           const handover = await runHandoverTurn(ctx, handoverFlags);
           if (!handover) {
             if (handoverFlags.bExited) {
@@ -847,6 +852,21 @@ export async function handleRequest(
                 error: "ROTATION_FAILED",
                 message:
                   "session process exited during the handover turn; rotation cannot complete — use recover (a crash handover is distilled best-effort)",
+              };
+            }
+            if (handoverFlags.stopping) {
+              // This op owns the rotation-outcome event; teardown's finish
+              // holds session_stopped until this op settles, so the failure
+              // is recorded first.
+              await emitEvent(ctx, {
+                kind: "rotation_failed",
+                reason: "session_stopping: stop or circuit breaker engaged during the handover turn",
+              } as Omit<Event, "seq" | "at">);
+              return {
+                id: req.id,
+                ok: false,
+                error: "ROTATION_FAILED",
+                message: "session is stopping; rotation cannot complete",
               };
             }
             // Truthful reason: the wedged-interrupt abort never ran attempt 2,
@@ -868,22 +888,27 @@ export async function handleRequest(
             };
           }
           await fs.writeFile(handoverPath(ctx.sessionId), handover);
-          if (ctx.bExited) {
-            // B died between completing the handover turn and the successor
-            // scaffold. Abort: a successor must never be spawned by a
-            // rotation whose predecessor-side choreography (alias handoff,
-            // self-teardown) can no longer run. The handover text survives in
-            // events.jsonl, so recover's distillation loses nothing.
+          if (ctx.bExited || ctx.stopping) {
+            // B died — or a stop/breaker teardown engaged — between
+            // completing the handover turn and the successor scaffold.
+            // Abort: a successor must never be spawned by a rotation whose
+            // predecessor-side choreography (alias handoff, self-teardown)
+            // can no longer run. The handover text survives in handover.md
+            // and events.jsonl, so recover's distillation loses nothing.
+            // Precedence: a dead B is the stronger, truthful cause.
             await emitEvent(ctx, {
               kind: "rotation_failed",
-              reason: "b_exited: session process exited after the handover turn; successor not started",
+              reason: ctx.bExited
+                ? "b_exited: session process exited after the handover turn; successor not started"
+                : "session_stopping: stop or circuit breaker engaged after the handover turn; successor not started",
             } as Omit<Event, "seq" | "at">);
             return {
               id: req.id,
               ok: false,
               error: "ROTATION_FAILED",
-              message:
-                "session process exited after writing the handover; successor not started — use recover",
+              message: ctx.bExited
+                ? "session process exited after writing the handover; successor not started — use recover"
+                : "session is stopping after writing the handover; successor not started",
             };
           }
 

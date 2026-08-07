@@ -119,6 +119,17 @@ async function eventKinds(): Promise<string[]> {
   return events.map((e) => e.kind);
 }
 
+async function appendAssistantHandover(turnId: string): Promise<void> {
+  const line = JSON.stringify({
+    seq: 90,
+    at: new Date().toISOString(),
+    kind: "assistant_text",
+    turn_id: turnId,
+    text: "<handover>state for the successor</handover>",
+  });
+  await fs.appendFile(eventsPath(SID), line + "\n");
+}
+
 beforeEach(async () => {
   prevHome = process.env.CLAW_DRIVE_HOME;
   root = await fs.mkdtemp(path.join(os.tmpdir(), "stoptear-"));
@@ -314,5 +325,51 @@ describe("teardown finish holds for an in-flight rotation", () => {
     vi.advanceTimersByTime(30_000);
     await settleUntil(() => exitCalls.length > 0);
     expect(await eventKinds()).toContain("session_stopped");
+  });
+});
+
+describe("stop_session mid-rotation (session-scoped stop)", () => {
+  it("a stop landing during the handover turn aborts at the checkpoint: rotation_failed(session_stopping) before session_stopped, no successor scaffold", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake);
+    const rotP = handleRequest(ctx, { id: "r1", op: "rotate" });
+    await settleUntil(() => ctx.turnWaiters.has("turn_1"));
+    await appendAssistantHandover("turn_1");
+    await handleRequest(ctx, { id: "s1", op: "stop_session" });
+    await settle();
+    ctx.turnWaiters.get("turn_1")!("completed");
+    const resp = await rotP;
+    expect(resp).toMatchObject({ ok: false, error: "ROTATION_FAILED" });
+    expect((resp as { message?: string }).message).toContain("stopping");
+    const kinds = await eventKinds();
+    expect(kinds).toContain("rotation_failed");
+    expect(kinds).not.toContain("session_stopped");
+    fake.b.exitCode = 0;
+    fake.emitter.emit("exit", 0, null);
+    await settleUntil(() => exitCalls.length > 0);
+    const after = await eventKinds();
+    expect(after.indexOf("rotation_failed")).toBeLessThan(after.indexOf("session_stopped"));
+    const dirs = await fs.readdir(path.join(root, "sessions"));
+    expect(dirs).toEqual([SID]);
+  });
+
+  it("a stop landing BETWEEN handover attempts aborts at the loop-top with the handover-turn reason", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake);
+    const rotP = handleRequest(ctx, { id: "r1", op: "rotate" });
+    await settleUntil(() => ctx.turnWaiters.has("turn_1"));
+    await handleRequest(ctx, { id: "s1", op: "stop_session" });
+    await settle();
+    // Attempt 1 FAILS (no handover text) → the loop re-enters and must
+    // abort at the top on ctx.stopping, without a second send_turn.
+    ctx.turnWaiters.get("turn_1")!("failed");
+    const resp = await rotP;
+    expect(resp).toMatchObject({ ok: false, error: "ROTATION_FAILED" });
+    const evs = (await readEventsSince(eventsPath(SID), 0)).events;
+    const rf = evs.find((e) => e.kind === "rotation_failed");
+    expect((rf as unknown as { reason: string }).reason).toBe(
+      "session_stopping: stop or circuit breaker engaged during the handover turn"
+    );
+    expect(ctx.state.turns).toBe(1); // no attempt-2 send at an ended stdin
   });
 });

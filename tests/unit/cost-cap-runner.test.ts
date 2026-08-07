@@ -76,6 +76,17 @@ const resultLine = (cost: number, opts?: { error?: boolean }): string =>
       : { type: "result", subtype: "success", is_error: false, total_cost_usd: cost }
   ) + "\n";
 
+async function appendAssistantHandover(turnId: string): Promise<void> {
+  const line = JSON.stringify({
+    seq: 90,
+    at: new Date().toISOString(),
+    kind: "assistant_text",
+    turn_id: turnId,
+    text: "<handover>state for the successor</handover>",
+  });
+  await fs.appendFile(eventsPath(SID), line + "\n");
+}
+
 async function makeCtx(fake: FakeB, statePatch?: Partial<SessionState>): Promise<RunnerContext> {
   const dir = path.join(root, "sessions", SID);
   await fs.mkdir(dir, { recursive: true });
@@ -247,5 +258,32 @@ describe("cost stamping at the source (runStdoutLoop)", () => {
     ctx.lastCostUsd = 0.5;
     await afterEventBookkeeping(ctx, turnCompleted("t1"));
     expect((await readState(statePath(SID)))?.cost_usd).toBeUndefined();
+  });
+});
+
+describe("breach on the handover turn's own result line", () => {
+  it("aborts the rotation at the checkpoint before any successor exists", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake);
+    ctx.budget = createBudgetTracker({ max_cost_usd: 1.0 });
+    const loop = runStdoutLoop(ctx);
+    const rotP = handleRequest(ctx, { id: "r1", op: "rotate" });
+    await settleUntil(() => ctx.turnWaiters.has("turn_1"));
+    await appendAssistantHandover("turn_1");
+    fake.stdout.write(resultLine(1.5));
+    fake.stdout.end();
+    await loop;
+    const resp = await rotP;
+    expect(resp).toMatchObject({ ok: false, error: "ROTATION_FAILED" });
+    expect(ctx.state.exit_reason).toBe("budget_exceeded:max_cost_usd");
+    expect(ctx.state.cost_usd).toBeCloseTo(1.5, 10);
+    const evs = (await readEventsSince(eventsPath(SID), 0)).events;
+    const rf = evs.find((e) => e.kind === "rotation_failed");
+    expect(rf).toBeDefined();
+    expect((rf as unknown as { reason: string }).reason).toBe(
+      "session_stopping: stop or circuit breaker engaged after the handover turn; successor not started"
+    );
+    const dirs = await fs.readdir(path.join(root, "sessions"));
+    expect(dirs).toEqual([SID]);
   });
 });
