@@ -291,7 +291,7 @@ export async function enforceBudget(ctx: RunnerContext, ev: Event): Promise<void
  * Task 12). If no turn is in flight (e.g. during startup before any user
  * turn), events are stamped with turn_id "turn_unknown".
  */
-async function runStdoutLoop(ctx: RunnerContext): Promise<void> {
+export async function runStdoutLoop(ctx: RunnerContext): Promise<void> {
   const stdout = ctx.b.stdout!;
   stdout.setEncoding("utf-8");
   let buffer = "";
@@ -319,10 +319,15 @@ async function runStdoutLoop(ctx: RunnerContext): Promise<void> {
       }
       if (out.cumulative_cost_usd !== undefined) {
         ctx.lastCostUsd = out.cumulative_cost_usd;
-        // Recorded BEFORE the same line's events are emitted, so the
-        // turn_completed carried by this very result line is checked against
-        // the updated lineage total (same ordering as main_context_tokens).
-        ctx.budget?.recordCost((ctx.state.cost_usd_base ?? 0) + out.cumulative_cost_usd);
+        // Lineage total, maintained at the source and recorded BEFORE the
+        // same line's events are emitted: the turn_completed/turn_failed
+        // carried by this very result line is enforced against the updated
+        // total, the same line's writeState persists the stamp, and a
+        // breach's terminal state always carries the reading that tripped
+        // it — failed turns included (error results carry cost too).
+        const lineageTotal = (ctx.state.cost_usd_base ?? 0) + out.cumulative_cost_usd;
+        ctx.state.cost_usd = lineageTotal;
+        ctx.budget?.recordCost(lineageTotal);
       }
       if (out.compact_boundary) {
         // Native auto-compact won the race (or rotation isn't configured).
@@ -362,17 +367,10 @@ export async function afterEventBookkeeping(ctx: RunnerContext, ev: Event): Prom
   // dogfood's post-interrupt abort WAS a turn_failed, seconds before B died).
   ctx.lastInterruptAt = null;
   ctx.completedTurns += 1;
-  const costBase = ctx.state.cost_usd_base;
-  const hasCost = ctx.lastCostUsd != null || costBase !== undefined;
-  if (ctx.lastContextTokens !== null || hasCost) {
-    if (ctx.lastContextTokens !== null) {
-      ctx.state.context_tokens = ctx.lastContextTokens;
-    }
-    if (hasCost) {
-      // Lineage total; `!= null` (not `!== null`) deliberately also covers
-      // harness-built contexts that predate the field (undefined).
-      ctx.state.cost_usd = (costBase ?? 0) + (ctx.lastCostUsd ?? 0);
-    }
+  if (ctx.lastContextTokens !== null) {
+    // cost_usd is stamped at the reading site (runStdoutLoop) and at
+    // scaffold birth — nothing cost-shaped left to do at the turn boundary.
+    ctx.state.context_tokens = ctx.lastContextTokens;
     await writeState(statePath(ctx.sessionId), ctx.state);
   }
   if (ctx.completedTurns === 1) {
