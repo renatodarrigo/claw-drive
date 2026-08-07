@@ -276,4 +276,72 @@ expect_file_contains "session_stopped recorded" "$EVJ_COST" '"kind":"session_sto
 
 rm -rf "$COST_STUB_DIR" "$COST_CWD"
 
+section "cost-cap breach during rotation (stub session process)"
+# The handover turn's own result line reports spend past the cap. The breach
+# engages teardown mid-rotation; the post-handover checkpoint must abort —
+# rotation_failed(session_stopping) recorded ahead of session_stopped, and no
+# successor session ever scaffolded.
+ROTCOST_STUB_DIR="$(mktemp -d)"
+ROTCOST_CWD="$(mktemp -d "$HOME/.cache/claw-e2e-cwd.XXXXXX")"
+cat > "$ROTCOST_STUB_DIR/claude" <<'EOF'
+#!/bin/sh
+IFS= read -r _line
+printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"<handover>successor state</handover>"}]},"parent_tool_use_id":null}\n'
+printf '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"result":"ok","total_cost_usd":0.50}\n'
+IFS= read -r _wait
+EOF
+chmod +x "$ROTCOST_STUB_DIR/claude"
+ROTCOSTPOLICY="$TMPHOME/rotcost-policy.json"
+printf '{"escalate_default":true,"rotation":{"threshold_tokens":120000},"budget":{"max_cost_usd":0.10}}\n' > "$ROTCOSTPOLICY"
+
+SID_RC="$(PATH="$ROTCOST_STUB_DIR:$PATH" "$BIN" start --cwd "$ROTCOST_CWD" --policy "$ROTCOSTPOLICY")"
+if [[ "$SID_RC" == sess_* ]]; then
+  pass "stub session starts (id: $SID_RC)"
+else
+  fail "stub session starts (got: $SID_RC)"
+fi
+N_SESSIONS_BEFORE="$(ls "$TMPHOME/sessions" | wc -l | tr -d ' ')"
+
+RC_OUT="$TMPHOME/rotcost-out.txt"
+"$BIN" rotate "$SID_RC" >"$RC_OUT" 2>&1 || true
+expect_file_contains "rotate reports ROTATION_FAILED"       "$RC_OUT" "ROTATION_FAILED"
+expect_file_contains "rotate says the session is stopping"  "$RC_OUT" "stopping"
+
+# Settle on the runner's actual exit before one-shot file asserts (the
+# SIGTERM-section pattern — every write in the breach choreography lands
+# before the runner process dies).
+RC_PID="$(cat "$TMPHOME/sessions/$SID_RC/runner.pid" 2>/dev/null || true)"
+if [[ -n "$RC_PID" ]]; then
+  for _ in $(seq 1 50); do
+    kill -0 "$RC_PID" 2>/dev/null || break
+    sleep 0.2
+  done
+  if kill -0 "$RC_PID" 2>/dev/null; then
+    fail "runner exits after mid-rotation breach (undead runner, pid $RC_PID)"
+    kill -9 "$RC_PID" 2>/dev/null || true
+  else
+    pass "runner exits after mid-rotation breach"
+  fi
+else
+  fail "runner exits after mid-rotation breach (no runner.pid recorded)"
+fi
+
+RC_STATE="$TMPHOME/sessions/$SID_RC/state.json"
+RC_EVJ="$TMPHOME/sessions/$SID_RC/events.jsonl"
+expect_file_contains "state records budget_exceeded:max_cost_usd" "$RC_STATE" "budget_exceeded:max_cost_usd"
+expect_file_contains "rotation_failed names session_stopping"     "$RC_EVJ"   "session_stopping"
+RC_FIRST="$(grep -oE '"kind":"(rotation_failed|session_stopped)"' "$RC_EVJ" 2>/dev/null | head -1 || true)"
+if [[ "$RC_FIRST" == *rotation_failed* ]]; then
+  pass "rotation_failed precedes session_stopped in events.jsonl"
+else
+  fail "rotation_failed precedes session_stopped in events.jsonl (first terminal kind: ${RC_FIRST:-none})"
+fi
+N_SESSIONS_AFTER="$(ls "$TMPHOME/sessions" | wc -l | tr -d ' ')"
+if [[ "$N_SESSIONS_AFTER" == "$N_SESSIONS_BEFORE" ]]; then
+  pass "no successor session scaffolded ($N_SESSIONS_AFTER dirs, unchanged)"
+else
+  fail "no successor session scaffolded (before=$N_SESSIONS_BEFORE after=$N_SESSIONS_AFTER)"
+fi
+rm -rf "$ROTCOST_STUB_DIR" "$ROTCOST_CWD"
+
 summary
