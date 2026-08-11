@@ -203,13 +203,20 @@ describe("cost-cap breach (enforceBudget)", () => {
     expect(ctx.tearingDown).toBe(false);
   });
 
-  it("breach latches exactly once (second event does not re-enter teardown)", async () => {
+  it("breach latches exactly once, independent of ctx.stopping (second event does not re-enter teardown)", async () => {
     const fake = makeFakeB();
     const ctx = await makeCtx(fake);
     ctx.budget = createBudgetTracker({ max_cost_usd: 1.0 });
     ctx.budget.recordCost(2.0);
     await enforceBudget(ctx, turnCompleted("t1"));
     const evsAfterFirst = (await readEventsSince(eventsPath(SID), 0)).events.filter((e) => e.kind === "error").length;
+    expect(evsAfterFirst).toBe(1); // exactly one breach action emitted
+    // teardownSession (called by the first breach) also sets ctx.stopping,
+    // which is its OWN independent no-op guard on enforceBudget. Clear it so
+    // the second call's no-op is attributable ONLY to the budgetBreached
+    // latch this test means to pin — otherwise ctx.stopping alone would
+    // satisfy the assertion below even if the latch itself were broken.
+    ctx.stopping = false;
     await enforceBudget(ctx, turnCompleted("t2"));
     const evsAfterSecond = (await readEventsSince(eventsPath(SID), 0)).events.filter((e) => e.kind === "error").length;
     expect(evsAfterSecond).toBe(evsAfterFirst);
@@ -257,6 +264,7 @@ describe("cost stamping at the source (runStdoutLoop)", () => {
     const ctx = await makeCtx(fake, { cost_usd_base: 2.0 });
     ctx.lastCostUsd = 0.5;
     await afterEventBookkeeping(ctx, turnCompleted("t1"));
+    expect(ctx.state.cost_usd).toBeUndefined(); // in-memory: no unpersisted set either
     expect((await readState(statePath(SID)))?.cost_usd).toBeUndefined();
   });
 });
@@ -289,18 +297,22 @@ describe("breach on the handover turn's own result line", () => {
 });
 
 describe("cost carried across the rotation handoff", () => {
-  it("hands the inherited base to the successor when no reading of its own was ever stamped", async () => {
-    // Real timers: the successor spawn is a real child process, and the
-    // handoff's readiness wait polls the ready marker on a real 50ms timer.
+  // Real timers: the successor spawn is a real child process, and the
+  // handoff's readiness wait polls the ready marker on a real 50ms timer.
+  // Stub runner: touching the ready marker is all the handoff waits for.
+  let fake: FakeB;
+  beforeEach(async () => {
     vi.useRealTimers();
-    // Stub runner: touching the ready marker is all the handoff waits for.
     const stubRunner = path.join(stubDir, "fake-runner");
     await fs.writeFile(stubRunner, '#!/bin/sh\ntouch "$CLAW_DRIVE_HOME/sessions/$2/ready"\n', {
       mode: 0o755,
     });
     await fs.chmod(stubRunner, 0o755);
     process.env.CLAW_DRIVE_BIN = stubRunner;
-    const fake = makeFakeB();
+    fake = makeFakeB();
+  });
+
+  it("hands the inherited base to the successor when no reading of its own was ever stamped", async () => {
     // A session dir written before successors were born carrying cost_usd: it
     // holds the base it inherited and nothing else, and no priced result line
     // during the handover turn ever stamps a cost_usd of its own.
@@ -327,14 +339,6 @@ describe("cost carried across the rotation handoff", () => {
   });
 
   it("prefers the predecessor's own cost_usd over its inherited base", async () => {
-    vi.useRealTimers();
-    const stubRunner = path.join(stubDir, "fake-runner");
-    await fs.writeFile(stubRunner, '#!/bin/sh\ntouch "$CLAW_DRIVE_HOME/sessions/$2/ready"\n', {
-      mode: 0o755,
-    });
-    await fs.chmod(stubRunner, 0o755);
-    process.env.CLAW_DRIVE_BIN = stubRunner;
-    const fake = makeFakeB();
     const ctx = await makeCtx(fake, { cost_usd_base: 2.5, cost_usd: 4.0 });
     const rotP = handleRequest(ctx, { id: "r1", op: "rotate" });
     await settleUntil(() => ctx.turnWaiters.has("turn_1"));
@@ -352,14 +356,6 @@ describe("cost carried across the rotation handoff", () => {
   });
 
   it("omits the successor's base when the predecessor carried neither field", async () => {
-    vi.useRealTimers();
-    const stubRunner = path.join(stubDir, "fake-runner");
-    await fs.writeFile(stubRunner, '#!/bin/sh\ntouch "$CLAW_DRIVE_HOME/sessions/$2/ready"\n', {
-      mode: 0o755,
-    });
-    await fs.chmod(stubRunner, 0o755);
-    process.env.CLAW_DRIVE_BIN = stubRunner;
-    const fake = makeFakeB();
     const ctx = await makeCtx(fake);
     const rotP = handleRequest(ctx, { id: "r1", op: "rotate" });
     await settleUntil(() => ctx.turnWaiters.has("turn_1"));

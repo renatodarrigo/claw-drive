@@ -13,30 +13,30 @@ afterEach(() => {
 describe("checkBudget (pure cap-check)", () => {
   it("returns null when budget is undefined (unlimited)", () => {
     expect(
-      checkBudget(undefined, { toolCalls: 1e6, elapsedSeconds: 1e6, consecutiveErrors: 1e6 })
+      checkBudget(undefined, { toolCalls: 1e6, elapsedSeconds: 1e6, consecutiveErrors: 1e6, costUsd: 0 })
     ).toBeNull();
   });
 
   it("returns null when every cap is within budget (at the cap is not over it)", () => {
     const b: Budget = { max_tool_calls: 10, max_wall_clock_seconds: 100, max_consecutive_errors: 3 };
-    expect(checkBudget(b, { toolCalls: 10, elapsedSeconds: 100, consecutiveErrors: 3 })).toBeNull();
+    expect(checkBudget(b, { toolCalls: 10, elapsedSeconds: 100, consecutiveErrors: 3, costUsd: 0 })).toBeNull();
   });
 
   it("flags the breached cap (exceeding = strictly greater than the cap)", () => {
-    expect(checkBudget({ max_tool_calls: 5 }, { toolCalls: 6, elapsedSeconds: 0, consecutiveErrors: 0 })).toBe("max_tool_calls");
-    expect(checkBudget({ max_wall_clock_seconds: 5 }, { toolCalls: 0, elapsedSeconds: 5.1, consecutiveErrors: 0 })).toBe("max_wall_clock_seconds");
-    expect(checkBudget({ max_consecutive_errors: 2 }, { toolCalls: 0, elapsedSeconds: 0, consecutiveErrors: 3 })).toBe("max_consecutive_errors");
+    expect(checkBudget({ max_tool_calls: 5 }, { toolCalls: 6, elapsedSeconds: 0, consecutiveErrors: 0, costUsd: 0 })).toBe("max_tool_calls");
+    expect(checkBudget({ max_wall_clock_seconds: 5 }, { toolCalls: 0, elapsedSeconds: 5.1, consecutiveErrors: 0, costUsd: 0 })).toBe("max_wall_clock_seconds");
+    expect(checkBudget({ max_consecutive_errors: 2 }, { toolCalls: 0, elapsedSeconds: 0, consecutiveErrors: 3, costUsd: 0 })).toBe("max_consecutive_errors");
   });
 
   it("an absent individual cap is unlimited", () => {
     expect(
-      checkBudget({ max_consecutive_errors: 2 }, { toolCalls: 1e6, elapsedSeconds: 1e6, consecutiveErrors: 1 })
+      checkBudget({ max_consecutive_errors: 2 }, { toolCalls: 1e6, elapsedSeconds: 1e6, consecutiveErrors: 1, costUsd: 0 })
     ).toBeNull();
   });
 
   it("checks caps in a stable order (tool_calls, then wall_clock, then consecutive_errors)", () => {
     const b: Budget = { max_tool_calls: 1, max_wall_clock_seconds: 1, max_consecutive_errors: 1 };
-    expect(checkBudget(b, { toolCalls: 2, elapsedSeconds: 2, consecutiveErrors: 2 })).toBe("max_tool_calls");
+    expect(checkBudget(b, { toolCalls: 2, elapsedSeconds: 2, consecutiveErrors: 2, costUsd: 0 })).toBe("max_tool_calls");
   });
 });
 

@@ -256,6 +256,22 @@ describe("cumulative_cost_usd extraction (cost-cap)", () => {
         "t"
       ).cumulative_cost_usd
     ).toBeUndefined();
+    // NaN is typeof "number" but fails Number.isFinite — same no-reading path as Infinity.
+    expect(
+      parseClaudeLine(
+        { type: "result", subtype: "success", is_error: false, total_cost_usd: NaN },
+        "t"
+      ).cumulative_cost_usd
+    ).toBeUndefined();
+  });
+
+  it("a negative finite total_cost_usd IS accepted as a reading (spec's literal \"finite\" criterion, not \"non-negative\" — deliberate)", () => {
+    expect(
+      parseClaudeLine(
+        { type: "result", subtype: "success", is_error: false, total_cost_usd: -0.05 },
+        "t"
+      ).cumulative_cost_usd
+    ).toBe(-0.05);
   });
 
   it("non-result lines never carry a cost reading", () => {
