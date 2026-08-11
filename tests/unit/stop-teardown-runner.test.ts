@@ -5,15 +5,24 @@ import * as os from "node:os";
 import { EventEmitter } from "node:events";
 import type { ChildProcess } from "node:child_process";
 import { handleRequest, makeSignalHandler, observeBExit, teardownSession, type RunnerContext } from "../../src/runner/runner.js";
-import type { SessionState } from "../../src/lib/state.js";
+import { readState, type SessionState } from "../../src/lib/state.js";
 import { readEventsSince } from "../../src/lib/events.js";
-import { eventsPath } from "../../src/lib/paths.js";
+import { eventsPath, statePath } from "../../src/lib/paths.js";
+import { waitForReady } from "../../src/lib/spawn-session.js";
 
 // A2 hardening (July orphaned runners; SIGTERM wedge): the teardown path must
 // escalate SIGTERM→SIGKILL against an unresponsive B, and must short-circuit
 // — no timers, no waiting on an exit event that already fired — when B is
 // already dead. Fake timers cover the ladder; real fs under a synthetic
 // CLAW_DRIVE_HOME records the terminal state.
+
+// Only the successor's readiness check is faked (a real spawn has no place in
+// this hermetic, fake-timers harness); scaffolding is real, so a successor's
+// on-disk state is genuinely inspectable.
+vi.mock("../../src/lib/spawn-session.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/lib/spawn-session.js")>();
+  return { ...actual, spawnRunnerDetached: vi.fn(), waitForReady: vi.fn() };
+});
 
 const SID = "sess_stoptear01";
 
@@ -218,14 +227,15 @@ describe("stop_session teardown", () => {
   it("a stop whose deferred teardown finds B already dead and latched still writes the terminal record (no wedge)", async () => {
     const fake = makeFakeB();
     const ctx = await makeCtx(fake);
-    // Interleaving: stop_session set stopping and queued its teardown; B died
-    // in that gap, so the exit handler latched bExited and returned early on
-    // stopping — the crash path never engaged. The queued teardown must still
-    // terminal-record via the dead-B fast path.
-    ctx.stopping = true;
+    const resp = await handleRequest(ctx, { id: "s1", op: "stop_session" });
+    expect(resp).toMatchObject({ ok: true });
+    // Interleaving: stop_session set stopping and queued its teardown
+    // (setImmediate); B died in that gap, so the exit handler latched
+    // bExited and returned early on stopping — the crash path never
+    // engaged. The queued teardown must still terminal-record via the
+    // dead-B fast path.
     observeBExit(ctx);
     fake.b.exitCode = 0;
-    teardownSession(ctx, "stop_session");
     await settleUntil(() => exitCalls.length > 0);
     expect(await eventKinds()).toContain("session_stopped");
     expect(exitCalls).toEqual([0]);
@@ -289,6 +299,30 @@ describe("observeBExit (B-exit invariant)", () => {
     observeBExit(ctx);
     expect(outcomes).toEqual(["failed", "failed"]);
   });
+
+  it("teardown's own exit handler observes the exit when it is the sole listener (socket-boot window)", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake);
+    // The socket starts serving before the runner attaches its main
+    // b.on("exit") listener, so a stop landing inside that window leaves
+    // teardown's own once("exit") as the ONLY observer of B's death. The
+    // invariant — every exit path observes the exit — must hold there too,
+    // not merely by sibling-listener ordering outside the window.
+    const outcomes: string[] = [];
+    ctx.turnWaiters.set("turn_1", (o) => outcomes.push(o));
+    teardownSession(ctx, "stop_session");
+    expect(fake.emitter.listenerCount("exit")).toBe(1); // no sibling observer
+    expect(ctx.bExited).toBe(false);
+    fake.b.exitCode = 0;
+    fake.emitter.emit("exit", 0, null);
+    expect(ctx.bExited).toBe(true);
+    expect(outcomes).toEqual(["failed"]);
+    expect(ctx.turnWaiters.size).toBe(0);
+    // …and the handler still does its own job: the terminal record is written.
+    await settleUntil(() => exitCalls.length > 0);
+    expect(await eventKinds()).toContain("session_stopped");
+    expect(exitCalls).toEqual([0]);
+  });
 });
 
 describe("teardown finish holds for an in-flight rotation", () => {
@@ -340,7 +374,11 @@ describe("stop_session mid-rotation (session-scoped stop)", () => {
     ctx.turnWaiters.get("turn_1")!("completed");
     const resp = await rotP;
     expect(resp).toMatchObject({ ok: false, error: "ROTATION_FAILED" });
-    expect((resp as { message?: string }).message).toContain("stopping");
+    const evs = (await readEventsSince(eventsPath(SID), 0)).events;
+    const rf = evs.find((e) => e.kind === "rotation_failed");
+    expect((rf as unknown as { reason: string }).reason).toBe(
+      "session_stopping: stop or circuit breaker engaged after the handover turn; successor not started"
+    );
     const kinds = await eventKinds();
     expect(kinds).toContain("rotation_failed");
     expect(kinds).not.toContain("session_stopped");
@@ -371,6 +409,49 @@ describe("stop_session mid-rotation (session-scoped stop)", () => {
       "session_stopping: stop or circuit breaker engaged during the handover turn"
     );
     expect(ctx.state.turns).toBe(1); // no attempt-2 send at an ended stdin
+  });
+
+  it("a stop landing after the successor is live still lets the rotation complete: session_rotated precedes session_stopped, successor survives", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake);
+    vi.mocked(waitForReady).mockImplementation(async () => {
+      // The successor's readiness check has just passed — land a stop in
+      // this exact gap (after readiness, before the rotate op's own
+      // bookkeeping) through the same public entry point a real concurrent
+      // control request would use.
+      await handleRequest(ctx, { id: "s1", op: "stop_session" });
+      return true;
+    });
+    const rotP = handleRequest(ctx, { id: "r1", op: "rotate" });
+    await settleUntil(() => ctx.turnWaiters.has("turn_1"));
+    await appendAssistantHandover("turn_1");
+    ctx.turnWaiters.get("turn_1")!("completed");
+    const resp = await rotP;
+    expect(resp).toMatchObject({ ok: true });
+    const newId = (resp as { result: { new_session_id: string } }).result.new_session_id;
+    expect(ctx.state.rotated_to).toBe(newId);
+    const beforeStop = await eventKinds();
+    expect(beforeStop).toContain("session_rotated");
+    expect(beforeStop).not.toContain("session_stopped");
+    // The successor's own on-disk record survives — scaffolded for real, and
+    // the waitForReady-false cleanup path (which would rm it) never runs.
+    const succ = await readState(statePath(newId));
+    expect(succ?.rotated_from).toBe(SID);
+    expect(succ?.generation).toBe(2);
+    // The winning teardown (queued by the stop, ahead of the rotate op's own
+    // self-teardown — both raced setImmediate, and the stop's was scheduled
+    // first) is still waiting on B's own exit.
+    await settle();
+    expect(fake.stdinEnds).toBe(1);
+    fake.b.exitCode = 0;
+    fake.emitter.emit("exit", 0, null);
+    await settleUntil(() => exitCalls.length > 0);
+    const after = await eventKinds();
+    expect(after.indexOf("session_rotated")).toBeLessThan(after.indexOf("session_stopped"));
+    const evs = (await readEventsSince(eventsPath(SID), 0)).events;
+    const stopped = evs.find((e) => e.kind === "session_stopped");
+    expect((stopped as unknown as { reason: string }).reason).toBe("stop_session");
+    expect(exitCalls).toEqual([0]);
   });
 });
 
@@ -433,5 +514,72 @@ describe("stop racing B's own teardown-caused exit (both bExited and stopping tr
     expect((rf as unknown as { reason: string }).reason).toBe(
       "session_stopping: stop or circuit breaker engaged after the handover turn; successor not started"
     );
+  });
+});
+
+// The cells above are stop-owned: the stop/breaker teardown caused B's exit,
+// so "stopping" is the truthful cause. crashTeardownEngaged is the third axis
+// that separates them from the cells below, where a CRASH owns the exit and a
+// stop merely lands on top of it (stop_session inside the crash teardown's
+// settle-hold, or a runner signal). teardownSession marks ctx.stopping before
+// it defers to the engaged crash teardown, so both flags hold there too — but
+// the truthful cause is B's death, and only the b_exited reason carries the
+// "use recover" hint the operator needs.
+describe("crash owning the exit while a stop is in flight (crashTeardownEngaged)", () => {
+  it("reports b_exited at the loop-top, and the terminal reason stays crashed:*", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake);
+    const rotP = handleRequest(ctx, { id: "r1", op: "rotate" });
+    await settleUntil(() => ctx.turnWaiters.has("turn_1"));
+    // The crash choreography engages first: handleUnexpectedBExit observes the
+    // exit, latches crashTeardownEngaged and stamps the terminal reason — all
+    // synchronously — before holding for the in-flight rotate.
+    observeBExit(ctx);
+    (ctx as { crashTeardownEngaged?: boolean }).crashTeardownEngaged = true;
+    ctx.state.exit_reason = "crashed:0";
+    fake.b.exitCode = 0;
+    // A stop landing inside that hold marks stopping and then defers to the
+    // engaged crash teardown, leaving both flags set on a crash-owned exit.
+    teardownSession(ctx, "stop_session");
+    expect(ctx.stopping).toBe(true);
+    const resp = await rotP;
+    expect(resp).toMatchObject({ ok: false, error: "ROTATION_FAILED" });
+    expect((resp as { message?: string }).message).toContain("use recover");
+    const evs = (await readEventsSince(eventsPath(SID), 0)).events;
+    const rf = evs.find((e) => e.kind === "rotation_failed");
+    expect((rf as unknown as { reason: string }).reason).toBe(
+      "b_exited: session process exited during the handover turn"
+    );
+    expect(ctx.state.exit_reason).toBe("crashed:0");
+  });
+
+  it("reports b_exited at the checkpoint, and the terminal reason stays crashed:*", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake);
+    const rotP = handleRequest(ctx, { id: "r1", op: "rotate" });
+    await settleUntil(() => ctx.turnWaiters.has("turn_1"));
+    await appendAssistantHandover("turn_1");
+    // Lock the turn's "completed" outcome in first (a Promise settles once, so
+    // the crash path's re-flush of the same waiter is a no-op), then land the
+    // crash and the stop between turn completion and the checkpoint.
+    const waiter = ctx.turnWaiters.get("turn_1")!;
+    waiter("completed");
+    observeBExit(ctx);
+    (ctx as { crashTeardownEngaged?: boolean }).crashTeardownEngaged = true;
+    ctx.state.exit_reason = "crashed:0";
+    fake.b.exitCode = 0;
+    teardownSession(ctx, "stop_session");
+    expect(ctx.stopping).toBe(true);
+    const resp = await rotP;
+    expect(resp).toMatchObject({ ok: false, error: "ROTATION_FAILED" });
+    expect((resp as { message?: string }).message).toContain("use recover");
+    const evs = (await readEventsSince(eventsPath(SID), 0)).events;
+    const rf = evs.find((e) => e.kind === "rotation_failed");
+    expect((rf as unknown as { reason: string }).reason).toBe(
+      "b_exited: session process exited after the handover turn; successor not started"
+    );
+    expect(ctx.state.exit_reason).toBe("crashed:0");
+    const dirs = await fs.readdir(path.join(root, "sessions"));
+    expect(dirs).toEqual([SID]);
   });
 });

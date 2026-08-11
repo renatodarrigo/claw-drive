@@ -102,9 +102,13 @@ export interface RunnerContext {
    * suppresses threshold re-fires during the handover turn. turnWaiters lets
    * the rotate choreography await a specific turn's completion. */
   lastContextTokens: number | null;
-  /** Cost-cap: latest cumulative USD reading from B's result lines (null until
-   * the first result line with a finite total_cost_usd). Lineage total =
-   * (state.cost_usd_base ?? 0) + this. */
+  /** Cost-cap: latest cumulative USD reading from B's result lines, stamped
+   * in runStdoutLoop whenever a result line carries a finite total_cost_usd
+   * (null until then). Write-only — nothing reads it back anywhere. cost_usd
+   * (the lineage total) is stamped at that same site from the reading
+   * directly, not derived from this field. One test sets it directly as
+   * setup, to assert afterEventBookkeeping does not derive cost_usd from
+   * it. */
   lastCostUsd: number | null;
   completedTurns: number;
   turnInFlight: boolean;
@@ -116,11 +120,11 @@ export interface RunnerContext {
    * turn can ever terminate again — handover attempts and the rotate
    * choreography must fail fast instead of waiting out turn timeouts. */
   bExited: boolean;
-  /** Set synchronously the moment handleUnexpectedBExit engages — distinct
-   * from bExited, which now also latches on the stop path (a B death raced
-   * against a pending stop). teardownSession defers the terminal record to
-   * the crash choreography iff this is set; bExited alone no longer implies
-   * that. */
+  /** Latched synchronously at handleUnexpectedBExit's entry — distinct from
+   * bExited, which also latches on the stop path (a B death raced against a
+   * pending stop) and so does not by itself imply the crash path is running.
+   * teardownSession's early-return keys on this flag alone: the crash path
+   * owns this teardown whenever it is set. */
   crashTeardownEngaged: boolean;
   /** Set by teardownSession's first engagement; later engagements (a second
    * stop, a signal after a stop) are no-ops instead of re-arming timers or
@@ -235,6 +239,13 @@ export function teardownSession(ctx: RunnerContext, reason: string): void {
     }
   }, 20_000);
   ctx.b.once("exit", (code) => {
+    // Record the exit here too. The socket serves before runRunner attaches
+    // its own b.on("exit"), so a stop landing in that boot window leaves this
+    // handler as the SOLE observer of B's death — without this the invariant
+    // ("every exit path observes B's exit") would hold only by sibling-
+    // listener ordering. observeBExit latches once, so double-observation
+    // alongside that sibling is a no-op by design.
+    observeBExit(ctx);
     clearTimeout(killSigterm);
     clearTimeout(killSigkill);
     void finish(code);
@@ -459,12 +470,15 @@ async function runHandoverTurn(
       // attempt lands back here) — or a stop/breaker teardown is in flight
       // and stdin may already be ended. Never send another turn at a closed
       // stdin, and never wait out a turn timeout that cannot fire.
-      // Precedence: an engaged stop/breaker teardown is the truthful cause
-      // when both hold — B's exit is the teardown's own doing (stdin EOF
-      // races the real process's exit ahead of this check, dogfood e2e);
-      // bExited without stopping is the independent-crash path.
+      // Precedence: a stop/breaker teardown that OWNS the exit is the
+      // truthful cause when both flags hold — B's exit is that teardown's own
+      // doing (stdin EOF races the real process's exit ahead of this check,
+      // dogfood e2e). A crash owns the exit whenever crashTeardownEngaged is
+      // set, and a stop landing inside the crash teardown's settle-hold marks
+      // ctx.stopping before deferring to it — so that cell, like the bare
+      // crash, must report the death (and its "use recover" hint).
       if (flags) {
-        if (ctx.stopping) flags.stopping = true;
+        if (ctx.stopping && !ctx.crashTeardownEngaged) flags.stopping = true;
         else flags.bExited = true;
       }
       return null;
@@ -500,7 +514,8 @@ async function runHandoverTurn(
       // (INTERRUPT_GRACE_MS): a just-SIGINT'd claude can exit on its very
       // next stdin message (dogfood 2026-08-04) — sending attempt 2
       // immediately would reproduce exactly that kill pattern. The loop-top
-      // bExited guard covers a death during this settle.
+      // bExited/stopping guard covers a death or an engaging stop/breaker
+      // teardown during this settle.
       await sleepTimeout(INTERRUPT_GRACE_MS);
       continue;
     }
@@ -898,14 +913,18 @@ export async function handleRequest(
             // predecessor-side choreography (alias handoff, self-teardown)
             // can no longer run. The handover text survives in handover.md
             // and events.jsonl, so recover's distillation loses nothing.
-            // Precedence: an engaged stop/breaker teardown is the truthful
-            // cause when both hold — B's exit is the teardown's own doing
-            // (stdin EOF races the real process's exit ahead of this check,
-            // dogfood e2e); bExited without stopping is the independent-
-            // crash path.
+            // Precedence: a stop/breaker teardown that OWNS the exit is the
+            // truthful cause when both hold — B's exit is that teardown's own
+            // doing (stdin EOF races the real process's exit ahead of this
+            // check, dogfood e2e). A crash owns the exit whenever
+            // crashTeardownEngaged is set, and a stop landing inside the crash
+            // teardown's settle-hold marks ctx.stopping before deferring to
+            // it — so that cell, like the bare crash, must report the death
+            // (and its "use recover" hint).
+            const stopOwnsExit = ctx.stopping && !ctx.crashTeardownEngaged;
             await emitEvent(ctx, {
               kind: "rotation_failed",
-              reason: ctx.stopping
+              reason: stopOwnsExit
                 ? "session_stopping: stop or circuit breaker engaged after the handover turn; successor not started"
                 : "b_exited: session process exited after the handover turn; successor not started",
             } as Omit<Event, "seq" | "at">);
@@ -913,7 +932,7 @@ export async function handleRequest(
               id: req.id,
               ok: false,
               error: "ROTATION_FAILED",
-              message: ctx.stopping
+              message: stopOwnsExit
                 ? "session is stopping after writing the handover; successor not started"
                 : "session process exited after writing the handover; successor not started — use recover",
             };
@@ -930,6 +949,13 @@ export async function handleRequest(
             ctx.state.original_brief ??
             (ctx.state as unknown as { scenario_brief?: string }).scenario_brief ??
             "(no original brief was recorded at session start)";
+          // Best-known lineage total to hand the successor: cost_usd once any
+          // priced result line has been read, else the base this session was
+          // itself born with — a session that has read no price of its own has
+          // still spent every inherited dollar. Selected, never summed: a
+          // chain of costless handoffs carries the same base unchanged.
+          // Mirrors recover's inheritedCost; omit the key when neither is set.
+          const inheritedCost = ctx.state.cost_usd ?? ctx.state.cost_usd_base;
           const alias = ctx.state.alias;
           if (alias !== undefined) {
             // Free the alias BEFORE scaffolding the successor: alias uniqueness
@@ -961,7 +987,7 @@ export async function handleRequest(
               generation: generation + 1,
               root_session_id: ctx.state.root_session_id ?? ctx.sessionId,
               rotated_from: ctx.sessionId,
-              ...(ctx.state.cost_usd !== undefined ? { cost_usd_base: ctx.state.cost_usd } : {}),
+              ...(inheritedCost !== undefined ? { cost_usd_base: inheritedCost } : {}),
             },
           });
           spawnRunnerDetached(newId);
@@ -1184,12 +1210,14 @@ export function makeSignalHandler(
 }
 
 /**
- * The single fact-recording step for a B exit, shared by every observer (the
+ * The single fact-recording step for a B exit, shared by every observer: the
  * main loop's exit handler, the crash choreography, teardown's dead-B fast
- * path): latch bExited and fail every pending turn waiter — B's stdout is
- * closed, so no terminating event can ever arrive, and anything awaiting a
- * turn must unblock now. Idempotent: re-latching and re-flushing an empty
- * map are no-ops, so observers may call it in any order.
+ * path (B already exited before teardown ran), and teardown's own live-B
+ * exit handler (B exits after teardown started tearing it down). Latches
+ * bExited and fails every pending turn waiter — B's stdout is closed, so no
+ * terminating event can ever arrive, and anything awaiting a turn must
+ * unblock now. Idempotent: re-latching and re-flushing an empty map are
+ * no-ops, so observers may call it in any order.
  */
 export function observeBExit(ctx: RunnerContext): void {
   ctx.bExited = true;

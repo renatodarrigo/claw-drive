@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **A rotation aborted by a dead session process names the death, not a stop that merely followed it.** When the session process crashes mid-rotation, the `rotation_failed` reason and the returned message report `b_exited:` and point at `recover` — including when a `stop_session` or a runner signal lands while the crash teardown is still settling, which marks the session as stopping on top of a death it did not cause. A rotation aborted by a genuine stop or budget breach keeps its `session_stopping:` reason, and a crashed session's terminal record still reads `crashed:*` either way.
+- **`rotate` carries the lineage's spend forward even when the handover turn is unpriced.** A session that inherited a `cost_usd_base` but read no cost of its own — one started before successors were born carrying `cost_usd`, rotated on a stream with no priced result line — hands that base to its successor instead of restarting the lineage total at zero, so `budget.max_cost_usd` keeps counting real dollars across the handoff. The base is selected, never summed: any number of chained costless handoffs carries the same total.
+
 ## [1.5.1] — 2026-08-07
 
 ### Fixed
