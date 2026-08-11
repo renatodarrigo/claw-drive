@@ -191,6 +191,7 @@ export async function cmdPolicyLint(argv: string[]): Promise<number> {
   }
 
   if (parsed.maxSeverity) {
+    // No file input can produce an "error" finding here today — resolvePolicySource's validatePolicy call already rejects it upstream; kept defensive for a future error-severity finding kind.
     const gating: Finding["severity"][] = parsed.maxSeverity === "error" ? ["error"] : ["error", "warn"];
     if (findings.some((f) => gating.includes(f.severity))) return 1;
   }

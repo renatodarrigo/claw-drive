@@ -428,6 +428,26 @@ export function validatePolicy(p: unknown): { ok: true } | { ok: false; error: s
           };
         }
       }
+      // arg_matches compile parity: bash_command_matches (above) and a /.../ tool
+      // pattern are both compile-checked here, but arg_matches values previously
+      // were not — an uncompilable pattern validated and only failed later, at
+      // match time or lint. Same shape + compile check validateRule already runs
+      // for the --remember-as path, adapted to this loop's listKey[i] addressing.
+      if (r.arg_matches !== undefined) {
+        if (typeof r.arg_matches !== "object" || r.arg_matches === null || Array.isArray(r.arg_matches)) {
+          return { ok: false, error: `${listKey}[${i}].arg_matches must be an object` };
+        }
+        for (const [k, v] of Object.entries(r.arg_matches as Record<string, unknown>)) {
+          if (typeof v !== "string") {
+            return { ok: false, error: `${listKey}[${i}].arg_matches.${k} must be a string` };
+          }
+          try {
+            new RegExp(v);
+          } catch (e) {
+            return { ok: false, error: `${listKey}[${i}].arg_matches.${k} invalid regex: ${String(e)}` };
+          }
+        }
+      }
     }
   }
   if (obj.escalate_default !== undefined && typeof obj.escalate_default !== "boolean") {
@@ -453,18 +473,29 @@ export function validatePolicy(p: unknown): { ok: true } | { ok: false; error: s
   }
   // budget (CD-4): optional run-level circuit-breaker. When present it must be
   // an object; each present cap must be a finite, strictly-positive number.
-  // Absent budget and absent individual caps are accepted as unlimited.
+  // Absent budget and absent individual caps are accepted as unlimited. An
+  // unknown key inside the block is rejected — same convention as the
+  // top-level allowlist and the rotation block below: a typo'd cap name (e.g.
+  // max_cost_us) would otherwise validate and be silently ignored, so the
+  // safety cap the author thinks they configured never actually exists.
   if (obj.budget !== undefined) {
     if (typeof obj.budget !== "object" || obj.budget === null || Array.isArray(obj.budget)) {
       return { ok: false, error: "budget must be an object" };
     }
     const b = obj.budget as Record<string, unknown>;
-    for (const field of [
+    const budgetFields: readonly string[] = [
       "max_tool_calls",
       "max_wall_clock_seconds",
       "max_consecutive_errors",
       "max_cost_usd",
-    ] as const) {
+    ];
+    for (const key of Object.keys(b)) {
+      if (key.startsWith("_")) continue;
+      if (!budgetFields.includes(key)) {
+        return { ok: false, error: `unknown budget key '${key}'` };
+      }
+    }
+    for (const field of budgetFields) {
       const v = b[field];
       if (v === undefined) continue;
       if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) {
