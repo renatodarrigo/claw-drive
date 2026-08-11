@@ -538,6 +538,18 @@ export async function handleRequest(
       return { id: req.id, ok: true, result: { alive: true } };
 
     case "send_turn": {
+      if (ctx.bExited) {
+        // Checked BEFORE any state change, mirroring rotate's dead-B gate
+        // (same ctx.bExited latch, same "use recover" hint): B is gone, so a
+        // turn_started here would be a phantom (no turn can ever run) and the
+        // stdin write below would hit a closed pipe. Plain error, no event.
+        return {
+          id: req.id,
+          ok: false,
+          error: "SESSION_EXITED",
+          message: "session process has exited; turn cannot start — use recover",
+        };
+      }
       const turnId = `turn_${ctx.state.turns + 1}`;
       ctx.state.turns += 1;
       ctx.currentTurnId = turnId;
@@ -1121,6 +1133,24 @@ export async function handleRequest(
           ok: false,
           error: "CALL_NOT_FOUND",
           message: "no deferred or pending call with this call_id",
+        };
+      }
+
+      if (ctx.bExited) {
+        // Deliberate order: CALL_NOT_FOUND and the auto-defer block above
+        // always run before this check, so an unknown call_id keeps its
+        // diagnostic and a still-pending call's decision record settles the
+        // same way on a dead session as on a live one — not an oversight.
+        //
+        // Same phantom-emission hole as send_turn, same guard: this op pipes
+        // its composed message to B exactly like send_turn does (turn_started
+        // + a stdin write). The call is left in deferredCalls rather than
+        // deleted — its record survives for inspection.
+        return {
+          id: req.id,
+          ok: false,
+          error: "SESSION_EXITED",
+          message: "session process has exited; turn cannot start — use recover",
         };
       }
 
