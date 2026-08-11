@@ -417,4 +417,129 @@ describe("handleUnexpectedBExit — crash during rotate (dogfood gen-2)", () => 
       vi.restoreAllMocks();
     }
   });
+
+  // Task 4 (behavior-minors wave, carried v1.4.1 residual finding). The test
+  // "a crash during the attempt-2 settle window still records exactly one
+  // rotation_failed before session_stopped" lands its crash in the settle
+  // window that FOLLOWS ATTEMPT 1's own timeout+SIGINT — "no waiter is
+  // armed" there because attempt 2 never sent. That death is discovered at
+  // attempt 2's loop-top guard, which is the already-covered C0 selector
+  // path. These two tests land the crash (or a stop) in the settle window
+  // that follows ATTEMPT 2's OWN timeout+SIGINT instead: attempt 2 is the
+  // loop's last iteration ([1, 2] is the whole loop), so there is no third
+  // loop-top pass to observe it — the fall-through after the loop is what
+  // has to catch it.
+  it("a crash landing in attempt 2's OWN settle window reports b_exited, not the generic no-handover reason", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const kills: Array<[number, string | number]> = [];
+    vi.spyOn(process, "kill").mockImplementation(((pid: number, sig?: string | number) => {
+      kills.push([pid, sig ?? "SIGTERM"]);
+      return true;
+    }) as never);
+    // Time-bounded condition polling, not a fixed round count — send_turn's
+    // own emitEvent is a REAL async fs write (append + writeState), and the
+    // fs threadpool can lag arbitrarily under a parallel suite run (same
+    // rationale as the sibling unit suites' own drainUntil helpers).
+    const drainUntil = async (cond: () => boolean) => {
+      const dl = Date.now() + 5000;
+      while (!cond()) {
+        if (Date.now() > dl) throw new Error("drainUntil: condition not reached");
+        await new Promise((r) => setImmediate(r));
+      }
+    };
+    try {
+      const fake = makeFakeB();
+      const ctx = await makeCtx(fake);
+      const rotate = handleRequest(ctx, { id: "r1", op: "rotate" });
+      await drainUntil(() => fake.writes.length === 1); // attempt 1 sent
+      // Attempt 1 fails outright (no timeout) — the loop advances straight
+      // to attempt 2's send.
+      const waiter1 = ctx.turnWaiters.get("turn_1")!;
+      waiter1("failed");
+      await drainUntil(() => fake.writes.length === 2); // attempt 2 sent
+      // Attempt 2 times out (600s) → SIGINT.
+      await vi.advanceTimersByTimeAsync(600_000);
+      await drainUntil(() => kills.some(([, sig]) => sig === "SIGINT"));
+      // B acknowledges the interrupt within its own grace period — turn_2
+      // resolves, so this is NOT the wedged path; attempt 2's OWN 15s
+      // settle begins.
+      const waiter2 = ctx.turnWaiters.get("turn_2")!;
+      waiter2("failed");
+      await drainUntil(() => !ctx.turnWaiters.has("turn_2"));
+      // B dies inside attempt 2's OWN settle window — a genuine crash, not
+      // caused by the interrupt or a stop. Drives the real crash
+      // choreography, not a forged flag set, so the terminal exit_reason
+      // pin below is a genuine unclobbered assertion rather than an echo
+      // of a test-set value.
+      const crashDone = handleUnexpectedBExit(ctx, 0, null);
+      await drainUntil(() => ctx.crashTeardownEngaged);
+      expect(await eventKinds()).not.toContain("session_stopped");
+      await vi.advanceTimersByTimeAsync(15_000);
+      const resp = await withTimeout(rotate, 4000, "rotate");
+      expect(resp).toMatchObject({ ok: false, error: "ROTATION_FAILED" });
+      expect((resp as { message: string }).message).toMatch(/use recover/);
+      await crashDone;
+      const kinds = await eventKinds();
+      expect(kinds.filter((k) => k === "rotation_failed")).toHaveLength(1);
+      expect(kinds.indexOf("rotation_failed")).toBeLessThan(kinds.indexOf("session_stopped"));
+      const { events } = await readEventsSince(eventsPath(SID), 0);
+      const rf = events.find((e) => e.kind === "rotation_failed");
+      expect((rf as unknown as { reason: string }).reason).toBe(
+        "b_exited: session process exited during the handover turn"
+      );
+      // Unclobbered pin, same convention as the C0 selector's own crash
+      // tests: the crash's own reason must survive untouched.
+      expect(ctx.state.exit_reason).toBe("crashed:0");
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("a stop (no crash) landing in attempt 2's OWN settle window reports session_stopping, not the generic no-handover reason", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const kills: Array<[number, string | number]> = [];
+    vi.spyOn(process, "kill").mockImplementation(((pid: number, sig?: string | number) => {
+      kills.push([pid, sig ?? "SIGTERM"]);
+      return true;
+    }) as never);
+    const drainUntil = async (cond: () => boolean) => {
+      const dl = Date.now() + 5000;
+      while (!cond()) {
+        if (Date.now() > dl) throw new Error("drainUntil: condition not reached");
+        await new Promise((r) => setImmediate(r));
+      }
+    };
+    try {
+      const fake = makeFakeB();
+      const ctx = await makeCtx(fake);
+      const rotate = handleRequest(ctx, { id: "r1", op: "rotate" });
+      await drainUntil(() => fake.writes.length === 1);
+      const waiter1 = ctx.turnWaiters.get("turn_1")!;
+      waiter1("failed");
+      await drainUntil(() => fake.writes.length === 2);
+      await vi.advanceTimersByTimeAsync(600_000);
+      await drainUntil(() => kills.some(([, sig]) => sig === "SIGINT"));
+      const waiter2 = ctx.turnWaiters.get("turn_2")!;
+      waiter2("failed");
+      await drainUntil(() => !ctx.turnWaiters.has("turn_2"));
+      // A stop lands inside attempt 2's OWN settle window — no crash, so
+      // stopping (not a death) owns the exit.
+      await handleRequest(ctx, { id: "s1", op: "stop_session" });
+      await drainUntil(() => ctx.stopping);
+      expect(ctx.bExited).toBe(false);
+      await vi.advanceTimersByTimeAsync(15_000);
+      const resp = await withTimeout(rotate, 4000, "rotate");
+      expect(resp).toMatchObject({ ok: false, error: "ROTATION_FAILED" });
+      const { events } = await readEventsSince(eventsPath(SID), 0);
+      const rf = events.find((e) => e.kind === "rotation_failed");
+      expect((rf as unknown as { reason: string }).reason).toBe(
+        "session_stopping: stop or circuit breaker engaged during the handover turn"
+      );
+    } finally {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    }
+  });
 });
