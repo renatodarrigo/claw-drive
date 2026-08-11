@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **`status`'s cost display puts the sign before the currency symbol, not inside it.** A session whose lineage spend reads negative — a stream result line can carry a negative `total_cost_usd`, which the parser accepts as a valid finite reading — renders as `-$0.05` in the COST column and the detail view's `Cost:` line, rather than `$-0.05`. Zero and positive readings are unaffected (`$0.00`, `$1.50`), and a lineage with no cost reading at all still renders `-`.
+
 ## [1.5.2] — 2026-08-11
 
 ### Fixed

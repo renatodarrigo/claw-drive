@@ -747,17 +747,25 @@ describe("cost display (cost-cap)", () => {
       ...over,
     }) as never;
 
-  it("summary table shows a COST column, $-formatted to cents, '-' when absent", () => {
-    const table = renderSummaryTable([snap({ cost_usd: 1.837 }), snap({})], Date.now());
-    const [header, row1, row2] = table.split("\n");
+  it("summary table shows a COST column, $-formatted to cents, '-' when absent, $0.00 at zero, and sign-before-currency when negative", () => {
+    const table = renderSummaryTable(
+      [snap({ cost_usd: 1.837 }), snap({}), snap({ cost_usd: 0 }), snap({ cost_usd: -0.05 })],
+      Date.now()
+    );
+    const [header, row1, row2, row3, row4] = table.split("\n");
     expect(header).toContain("COST");
     expect(row1).toContain("$1.84");
     expect(row2.split("\t")).toContain("-");
+    expect(row3).toContain("$0.00");
+    // Sign belongs before the currency symbol: "-$0.05", never "$-0.05".
+    expect(row4).toContain("-$0.05");
   });
 
-  it("detailed block renders a Cost line only when stamped", () => {
+  it("detailed block renders a Cost line only when stamped, $0.00 at zero, and sign-before-currency when negative", () => {
     expect(renderDetailedBlock(snap({ cost_usd: 0.5 }))).toContain("Cost:          $0.50");
     expect(renderDetailedBlock(snap({}))).not.toContain("Cost:");
+    expect(renderDetailedBlock(snap({ cost_usd: 0 }))).toContain("Cost:          $0.00");
+    expect(renderDetailedBlock(snap({ cost_usd: -0.05 }))).toContain("Cost:          -$0.05");
   });
 });
 
