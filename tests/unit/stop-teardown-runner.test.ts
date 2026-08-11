@@ -550,6 +550,8 @@ describe("crash owning the exit while a stop is in flight (crashTeardownEngaged)
     expect((rf as unknown as { reason: string }).reason).toBe(
       "b_exited: session process exited during the handover turn"
     );
+    // Unclobbered pin: the test pre-set this value; the assert confirms
+    // nothing downstream overwrote it, not that the runner wrote it.
     expect(ctx.state.exit_reason).toBe("crashed:0");
   });
 
@@ -578,6 +580,8 @@ describe("crash owning the exit while a stop is in flight (crashTeardownEngaged)
     expect((rf as unknown as { reason: string }).reason).toBe(
       "b_exited: session process exited after the handover turn; successor not started"
     );
+    // Unclobbered pin: the test pre-set this value; the assert confirms
+    // nothing downstream overwrote it, not that the runner wrote it.
     expect(ctx.state.exit_reason).toBe("crashed:0");
     const dirs = await fs.readdir(path.join(root, "sessions"));
     expect(dirs).toEqual([SID]);

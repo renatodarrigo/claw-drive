@@ -115,10 +115,10 @@ export interface RunnerContext {
   firstTurnContextTokens: number | null;
   rotating: boolean;
   turnWaiters: Map<string, (outcome: "completed" | "failed") => void>;
-  /** Set synchronously the moment B's exit is observed (any path — crash,
-   * stop, or teardown's dead-B fast path; see observeBExit). Once true no
-   * turn can ever terminate again — handover attempts and the rotate
-   * choreography must fail fast instead of waiting out turn timeouts. */
+  /** Set synchronously the moment B's exit is observed, on any path (see
+   * observeBExit for the enumeration of call sites). Once true no turn can
+   * ever terminate again — handover attempts and the rotate choreography
+   * must fail fast instead of waiting out turn timeouts. */
   bExited: boolean;
   /** Latched synchronously at handleUnexpectedBExit's entry — distinct from
    * bExited, which also latches on the stop path (a B death raced against a
@@ -466,9 +466,11 @@ async function runHandoverTurn(
 ): Promise<string | null> {
   for (const attempt of [1, 2] as const) {
     if (ctx.bExited || ctx.stopping) {
-      // B is dead (observeBExit fails the pending waiter, so a killed
-      // attempt lands back here) — or a stop/breaker teardown is in flight
-      // and stdin may already be ended. Never send another turn at a closed
+      // B is dead (observeBExit fails the pending waiter), or a stop/breaker
+      // teardown is in flight and stdin may already be ended. This can
+      // already hold before attempt 1 ever sends a turn (e.g. a stop
+      // latched just as rotate began), not only after a killed attempt
+      // loops back here for attempt 2. Never send another turn at a closed
       // stdin, and never wait out a turn timeout that cannot fire.
       // Precedence: a stop/breaker teardown that OWNS the exit is the
       // truthful cause when both flags hold — B's exit is that teardown's own
@@ -774,10 +776,11 @@ export async function handleRequest(
       if (ctx.bExited) {
         // Checked BEFORE the gate: a death that killed an in-flight turn
         // leaves turnInFlight latched, and TURN_IN_FLIGHT's "retry at the
-        // turn boundary" advice is unfollowable on a dead session. The
-        // session process is gone (crash teardown in flight) — a rotation
-        // can never start, and its events are terminal. Plain error, no
-        // event.
+        // turn boundary" advice is unfollowable on a dead session. Keyed on
+        // bExited alone, however it latched — a crash (teardown in flight),
+        // or a stop/breaker teardown that already observed B's exit. Either
+        // way the session process is gone and its events are terminal — a
+        // rotation can never start. Plain error, no event.
         return {
           id: req.id,
           ok: false,
