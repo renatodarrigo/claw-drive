@@ -100,9 +100,9 @@ printf '{"rotation":{"threshold_tokens":120000}}\n' > "$ROTPOLICY"
 
 SID_CRASH="$(PATH="$STUB_DIR:$PATH" "$BIN" start --cwd "$CRASH_CWD" --policy "$ROTPOLICY")"
 if [[ "$SID_CRASH" == sess_* ]]; then
-  pass "stub session starts (id: $SID_CRASH)"
+  pass "stub session starts for crash-during-rotate teardown (id: $SID_CRASH)"
 else
-  fail "stub session starts (got: $SID_CRASH)"
+  fail "stub session starts for crash-during-rotate teardown (got: $SID_CRASH)"
 fi
 
 ROT_OUT="$TMPHOME/rotate-out.txt"
@@ -163,9 +163,9 @@ chmod +x "$STUB2_DIR/claude"
 
 SID_SIG="$(PATH="$STUB2_DIR:$PATH" "$BIN" start --cwd "$SIG_CWD" --policy "$ROTPOLICY")"
 if [[ "$SID_SIG" == sess_* ]]; then
-  pass "stub session starts (id: $SID_SIG)"
+  pass "stub session starts for runner-SIGTERM teardown (id: $SID_SIG)"
 else
-  fail "stub session starts (got: $SID_SIG)"
+  fail "stub session starts for runner-SIGTERM teardown (got: $SID_SIG)"
 fi
 RPID2="$(cat "$TMPHOME/sessions/$SID_SIG/runner.pid" 2>/dev/null || true)"
 STUB2_PID="$(pgrep -f "$STUB2_DIR/claude" | head -1 || true)"
@@ -207,9 +207,9 @@ chmod +x "$STUB3_DIR/claude"
 
 SID_INT="$(PATH="$STUB3_DIR:$PATH" "$BIN" start --cwd "$INT_CWD" --policy "$ROTPOLICY")"
 if [[ "$SID_INT" == sess_* ]]; then
-  pass "stub session starts (id: $SID_INT)"
+  pass "stub session starts for interrupt-grace gating (id: $SID_INT)"
 else
-  fail "stub session starts (got: $SID_INT)"
+  fail "stub session starts for interrupt-grace gating (got: $SID_INT)"
 fi
 expect_exit "interrupt succeeds" 0 "$BIN" interrupt "$SID_INT" turn_1
 INT_OUT="$TMPHOME/interrupt-rotate-out.txt"
@@ -236,9 +236,9 @@ printf '{"escalate_default":true,"budget":{"max_cost_usd":0.10}}\n' > "$COSTPOLI
 
 SID_COST="$(PATH="$COST_STUB_DIR:$PATH" "$BIN" start --cwd "$COST_CWD" --policy "$COSTPOLICY")"
 if [[ "$SID_COST" == sess_* ]]; then
-  pass "stub session starts (id: $SID_COST)"
+  pass "stub session starts for cost-cap breach (id: $SID_COST)"
 else
-  fail "stub session starts (got: $SID_COST)"
+  fail "stub session starts for cost-cap breach (got: $SID_COST)"
 fi
 
 "$BIN" send "$SID_COST" "spend" >/dev/null 2>&1 || true
@@ -269,7 +269,7 @@ else
 fi
 
 expect_file_contains "state records budget_exceeded:max_cost_usd" "$STATE_COST" "budget_exceeded:max_cost_usd"
-expect_file_contains "state stamped the lineage spend" "$STATE_COST" "\"cost_usd\": 0.25"
+expect_file_contains "state stamped the lineage spend" "$STATE_COST" '"cost_usd": 0.25'
 EVJ_COST="$TMPHOME/sessions/$SID_COST/events.jsonl"
 expect_file_contains "breach emits the breaker error event" "$EVJ_COST" "session budget exceeded: max_cost_usd"
 expect_file_contains "session_stopped recorded" "$EVJ_COST" '"kind":"session_stopped"'
@@ -296,9 +296,9 @@ printf '{"escalate_default":true,"rotation":{"threshold_tokens":120000},"budget"
 
 SID_RC="$(PATH="$ROTCOST_STUB_DIR:$PATH" "$BIN" start --cwd "$ROTCOST_CWD" --policy "$ROTCOSTPOLICY")"
 if [[ "$SID_RC" == sess_* ]]; then
-  pass "stub session starts (id: $SID_RC)"
+  pass "stub session starts for mid-rotation cost-cap breach (id: $SID_RC)"
 else
-  fail "stub session starts (got: $SID_RC)"
+  fail "stub session starts for mid-rotation cost-cap breach (got: $SID_RC)"
 fi
 N_SESSIONS_BEFORE="$(ls "$TMPHOME/sessions" | wc -l | tr -d ' ')"
 
