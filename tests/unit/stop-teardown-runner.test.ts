@@ -345,7 +345,7 @@ describe("teardown finish holds for an in-flight rotation", () => {
     expect(exitCalls).toEqual([0]);
   });
 
-  it("the hold is bounded: the terminal record proceeds after 30s even if the rotation never settles", async () => {
+  it("the hold is bounded: the terminal record proceeds after exactly ROTATION_SETTLE_HOLD_MS (30_000ms) even if the rotation never settles", async () => {
     const fake = makeFakeB();
     const ctx = await makeCtx(fake);
     ctx.rotationSettled = new Promise<void>(() => {});
@@ -356,9 +356,16 @@ describe("teardown finish holds for an in-flight rotation", () => {
     fake.emitter.emit("exit", 0, null);
     await settle();
     expect(exitCalls).toEqual([]);
-    vi.advanceTimersByTime(30_000);
+    // Pin the exact bound, not merely "releases somewhere under 30s": one ms
+    // short of it, the hold must still be engaged.
+    vi.advanceTimersByTime(29_999);
+    await settle();
+    expect(exitCalls).toEqual([]);
+    expect(await eventKinds()).not.toContain("session_stopped");
+    vi.advanceTimersByTime(1);
     await settleUntil(() => exitCalls.length > 0);
     expect(await eventKinds()).toContain("session_stopped");
+    expect(exitCalls).toEqual([0]);
   });
 });
 
@@ -477,7 +484,6 @@ describe("stop racing B's own teardown-caused exit (both bExited and stopping tr
     // sequence the real b.on("exit") handler runs. Attempt 1 thus fails and
     // the loop re-enters attempt 2, discovering both flags at the top.
     observeBExit(ctx);
-    fake.b.exitCode = 0;
     const resp = await rotP;
     expect(resp).toMatchObject({ ok: false, error: "ROTATION_FAILED" });
     expect((resp as { message?: string }).message).toContain("stopping");
@@ -505,7 +511,6 @@ describe("stop racing B's own teardown-caused exit (both bExited and stopping tr
     const waiter = ctx.turnWaiters.get("turn_1")!;
     waiter("completed");
     observeBExit(ctx);
-    fake.b.exitCode = 0;
     const resp = await rotP;
     expect(resp).toMatchObject({ ok: false, error: "ROTATION_FAILED" });
     expect((resp as { message?: string }).message).toContain("stopping");
