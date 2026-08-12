@@ -428,11 +428,9 @@ export function validatePolicy(p: unknown): { ok: true } | { ok: false; error: s
           };
         }
       }
-      // arg_matches compile parity: bash_command_matches (above) and a /.../ tool
-      // pattern are both compile-checked here, but arg_matches values previously
-      // were not — an uncompilable pattern validated and only failed later, at
-      // match time or lint. Same shape + compile check validateRule already runs
-      // for the --remember-as path, adapted to this loop's listKey[i] addressing.
+      // arg_matches values get the same compile check as bash_command_matches and
+      // /.../ tool patterns above — an uncompilable pattern must fail validation
+      // here, not later at match time or lint (the check validateRule also runs).
       if (r.arg_matches !== undefined) {
         if (typeof r.arg_matches !== "object" || r.arg_matches === null || Array.isArray(r.arg_matches)) {
           return { ok: false, error: `${listKey}[${i}].arg_matches must be an object` };

@@ -4,7 +4,12 @@ import * as path from "node:path";
 import * as os from "node:os";
 import { EventEmitter } from "node:events";
 import type { ChildProcess } from "node:child_process";
-import { handleRequest, type RunnerContext } from "../../src/runner/runner.js";
+import {
+  handleRequest,
+  observeBExit,
+  attachBStdinErrorAbsorber,
+  type RunnerContext,
+} from "../../src/runner/runner.js";
 import type { SessionState } from "../../src/lib/state.js";
 import { readEventsSince } from "../../src/lib/events.js";
 import { eventsPath } from "../../src/lib/paths.js";
@@ -24,27 +29,37 @@ let prevHome: string | undefined;
 interface FakeB {
   writes: string[];
   b: ChildProcess;
+  /** The emitter backing b.stdin's on/once/listenerCount — exposed so tests
+   * can attach the absorber via fake.b and then drive/inspect it directly
+   * (emit("error", ...), listenerCount("error")) without reaching back
+   * through the ChildProcess-shaped stdin stub. */
+  stdin: EventEmitter;
 }
 
 function makeFakeB(): FakeB {
   const emitter = new EventEmitter();
+  const stdinEmitter = new EventEmitter();
   const writes: string[] = [];
+  const stdin = {
+    write: (chunk: string) => {
+      writes.push(chunk);
+      return true;
+    },
+    end: () => {},
+    on: stdinEmitter.on.bind(stdinEmitter),
+    once: stdinEmitter.once.bind(stdinEmitter),
+    listenerCount: stdinEmitter.listenerCount.bind(stdinEmitter),
+  };
   const b = {
     pid: 424242,
     exitCode: null,
     signalCode: null,
-    stdin: {
-      write: (chunk: string) => {
-        writes.push(chunk);
-        return true;
-      },
-      end: () => {},
-    },
+    stdin,
     kill: () => true,
     on: emitter.on.bind(emitter),
     once: emitter.once.bind(emitter),
   } as unknown as ChildProcess;
-  return { writes, b };
+  return { writes, b, stdin: stdinEmitter };
 }
 
 async function makeCtx(fake: FakeB, overrides?: Partial<RunnerContext>): Promise<RunnerContext> {
@@ -138,6 +153,23 @@ describe("send_turn op — dead-B guard", () => {
       message: { role: "user", content: "hello" },
     });
   });
+
+  it("a B death landing during the turn_started append refuses instead of writing a dead stream", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake, { bExited: false });
+    // Un-awaited: runs synchronously into emitEvent's first await (the fs
+    // append), then control returns here — the latch below is guaranteed to
+    // land inside the residual window, before the op's continuation resumes.
+    const pending = handleRequest(ctx, { id: "t3", op: "send_turn", message: "hello" });
+    observeBExit(ctx);
+    const resp = await pending;
+    expect(resp).toEqual({ id: "t3", ok: false, error: "SESSION_EXITED", message: REFUSAL_MESSAGE });
+    expect(fake.writes).toEqual([]);
+    // The turn_started append had already committed when B died — the event is
+    // the honest one-append residue, and the bookkeeping stays consistent with it.
+    expect(await eventKinds()).toContain("turn_started");
+    expect(ctx.state.turns).toBe(1);
+  });
 });
 
 describe("provide_tool_output op — dead-B guard (twin of send_turn's)", () => {
@@ -216,5 +248,44 @@ describe("provide_tool_output op — dead-B guard (twin of send_turn's)", () => 
     expect(kinds).toContain("tool_output_provided");
     expect(fake.writes).toHaveLength(1);
     expect(ctx.deferredCalls.has("toolu_3")).toBe(false);
+  });
+
+  it("a B death landing during the turn_started append refuses instead of writing a dead stream (twin of send_turn's)", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake, { bExited: false });
+    seedDeferred(ctx, "toolu_4");
+    // Un-awaited: same choreography as send_turn's twin — runs synchronously
+    // into emitEvent's first await (the fs append), then control returns
+    // here so the latch below lands inside the residual window, before the
+    // op's continuation resumes.
+    const pending = handleRequest(ctx, {
+      id: "p5",
+      op: "provide_tool_output",
+      call_id: "toolu_4",
+      stdout: "ok",
+    });
+    observeBExit(ctx);
+    const resp = await pending;
+    expect(resp).toEqual({ id: "p5", ok: false, error: "SESSION_EXITED", message: REFUSAL_MESSAGE });
+    expect(fake.writes).toEqual([]);
+    const kinds = await eventKinds();
+    expect(kinds).toContain("turn_started");
+    expect(kinds).not.toContain("tool_output_provided");
+    // Never delivered to B, so the record survives rather than being deleted.
+    expect(ctx.deferredCalls.has("toolu_4")).toBe(true);
+  });
+});
+
+describe("attachBStdinErrorAbsorber", () => {
+  it("attaches exactly one error listener and absorbs an emitted error without throwing", () => {
+    const fake = makeFakeB();
+    attachBStdinErrorAbsorber(fake.b);
+    expect(fake.stdin.listenerCount("error")).toBe(1);
+    expect(() => fake.stdin.emit("error", new Error("EPIPE"))).not.toThrow();
+  });
+
+  it("mechanism control: an un-attached stdin's emitted error throws (documents the crash the absorber prevents)", () => {
+    const fake = makeFakeB();
+    expect(() => fake.stdin.emit("error", new Error("EPIPE"))).toThrow();
   });
 });

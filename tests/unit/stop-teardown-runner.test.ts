@@ -34,6 +34,7 @@ let processKills: Array<[number, string | number]>;
 interface FakeB {
   emitter: EventEmitter;
   stdinEnds: number;
+  writes: string[];
   b: ChildProcess & { exitCode: number | null; signalCode: string | null };
 }
 
@@ -42,6 +43,7 @@ function makeFakeB(): FakeB {
   const fake: FakeB = {
     emitter,
     stdinEnds: 0,
+    writes: [],
     b: null as never,
   };
   fake.b = {
@@ -49,7 +51,10 @@ function makeFakeB(): FakeB {
     exitCode: null,
     signalCode: null,
     stdin: {
-      write: () => true,
+      write: (chunk: string) => {
+        fake.writes.push(chunk);
+        return true;
+      },
       end: () => {
         fake.stdinEnds += 1;
       },
@@ -498,7 +503,16 @@ describe("stop racing B's own teardown-caused exit (both bExited and stopping tr
     const fake = makeFakeB();
     const ctx = await makeCtx(fake);
     const rotP = handleRequest(ctx, { id: "r1", op: "rotate" });
-    await settleUntil(() => ctx.turnWaiters.has("turn_1"));
+    // Wait for the actual stdin write, not just waiter registration:
+    // send_turn's response is consequential (a refused send breaks the
+    // handover attempt immediately), and that response resolves only after
+    // send_turn's own post-turn_started bExited re-check has run.
+    // turnWaiters.has() goes true at the top of the loop body, BEFORE
+    // send_turn is even called, so waiting on it would race the pokes below
+    // against send_turn's still in-flight emitEvent — flakily tripping the
+    // re-check and misrouting this test into the DURING reason instead of
+    // the intended AFTER one.
+    await settleUntil(() => fake.writes.length === 1);
     await appendAssistantHandover("turn_1");
     await handleRequest(ctx, { id: "s1", op: "stop_session" });
     await settle();
@@ -535,7 +549,13 @@ describe("crash owning the exit while a stop is in flight (crashTeardownEngaged)
     const fake = makeFakeB();
     const ctx = await makeCtx(fake);
     const rotP = handleRequest(ctx, { id: "r1", op: "rotate" });
-    await settleUntil(() => ctx.turnWaiters.has("turn_1"));
+    // Wait for the actual stdin write, not just waiter registration — see
+    // the sibling checkpoint test above for why turnWaiters.has() alone
+    // races the death-poke below against send_turn's still in-flight
+    // post-append bExited re-check: the death-poke then lands strictly after
+    // the send completes, so the test deterministically exercises its
+    // intended loop-top route.
+    await settleUntil(() => fake.writes.length === 1);
     // The crash choreography engages first: handleUnexpectedBExit observes the
     // exit, latches crashTeardownEngaged and stamps the terminal reason — all
     // synchronously — before holding for the in-flight rotate.
@@ -564,7 +584,11 @@ describe("crash owning the exit while a stop is in flight (crashTeardownEngaged)
     const fake = makeFakeB();
     const ctx = await makeCtx(fake);
     const rotP = handleRequest(ctx, { id: "r1", op: "rotate" });
-    await settleUntil(() => ctx.turnWaiters.has("turn_1"));
+    // Wait for the actual stdin write, not just waiter registration — see
+    // the sibling checkpoint test above for why turnWaiters.has() alone
+    // races the pokes below against send_turn's still in-flight post-append
+    // bExited re-check.
+    await settleUntil(() => fake.writes.length === 1);
     await appendAssistantHandover("turn_1");
     // Lock the turn's "completed" outcome in first (a Promise settles once, so
     // the crash path's re-flush of the same waiter is a no-op), then land the

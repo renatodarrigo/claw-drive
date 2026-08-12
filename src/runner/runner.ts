@@ -463,7 +463,11 @@ async function turnAssistantText(sessionId: string, turnId: string): Promise<str
  * aborted the rotation — the loop-top guard, and the fall-through after
  * both attempts (which also catches one the loop-top guard structurally
  * cannot: attempt 2 dying in its own post-interrupt settle sleep, since
- * attempt 2 is the loop's last iteration).
+ * attempt 2 is the loop's last iteration). A send refused mid-attempt (B
+ * died in the turn_started-append race the entry guard cannot cover) also
+ * aborts through that same fall-through: the attempt breaks out of the loop
+ * immediately, dropping its never-resolvable waiter, rather than racing the
+ * full attempt timeout for a turn that was never written to B.
  */
 async function runHandoverTurn(
   ctx: RunnerContext,
@@ -494,11 +498,20 @@ async function runHandoverTurn(
     const done = new Promise<"completed" | "failed">((resolve) =>
       ctx.turnWaiters.set(turnId, resolve)
     );
-    await handleRequest(ctx, {
+    const resp = await handleRequest(ctx, {
       id: `handover_${attempt}`,
       op: "send_turn",
       message: buildHandoverInstruction({ attempt }),
     });
+    if (!resp.ok) {
+      // The send refused (dead-B SESSION_EXITED surface) — no turn was
+      // written to B, so nothing can ever resolve this attempt's waiter
+      // except an exit-path flush that may not have seen it. Never race a
+      // waiter for a turn that was refused: drop it and fall through to the
+      // selector below the loop, which reports the truthful reason.
+      ctx.turnWaiters.delete(turnId);
+      break;
+    }
     const outcome = await Promise.race([done, sleepTimeout(HANDOVER_TURN_TIMEOUT_MS)]);
     if (outcome === "timeout") {
       if (ctx.b.pid) {
@@ -579,6 +592,20 @@ export async function handleRequest(
         turn_id: turnId,
         message: req.message,
       } as Omit<Event, "seq" | "at">);
+      if (ctx.bExited) {
+        // B died during the turn_started append above — the one-emit residual
+        // window the entry guard cannot cover. The event is already on disk
+        // (honest residue; state.turns agrees with it), but nothing may be
+        // written to a dead stream. No await may ever sit between this check
+        // and the write below — the synchronous segment is what closes the
+        // pre-write race. Same refusal surface as the entry guard.
+        return {
+          id: req.id,
+          ok: false,
+          error: "SESSION_EXITED",
+          message: "session process has exited; turn cannot start — use recover",
+        };
+      }
       // Write the user turn to B's stdin as stream-json
       const payload = {
         type: "user",
@@ -1198,6 +1225,20 @@ export async function handleRequest(
         turn_id: turnId,
         message: userMessage,
       } as Omit<Event, "seq" | "at">);
+      if (ctx.bExited) {
+        // B died during the turn_started append above — the one-emit residual
+        // window the entry guard cannot cover. The event is already on disk
+        // (honest residue; state.turns agrees with it), but nothing may be
+        // written to a dead stream. No await may ever sit between this check
+        // and the write below — the synchronous segment is what closes the
+        // pre-write race. Same refusal surface as the entry guard.
+        return {
+          id: req.id,
+          ok: false,
+          error: "SESSION_EXITED",
+          message: "session process has exited; turn cannot start — use recover",
+        };
+      }
       const payload = {
         type: "user",
         message: { role: "user", content: userMessage },
@@ -1260,6 +1301,21 @@ export function makeSignalHandler(
     }
     teardownSession(ctx, reason);
   };
+}
+
+/**
+ * Absorb async errors from B's stdin (EPIPE from a write in flight when B
+ * died; write-after-end from a send racing a stop's stdin.end()). Without a
+ * listener these surface as an unhandled stream "error" event and crash the
+ * runner — the socket server's try/catch sees only synchronous throws. Log
+ * and continue: the exit paths own exit observation (observeBExit) and the
+ * dead-B guards own refusals; this listener must never latch state.
+ * Exported for unit tests; runRunner attaches it once at spawn.
+ */
+export function attachBStdinErrorAbsorber(b: ChildProcess): void {
+  b.stdin?.on("error", (err: Error) => {
+    process.stderr.write(`b stdin error absorbed: ${err.message}\n`);
+  });
 }
 
 /**
@@ -1385,6 +1441,10 @@ export async function runRunner(sessionId: string): Promise<void> {
   if (!b.stdout || !b.stderr || !b.stdin) {
     throw new Error("failed to set up stdio pipes");
   }
+
+  // Absorb async stdin errors (EPIPE, write-after-end) so they cannot surface
+  // as an unhandled stream "error" event and crash the runner.
+  attachBStdinErrorAbsorber(b);
 
   // Route B's stderr into the SAME captured runner.log. We write through the
   // already-redirected process.stderr (the single rotating fd from CD-44)

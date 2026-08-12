@@ -542,4 +542,28 @@ describe("handleUnexpectedBExit — crash during rotate (dogfood gen-2)", () => 
       vi.restoreAllMocks();
     }
   });
+
+  it("a refused handover send fails the attempt immediately with the truthful reason (no 600s strand)", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake);
+    // Un-awaited: the rotate op runs synchronously all the way into the
+    // handover send's turn_started append (entry checks, gate, loop-top and
+    // waiter registration have no awaits), then control returns here.
+    const pending = handleRequest(ctx, { id: "r1", op: "rotate" });
+    // Direct field write, deliberately NOT observeBExit: constructs the state
+    // the discard defends against — bExited latched while THIS attempt's
+    // waiter was never flushed (what a future await between the loop-top
+    // guard and waiter registration would produce). The real death path
+    // flushes the waiter and self-heals; this pin is the defensive twin.
+    ctx.bExited = true;
+    const resp = await pending;
+    expect(resp).toMatchObject({ ok: false, error: "ROTATION_FAILED" });
+    expect((resp as { message?: string }).message).toBe(
+      "session process exited during the handover turn; rotation cannot complete — use recover (a crash handover is distilled best-effort)"
+    );
+    // reason literal byte-identical to the loop-top cell's; exactly one
+    // turn_started (attempt 2 never sends); the dropped waiter is gone.
+    // rotation_failed reason === "b_exited: session process exited during the handover turn"
+    expect(ctx.turnWaiters.size).toBe(0);
+  });
 });

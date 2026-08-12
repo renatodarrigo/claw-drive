@@ -115,20 +115,19 @@ describe("cmdPolicyLint", () => {
     expect(await cmdPolicyLint([file, "--max-severity", "error", "--no-color"])).toBe(0);
   });
 
-  it("a bad arg_matches regex is now caught by validatePolicy before lint runs (exit 3, regardless of --max-severity)", async () => {
-    // Behavior-minors (b): validatePolicy now compile-checks arg_matches (parity with
-    // bash_command_matches), so resolvePolicySource rejects this file at the schema
-    // stage. Previously validatePolicy didn't look at arg_matches at all, so this file
-    // reached lintPolicy's regex_compile check — the sole "error"-severity finding kind
-    // lintPolicy can produce — and --max-severity error exited 1.
+  it("a bad arg_matches regex is caught by validatePolicy before lint runs (exit 3, regardless of --max-severity)", async () => {
+    // validatePolicy compile-checks arg_matches (parity with bash_command_matches), so
+    // resolvePolicySource rejects this file at the schema stage — it never reaches
+    // lintPolicy's regex_compile check (the sole "error"-severity finding kind), so
+    // --max-severity has nothing to gate.
     const file = writePolicy({ auto_reject: [{ tool: "Edit", arg_matches: { file_path: "(" } }] });
     expect(await cmdPolicyLint([file, "--max-severity", "error", "--no-color"])).toBe(3);
   });
 
   it("a bad arg_matches regex exits non-zero even without --max-severity (resolve-stage rejection isn't report-only)", async () => {
-    // Same gap-closure as above: this used to be a report-only lint finding (exit 0
-    // without --max-severity). It now fails at resolvePolicySource's validatePolicy
-    // call, which isn't gated by --max-severity at all.
+    // The rejection comes from resolvePolicySource's validatePolicy call, which
+    // isn't gated by --max-severity at all — a lint-stage finding without the flag
+    // would be report-only (exit 0).
     const file = writePolicy({ auto_reject: [{ tool: "Edit", arg_matches: { file_path: "(" } }] });
     expect(await cmdPolicyLint([file, "--no-color"])).toBe(3);
   });
