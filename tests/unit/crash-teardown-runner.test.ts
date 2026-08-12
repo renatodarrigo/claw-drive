@@ -573,9 +573,15 @@ describe("handleUnexpectedBExit — crash during rotate (dogfood gen-2)", () => 
     expect((resp as { message?: string }).message).toBe(
       "session process exited during the handover turn; rotation cannot complete — use recover (a crash handover is distilled best-effort)"
     );
-    // reason literal byte-identical to the loop-top cell's; exactly one
-    // turn_started (attempt 2 never sends); the dropped waiter is gone.
-    // rotation_failed reason === "b_exited: session process exited during the handover turn"
+    const { events } = await readEventsSince(eventsPath(SID), 0);
+    // reason literal byte-identical to the loop-top cell's
+    const rf = events.find((e) => e.kind === "rotation_failed");
+    expect((rf as unknown as { reason: string }).reason).toBe(
+      "b_exited: session process exited during the handover turn"
+    );
+    // attempt 2 never sends
+    expect(events.filter((e) => e.kind === "turn_started")).toHaveLength(1);
+    // the dropped waiter is gone
     expect(ctx.turnWaiters.size).toBe(0);
   });
 });

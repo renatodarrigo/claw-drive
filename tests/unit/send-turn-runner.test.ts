@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
@@ -277,11 +277,21 @@ describe("provide_tool_output op — dead-B guard (twin of send_turn's)", () => 
 });
 
 describe("attachBStdinErrorAbsorber", () => {
-  it("attaches exactly one error listener and absorbs an emitted error without throwing", () => {
+  it("attaches exactly one error listener and absorbs an emitted error, logging it to stderr", () => {
     const fake = makeFakeB();
     attachBStdinErrorAbsorber(fake.b);
     expect(fake.stdin.listenerCount("error")).toBe(1);
-    expect(() => fake.stdin.emit("error", new Error("EPIPE"))).not.toThrow();
+    // The spy swallows the absorber's log line (keeps suite output clean)
+    // while pinning its format — a bare no-op error handler would absorb
+    // the error but log nothing.
+    const spy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      expect(() => fake.stdin.emit("error", new Error("EPIPE"))).not.toThrow();
+      const out = spy.mock.calls.map((c) => String(c[0])).join("");
+      expect(out).toContain("b stdin error absorbed: EPIPE");
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("mechanism control: an un-attached stdin's emitted error throws (documents the crash the absorber prevents)", () => {
