@@ -302,11 +302,23 @@ describe("handleUnexpectedBExit — crash during rotate (dogfood gen-2)", () => 
     const drain = async (rounds = 300) => {
       for (let i = 0; i < rounds; i++) await new Promise((r) => setImmediate(r));
     };
+    // Time-bounded condition polling for asserts that depend on the send
+    // completing — send_turn's own emitEvent is a REAL async fs write
+    // (append + writeState), and the fs threadpool can lag arbitrarily under
+    // a parallel suite run (same rationale as the sibling tests' drainUntil
+    // helpers). drain stays for steps that merely yield the event loop.
+    const drainUntil = async (cond: () => boolean) => {
+      const dl = Date.now() + 5000;
+      while (!cond()) {
+        if (Date.now() > dl) throw new Error("drainUntil: condition not reached");
+        await new Promise((r) => setImmediate(r));
+      }
+    };
     try {
       const fake = makeFakeB();
       const ctx = await makeCtx(fake);
       const rotate = handleRequest(ctx, { id: "r1", op: "rotate" });
-      await drain();
+      await drainUntil(() => fake.writes.length === 1);
       expect(fake.writes).toHaveLength(1);
       await vi.advanceTimersByTimeAsync(600_000); // attempt 1 times out → SIGINT
       await drain();
