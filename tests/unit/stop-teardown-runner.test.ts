@@ -481,7 +481,10 @@ describe("stop racing B's own teardown-caused exit (both bExited and stopping tr
     const fake = makeFakeB();
     const ctx = await makeCtx(fake);
     const rotP = handleRequest(ctx, { id: "r1", op: "rotate" });
-    await settleUntil(() => ctx.turnWaiters.has("turn_1"));
+    // Sync on the actual stdin write — the same sync point as the sibling
+    // tests. The poke below sits behind an awaited stop_session, so either
+    // form is deterministic here; the write is simply the stronger signal.
+    await settleUntil(() => fake.writes.length === 1);
     await handleRequest(ctx, { id: "s1", op: "stop_session" });
     await settle();
     // observeBExit's own flush resolves the pending waiter "failed" (B's
@@ -551,9 +554,9 @@ describe("crash owning the exit while a stop is in flight (crashTeardownEngaged)
     const rotP = handleRequest(ctx, { id: "r1", op: "rotate" });
     // Wait for the actual stdin write, not just waiter registration — see
     // the sibling checkpoint test above for why turnWaiters.has() alone
-    // races the death-poke below against send_turn's still in-flight
-    // post-append bExited re-check: the death-poke then lands strictly after
-    // the send completes, so the test deterministically exercises its
+    // races the pokes below against send_turn's still in-flight post-append
+    // bExited re-check. With the write as the gate, the pokes land strictly
+    // after the send completes, so the test deterministically exercises its
     // intended loop-top route.
     await settleUntil(() => fake.writes.length === 1);
     // The crash choreography engages first: handleUnexpectedBExit observes the
