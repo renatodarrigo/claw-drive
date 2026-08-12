@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **A `send_turn` or `provide_tool_output` call landing in the single instant a session's process dies is refused, instead of writing to a dead stream and crashing the runner.** Both ops re-check the session's process immediately after their `turn_started` record is appended and immediately before the stdin write, closing the residual window the entry check alone cannot cover, and return the same `SESSION_EXITED` refusal as a call against an already-dead session. A stdin error from a write already in flight when the process dies — or one racing a stop's own stdin close — is absorbed and logged rather than left to surface as an unhandled stream error.
+
 ## [1.5.3] — 2026-08-11
 
 ### Fixed
