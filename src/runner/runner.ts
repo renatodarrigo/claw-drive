@@ -463,7 +463,11 @@ async function turnAssistantText(sessionId: string, turnId: string): Promise<str
  * aborted the rotation — the loop-top guard, and the fall-through after
  * both attempts (which also catches one the loop-top guard structurally
  * cannot: attempt 2 dying in its own post-interrupt settle sleep, since
- * attempt 2 is the loop's last iteration).
+ * attempt 2 is the loop's last iteration). A send refused mid-attempt (B
+ * died in the turn_started-append race the entry guard cannot cover) also
+ * aborts through that same fall-through: the attempt breaks out of the loop
+ * immediately, dropping its never-resolvable waiter, rather than racing the
+ * full attempt timeout for a turn that was never written to B.
  */
 async function runHandoverTurn(
   ctx: RunnerContext,
@@ -494,11 +498,20 @@ async function runHandoverTurn(
     const done = new Promise<"completed" | "failed">((resolve) =>
       ctx.turnWaiters.set(turnId, resolve)
     );
-    await handleRequest(ctx, {
+    const resp = await handleRequest(ctx, {
       id: `handover_${attempt}`,
       op: "send_turn",
       message: buildHandoverInstruction({ attempt }),
     });
+    if (!resp.ok) {
+      // The send refused (dead-B SESSION_EXITED surface) — no turn was
+      // written to B, so nothing can ever resolve this attempt's waiter
+      // except an exit-path flush that may not have seen it. Never race a
+      // waiter for a turn that was refused: drop it and fall through to the
+      // selector below the loop, which reports the truthful reason.
+      ctx.turnWaiters.delete(turnId);
+      break;
+    }
     const outcome = await Promise.race([done, sleepTimeout(HANDOVER_TURN_TIMEOUT_MS)]);
     if (outcome === "timeout") {
       if (ctx.b.pid) {
