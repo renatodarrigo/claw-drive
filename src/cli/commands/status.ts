@@ -344,7 +344,12 @@ function fmtContext(s: SessionSnapshot): string {
 }
 
 function fmtCost(s: SessionSnapshot): string {
-  return s.cost_usd === undefined ? "-" : `$${s.cost_usd.toFixed(2)}`;
+  if (s.cost_usd === undefined) return "-";
+  // Sign belongs before the currency symbol ("-$0.05"), not inside it ("$-0.05") —
+  // toFixed(2) alone puts a negative sign after the "$" since the "$" is a literal
+  // prefix on the signed number string.
+  const sign = s.cost_usd < 0 ? "-" : "";
+  return `${sign}$${Math.abs(s.cost_usd).toFixed(2)}`;
 }
 
 export function renderSummaryTable(snaps: SessionSnapshot[], nowMs: number): string {

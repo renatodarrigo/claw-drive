@@ -169,6 +169,8 @@ Send a user turn to a live session. Non-blocking; returns a `turn_id` to poll.
 
 **Response:** `{ "turn_id": "<string>", ... }`
 
+Refuses with `SESSION_EXITED` if the session process has already exited, in which case use `recover_session`.
+
 #### `poll_turn`
 
 Fetch events and derived status for a specific turn.
@@ -221,6 +223,8 @@ the output as a new user turn; auto-resolves any still-pending approval as
 **Optional inputs:** `stdout: string`, `stderr: string`, `exit_code: number`, `extra: string`
 
 **Response:** `{ ... }` (forwarded from runner)
+
+Refuses with `SESSION_EXITED` if the session process has already exited, in which case use `recover_session` — the pending approval still auto-resolves as `defer` first, but the output's own follow-up turn never reaches B.
 
 #### `update_policy`
 

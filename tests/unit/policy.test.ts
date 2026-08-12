@@ -1339,7 +1339,7 @@ describe("validateRule", () => {
     if (!r.ok) expect(r.error).toMatch(/invalid regex/);
   });
 
-  it("rejects an uncompilable arg_matches regex (the gap validatePolicy has)", () => {
+  it("rejects an uncompilable arg_matches regex (also rejected by validatePolicy)", () => {
     const r = validateRule({ tool: "Read", arg_matches: { file_path: "(" } });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toMatch(/arg_matches\.file_path invalid regex/);
@@ -1626,5 +1626,113 @@ describe("budget.max_cost_usd validation (cost-cap)", () => {
       expect(r.ok).toBe(false);
       if (!r.ok) expect(r.error).toBe("budget.max_cost_usd must be a positive number");
     }
+  });
+});
+
+describe("validatePolicy budget: unknown-key rejection", () => {
+  // The full known cap set, read from the budget block's type (policy.ts:42+) —
+  // max_tool_calls, max_wall_clock_seconds, max_consecutive_errors, max_cost_usd.
+  const knownCaps = ["max_tool_calls", "max_wall_clock_seconds", "max_consecutive_errors", "max_cost_usd"] as const;
+
+  it("accepts each known cap individually", () => {
+    for (const cap of knownCaps) {
+      const r = validatePolicy({ budget: { [cap]: 10 } });
+      expect(r.ok, `cap=${cap}`).toBe(true);
+    }
+  });
+
+  it("accepts all four known caps together", () => {
+    const r = validatePolicy({
+      budget: { max_tool_calls: 1, max_wall_clock_seconds: 1, max_consecutive_errors: 1, max_cost_usd: 1 },
+    });
+    expect(r.ok).toBe(true);
+  });
+
+  it("empty budget {} keeps its current meaning (still valid, no caps enabled)", () => {
+    expect(validatePolicy({ budget: {} })).toEqual({ ok: true });
+  });
+
+  it("rejects an unknown key inside budget, naming the key", () => {
+    const r = validatePolicy({ budget: { max_cost_us: 5 } } as any);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toBe("unknown budget key 'max_cost_us'");
+  });
+
+  it("rejects an unknown key even alongside an otherwise-valid known cap", () => {
+    const r = validatePolicy({ budget: { max_tool_calls: 10, typo_cap: 1 } } as any);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toBe("unknown budget key 'typo_cap'");
+  });
+
+  it("the unknown-key check runs before per-field value validation", () => {
+    const r = validatePolicy({ budget: { typo_cap: 1, max_tool_calls: -1 } } as any);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toBe("unknown budget key 'typo_cap'");
+  });
+
+  it("tolerates an underscore-prefixed key inside budget (the _budget_example → budget rename workflow)", () => {
+    // Both shipped templates document renaming _budget_example to budget in place, and
+    // _budget_example carries an internal _comment key — that must still validate after
+    // a literal rename, exactly like the rotation block already tolerates it.
+    const r = validatePolicy({ budget: { max_tool_calls: 10, _comment: "explanatory text" } });
+    expect(r.ok).toBe(true);
+  });
+
+  it("existing budget semantics are untouched: a bad known-field value is still rejected by its own message", () => {
+    const r = validatePolicy({ budget: { max_tool_calls: -1 } });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toBe("budget.max_tool_calls must be a positive number");
+  });
+});
+
+describe("validatePolicy arg_matches: compile parity with bash_command_matches", () => {
+  it("accepts a well-formed arg_matches regex", () => {
+    const r = validatePolicy({ auto_approve: [{ tool: "Read", arg_matches: { file_path: "^/tmp/" } }] });
+    expect(r.ok).toBe(true);
+  });
+
+  it("rejects an uncompilable arg_matches regex, naming list/index/key (parity with bash_command_matches)", () => {
+    const r = validatePolicy({ auto_approve: [{ tool: "Read", arg_matches: { file_path: "(" } }] });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/^auto_approve\[0\]\.arg_matches\.file_path invalid regex/);
+  });
+
+  it("rejects an uncompilable arg_matches regex in auto_defer and auto_reject too", () => {
+    for (const listKey of ["auto_defer", "auto_reject"] as const) {
+      const r = validatePolicy({ [listKey]: [{ tool: "Bash", arg_matches: { command: "[unclosed" } }] });
+      expect(r.ok, listKey).toBe(false);
+      if (!r.ok) expect(r.error, listKey).toMatch(new RegExp(`^${listKey}\\[0\\]\\.arg_matches\\.command invalid regex`));
+    }
+  });
+
+  it("rejects a non-string arg_matches value, naming the key", () => {
+    const r = validatePolicy({ auto_approve: [{ tool: "Read", arg_matches: { file_path: 42 } }] } as any);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toBe("auto_approve[0].arg_matches.file_path must be a string");
+  });
+
+  it("rejects arg_matches that is not an object (string/number/boolean/array/null)", () => {
+    for (const bad of [5, "x", true, ["^x"], null]) {
+      const r = validatePolicy({ auto_approve: [{ tool: "Read", arg_matches: bad }] } as any);
+      expect(r.ok, `arg_matches=${JSON.stringify(bad)}`).toBe(false);
+      if (!r.ok) expect(r.error, JSON.stringify(bad)).toBe("auto_approve[0].arg_matches must be an object");
+    }
+  });
+
+  it("a rule with multiple arg_matches keys reports the first uncompilable one", () => {
+    const r = validatePolicy({
+      auto_approve: [{ tool: "Read", arg_matches: { a: "^ok$", b: "(" } }],
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/^auto_approve\[0\]\.arg_matches\.b invalid regex/);
+  });
+
+  it("no over-tightening: the shipped privilege-boundary arg_matches rules still validate", () => {
+    const p = {
+      auto_reject: [
+        { tool: "Edit", arg_matches: { file_path: "claw-drive-policy[^/]*\\.json$" }, severity: "high" as const },
+      ],
+    };
+    expect(validatePolicy(p)).toEqual({ ok: true });
   });
 });

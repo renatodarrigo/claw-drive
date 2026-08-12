@@ -458,7 +458,12 @@ async function turnAssistantText(sessionId: string, turnId: string): Promise<str
  * `flags`, if given, is set to `{ wedged: true }` on the wedged-abort path
  * specifically (distinct from the genuine both-attempts-no-markers failure)
  * so the caller can report a truthful reason instead of a generic one that
- * implies attempt 2 ran when it never did.
+ * implies attempt 2 ran when it never did. `bExited`/`stopping` are set
+ * wherever a death or an engaging stop/breaker teardown is what actually
+ * aborted the rotation — the loop-top guard, and the fall-through after
+ * both attempts (which also catches one the loop-top guard structurally
+ * cannot: attempt 2 dying in its own post-interrupt settle sleep, since
+ * attempt 2 is the loop's last iteration).
  */
 async function runHandoverTurn(
   ctx: RunnerContext,
@@ -515,9 +520,11 @@ async function runHandoverTurn(
       // the rotate gate enforces after an external interrupt
       // (INTERRUPT_GRACE_MS): a just-SIGINT'd claude can exit on its very
       // next stdin message (dogfood 2026-08-04) — sending attempt 2
-      // immediately would reproduce exactly that kill pattern. The loop-top
-      // bExited/stopping guard covers a death or an engaging stop/breaker
-      // teardown during this settle.
+      // immediately would reproduce exactly that kill pattern. After
+      // attempt 1's own settle here, the loop-top bExited/stopping guard
+      // covers a death or an engaging stop/breaker teardown during it, on
+      // attempt 2's next pass. Attempt 2 has no such next pass — see the
+      // fall-through check below the loop.
       await sleepTimeout(INTERRUPT_GRACE_MS);
       continue;
     }
@@ -525,6 +532,19 @@ async function runHandoverTurn(
     if (outcome === "failed") continue;
     const handover = extractHandover(await turnAssistantText(ctx.sessionId, turnId));
     if (handover) return handover;
+  }
+  // Both attempts exhausted with no handover ever extracted. This is also
+  // where attempt 2 lands if IT timed out, got SIGINT'd, and B died (or a
+  // stop/breaker teardown engaged) during attempt 2's OWN post-interrupt
+  // settle sleep above: attempt 2 is the loop's last iteration, so unlike
+  // the same window after attempt 1, there is no third loop-top pass to
+  // observe it. Apply the identical selector here so that case still
+  // reports the truthful reason instead of the generic no-handover one; a
+  // genuine both-attempts exhaustion with B still alive and not stopping
+  // leaves flags untouched, exactly as before.
+  if (flags && (ctx.bExited || ctx.stopping)) {
+    if (ctx.stopping && !ctx.crashTeardownEngaged) flags.stopping = true;
+    else flags.bExited = true;
   }
   return null;
 }
@@ -538,6 +558,18 @@ export async function handleRequest(
       return { id: req.id, ok: true, result: { alive: true } };
 
     case "send_turn": {
+      if (ctx.bExited) {
+        // Checked BEFORE any state change, mirroring rotate's dead-B gate
+        // (same ctx.bExited latch, same "use recover" hint): B is gone, so a
+        // turn_started here would be a phantom (no turn can ever run) and the
+        // stdin write below would hit a closed pipe. Plain error, no event.
+        return {
+          id: req.id,
+          ok: false,
+          error: "SESSION_EXITED",
+          message: "session process has exited; turn cannot start — use recover",
+        };
+      }
       const turnId = `turn_${ctx.state.turns + 1}`;
       ctx.state.turns += 1;
       ctx.currentTurnId = turnId;
@@ -1121,6 +1153,24 @@ export async function handleRequest(
           ok: false,
           error: "CALL_NOT_FOUND",
           message: "no deferred or pending call with this call_id",
+        };
+      }
+
+      if (ctx.bExited) {
+        // Deliberate order: CALL_NOT_FOUND and the auto-defer block above
+        // always run before this check, so an unknown call_id keeps its
+        // diagnostic and a still-pending call's decision record settles the
+        // same way on a dead session as on a live one — not an oversight.
+        //
+        // Same phantom-emission hole as send_turn, same guard: this op pipes
+        // its composed message to B exactly like send_turn does (turn_started
+        // + a stdin write). The call is left in deferredCalls rather than
+        // deleted — its record survives for inspection.
+        return {
+          id: req.id,
+          ok: false,
+          error: "SESSION_EXITED",
+          message: "session process has exited; turn cannot start — use recover",
         };
       }
 
