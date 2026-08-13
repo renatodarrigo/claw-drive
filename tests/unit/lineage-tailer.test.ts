@@ -198,3 +198,61 @@ describe("startLineageTailer — natural-end walking", () => {
     await handle.done;
   });
 });
+
+describe("startLineageTailer — recover hops (state poll)", () => {
+  it("hops when a crashed member is recovered mid-watch", async () => {
+    // A crashed: dead pid, no session_stopped ever, no successor yet.
+    await makeSession(A, { status: "running", runner_pid: DEAD_PID, generation: 1 }, turnEvents());
+    await makeSession(B, { status: "stopped", runner_pid: null, generation: 2 }, stoppedEvents());
+    const { lines, errors, handle } = collectLineage(A);
+    await waitUntil(() => lines.some((l) => l.session_id === A && l.kind === "turn_completed"));
+    // The human runs recover: A's state gains the successor pointer.
+    await fs.writeFile(
+      path.join(root, "sessions", A, "state.json"),
+      JSON.stringify({ session_id: A, status: "running", runner_pid: DEAD_PID, generation: 1, rotated_to: B })
+    );
+    await waitUntil(() => lines.some((l) => l.session_id === B && l.kind === "session_stopped"));
+    await handle.done; // B stops cleanly with no successor: lineage end
+    expect(errors).toEqual([]);
+  });
+
+  it("a pre-recovered corpse hops on the immediate tick, with its replay intact", async () => {
+    await makeSession(A, { status: "running", runner_pid: DEAD_PID, rotated_to: B }, turnEvents());
+    await makeSession(B, { status: "stopped", runner_pid: null }, stoppedEvents());
+    // A huge interval proves the IMMEDIATE tick does the hop (a 60s first
+    // tick would blow the test timeout).
+    const { lines, handle } = collectLineage(A, { pollIntervalMs: 60_000 });
+    await handle.done;
+    // caughtUp gating: A's full replay emitted before the poll closed it.
+    expect(lines.some((l) => l.session_id === A && l.kind === "turn_completed")).toBe(true);
+    expect(lines.some((l) => l.session_id === B && l.kind === "session_stopped")).toBe(true);
+  });
+
+  it("never hops away from a live predecessor holding a dangling successor pointer", async () => {
+    await makeSession(A, { status: "running", runner_pid: process.pid, rotated_to: B }, turnEvents());
+    await makeSession(B, { status: "stopped", runner_pid: null }, stoppedEvents());
+    const { lines, handle } = collectLineage(A);
+    await waitUntil(() => lines.some((l) => l.session_id === A && l.kind === "turn_completed"));
+    await delay(150); // ~6 poll ticks at 25ms
+    expect(lines.some((l) => l.session_id === B)).toBe(false); // poll stayed hands-off
+    // The predecessor then stops for real: the natural path hops.
+    await fs.appendFile(
+      path.join(root, "sessions", A, "events.jsonl"),
+      JSON.stringify({ seq: 4, at: "t", kind: "session_stopped", reason: `rotated:${B}`, exit_code: 0 }) + "\n"
+    );
+    await waitUntil(() => lines.some((l) => l.session_id === B && l.kind === "session_stopped"));
+    await handle.done;
+  });
+
+  it("a crashed member with no successor waits — close() is the only way out", async () => {
+    await makeSession(A, { status: "running", runner_pid: DEAD_PID }, turnEvents());
+    const { handle } = collectLineage(A);
+    const outcome = await Promise.race([
+      handle.done.then(() => "done"),
+      delay(150).then(() => "pending"),
+    ]);
+    expect(outcome).toBe("pending");
+    handle.close();
+    await handle.done;
+  });
+});

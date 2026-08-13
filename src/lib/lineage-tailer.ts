@@ -78,6 +78,37 @@ export function startLineageTailer(opts: LineageTailerOptions): LineageTailerHan
     close();
   };
 
+  // Recover-hop trigger. A corpse (dead runner pid) never writes
+  // session_stopped, so its tailer never ends on its own; when its state
+  // gains `rotated_to`, close the tailer — after `caughtUp`, so the hop can
+  // never truncate catch-up/replay emission. A dead runner appends no
+  // further events, so a caught-up tailer has emitted everything it ever
+  // will. The close resolves tailer.done, which converges on advance().
+  const startPoll = (
+    id: string,
+    tailer: SessionTailerHandle,
+    isAdvanced: () => boolean
+  ): void => {
+    const tick = async (): Promise<void> => {
+      if (finished || isAdvanced()) return;
+      let st;
+      try {
+        st = await readState(statePath(id));
+      } catch {
+        return; // best-effort tick
+      }
+      if (st?.rotated_to === undefined) return;
+      if (st.runner_pid !== null && isPidAlive(st.runner_pid)) return;
+      await tailer.caughtUp;
+      if (finished || isAdvanced()) return;
+      tailer.close();
+    };
+    void tick(); // immediate: a pre-recovered corpse hops without waiting a full interval
+    pollTimer = setInterval(() => {
+      void tick();
+    }, pollMs);
+  };
+
   const runMember = async (id: string): Promise<void> => {
     if (finished) return;
     if (visited.has(id)) {
@@ -157,13 +188,6 @@ export function startLineageTailer(opts: LineageTailerOptions): LineageTailerHan
 
     startPoll(id, tailer, () => advanced);
   };
-
-  // Task 4 replaces this stub with the recover-hop state poll.
-  const startPoll = (
-    _id: string,
-    _tailer: SessionTailerHandle,
-    _isAdvanced: () => boolean
-  ): void => {};
 
   void runMember(opts.sessionId);
   return { done, close };
