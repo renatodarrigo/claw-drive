@@ -99,6 +99,12 @@ async function makeCtx(fake: FakeB): Promise<RunnerContext> {
   } as RunnerContext;
 }
 
+/** Shared real-clock lag tolerance: the drainUntil condition waits and the
+ * rotation-response guards bound the same class of fs/threadpool lag, so
+ * they carry one deadline — neither may be stricter than the other. Call
+ * sites that bound different work keep their own inline budgets. */
+const REAL_CLOCK_DEADLINE_MS = 5000;
+
 // Captured at module load, before any test fakes the clock: withTimeout's
 // diagnostic deadline stays real under vi.useFakeTimers, where the faked
 // setTimeout would never fire and a hung promise would ride unlabeled to
@@ -142,7 +148,7 @@ async function waitUntil(cond: () => boolean, ms = 2000): Promise<void> {
  * latency. The setTimeout-based waitUntil above cannot serve here: under
  * vi.useFakeTimers its sleep never fires. */
 async function drainUntil(cond: () => boolean): Promise<void> {
-  const dl = Date.now() + 5000;
+  const dl = Date.now() + REAL_CLOCK_DEADLINE_MS;
   while (!cond()) {
     if (Date.now() > dl) throw new Error("drainUntil: condition not reached");
     await new Promise((r) => setImmediate(r));
@@ -342,7 +348,7 @@ describe("handleUnexpectedBExit — crash during rotate (dogfood gen-2)", () => 
       await drain();
       expect(await eventKinds()).not.toContain("session_stopped");
       await vi.advanceTimersByTimeAsync(15_000); // settle elapses → loop-top sees bExited
-      const resp = await withTimeout(rotate, 4000, "rotate");
+      const resp = await withTimeout(rotate, REAL_CLOCK_DEADLINE_MS, "rotate");
       expect(resp).toMatchObject({ ok: false, error: "ROTATION_FAILED" });
       await crashDone;
       const kinds = await eventKinds();
@@ -382,7 +388,7 @@ describe("handleUnexpectedBExit — crash during rotate (dogfood gen-2)", () => 
     const rotate = handleRequest(ctx, { id: "r1", op: "rotate" });
     await waitUntil(() => ctx.turnWaiters.size === 1); // terminal handover turn armed
     const crashDone = handleUnexpectedBExit(ctx, 0, null);
-    const resp = await withTimeout(rotate, 4000, "rotate");
+    const resp = await withTimeout(rotate, REAL_CLOCK_DEADLINE_MS, "rotate");
     expect(resp).toMatchObject({ ok: false, error: "MAX_GENERATIONS" });
     await crashDone;
     const kinds = await eventKinds();
@@ -479,7 +485,7 @@ describe("handleUnexpectedBExit — crash during rotate (dogfood gen-2)", () => 
       await drainUntil(() => ctx.crashTeardownEngaged);
       expect(await eventKinds()).not.toContain("session_stopped");
       await vi.advanceTimersByTimeAsync(15_000);
-      const resp = await withTimeout(rotate, 4000, "rotate");
+      const resp = await withTimeout(rotate, REAL_CLOCK_DEADLINE_MS, "rotate");
       expect(resp).toMatchObject({ ok: false, error: "ROTATION_FAILED" });
       expect((resp as { message: string }).message).toMatch(/use recover/);
       await crashDone;
@@ -527,7 +533,7 @@ describe("handleUnexpectedBExit — crash during rotate (dogfood gen-2)", () => 
       await drainUntil(() => ctx.stopping);
       expect(ctx.bExited).toBe(false);
       await vi.advanceTimersByTimeAsync(15_000);
-      const resp = await withTimeout(rotate, 4000, "rotate");
+      const resp = await withTimeout(rotate, REAL_CLOCK_DEADLINE_MS, "rotate");
       expect(resp).toMatchObject({ ok: false, error: "ROTATION_FAILED" });
       const { events } = await readEventsSince(eventsPath(SID), 0);
       expect(events.filter((e) => e.kind === "rotation_failed")).toHaveLength(1);
