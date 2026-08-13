@@ -48,6 +48,14 @@ export interface SessionTailerOptions {
 export interface SessionTailerHandle {
   /** Resolves when the session stops (`session_stopped`) or `close()` is called. */
   done: Promise<void>;
+  /**
+   * Resolves once the initial catch-up + initial drain have fully emitted —
+   * from then on, everything that was already in the events file at tail
+   * start has been offered to the filter chain, so a caller may close the
+   * tailer without truncating replay/catch-up output. Also resolves on every
+   * cleanup path (close, watch error): awaiting it can never hang.
+   */
+  caughtUp: Promise<void>;
   /** Idempotent teardown: stops the fs.watch + idle ticker and resolves `done`. */
   close: () => void;
 }
@@ -82,6 +90,10 @@ export function startSessionTailer(opts: SessionTailerOptions): SessionTailerHan
   const done = new Promise<void>((r) => {
     resolveDone = r;
   });
+  let resolveCaughtUp!: () => void;
+  const caughtUp = new Promise<void>((r) => {
+    resolveCaughtUp = r;
+  });
   let watcher: fs.FSWatcher | null = null;
   let ticker: ReturnType<typeof setInterval> | null = null;
   let finished = false;
@@ -97,6 +109,7 @@ export function startSessionTailer(opts: SessionTailerOptions): SessionTailerHan
       watcher.close();
       watcher = null;
     }
+    resolveCaughtUp();
     resolveDone();
   };
 
@@ -180,6 +193,7 @@ export function startSessionTailer(opts: SessionTailerOptions): SessionTailerHan
 
     // Initial drain (only meaningful for --replay / --since < current).
     await drain();
+    resolveCaughtUp();
     if (finished) return; // closed during catch-up/drain
     if (stopped) {
       cleanup();
@@ -227,5 +241,5 @@ export function startSessionTailer(opts: SessionTailerOptions): SessionTailerHan
     }
   })();
 
-  return { done, close: cleanup };
+  return { done, caughtUp, close: cleanup };
 }
