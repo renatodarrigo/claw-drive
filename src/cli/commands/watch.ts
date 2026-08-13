@@ -137,7 +137,7 @@ export interface WatchFilterArgs {
 }
 
 export type ParsedWatchArgs =
-  | ({ ok: true; all: false; sessionId: string } & WatchFilterArgs)
+  | ({ ok: true; all: false; sessionId: string; followLineage: boolean } & WatchFilterArgs)
   | ({ ok: true; all: true } & WatchFilterArgs)
   | { ok: false; error: string };
 
@@ -374,6 +374,7 @@ export function parseWatchArgs(argv: string[]): ParsedWatchArgs {
   let noTokenFilter = false;
   let idleAfterSeconds = DEFAULT_IDLE_AFTER_SECONDS;
   let suspectedNeedsInput = true;
+  let followLineage = false;
 
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -427,6 +428,8 @@ export function parseWatchArgs(argv: string[]): ParsedWatchArgs {
         return { ok: false, error: `--idle-after requires a non-negative integer seconds; 0 disables (got '${v}')` };
       }
       idleAfterSeconds = Number(v);
+    } else if (a === "--follow-lineage") {
+      followLineage = true;
     } else if (a.startsWith("--")) {
       return { ok: false, error: `unknown flag: ${a}` };
     } else {
@@ -456,13 +459,20 @@ export function parseWatchArgs(argv: string[]): ParsedWatchArgs {
       error: "--all takes no session id — watch one session by id, or the whole fleet with --all",
     };
   }
+  if (all && followLineage) {
+    return {
+      ok: false,
+      error:
+        "--all and --follow-lineage are mutually exclusive — --all already tails every live session, successors included",
+    };
+  }
   if (!all && sessionId === null) {
     return { ok: false, error: "session id missing or malformed" };
   }
 
   return all
     ? { ok: true, all: true, ...filters }
-    : { ok: true, all: false, sessionId: sessionId as string, ...filters };
+    : { ok: true, all: false, sessionId: sessionId as string, followLineage, ...filters };
 }
 
 /**
@@ -496,7 +506,7 @@ export async function cmdWatch(argv: string[]): Promise<number> {
       parsed.error +
         "\nusage: claw-drive watch <session_id> [--since N | --replay] " +
         "[--only KIND[,KIND]... | --decision-only] [--no-token-filter] " +
-        "[--idle-after SECONDS] [--no-suspected-needs-input]\n" +
+        "[--idle-after SECONDS] [--follow-lineage] [--no-suspected-needs-input]\n" +
         "   or: claw-drive watch --all [same flags]   (merge every live session into one\n" +
         "       session_id-tagged stream; dynamic membership; runs until SIGINT)\n" +
         "  default: stream NEW events only (no replay), idle event after 600s of silence\n" +
@@ -506,6 +516,7 @@ export async function cmdWatch(argv: string[]): Promise<number> {
         "  --decision-only: shorthand for --only on the human-attention kinds\n" +
         "  --no-token-filter: surface every event regardless of trailing token\n" +
         "  --idle-after SECONDS: emit synthetic 'idle' event after N seconds of silence (default 600; 0 disables)\n" +
+        "  --follow-lineage: follow the session's rotation lineage — hop to each successor (rotation or recover) and keep streaming; lines carry session_id/alias/generation tags; exits when a member stops without a successor\n" +
         "  --no-suspected-needs-input: disable the silent-miss backstop (no-token '?' turns drop as before; on by default)\n" +
         `  valid kinds: ${[...VALID_WATCH_KINDS].join(", ")}`
     );

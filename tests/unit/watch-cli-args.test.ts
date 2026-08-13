@@ -367,3 +367,37 @@ describe("parseWatchArgs — --all (CD-7 fleet mode)", () => {
     }
   });
 });
+
+describe("parseWatchArgs — --follow-lineage", () => {
+  it("parses on a single-session watch", () => {
+    const r = parseWatchArgs(["sess_abcdef0123456789", "--follow-lineage"]);
+    expect(r.ok).toBe(true);
+    if (r.ok && !r.all) expect(r.followLineage).toBe(true);
+  });
+
+  it("defaults to false", () => {
+    const r = parseWatchArgs(["sess_abcdef0123456789"]);
+    expect(r.ok).toBe(true);
+    if (r.ok && !r.all) expect(r.followLineage).toBe(false);
+  });
+
+  it("rejects combining with --all, in either flag order", () => {
+    const a = parseWatchArgs(["--all", "--follow-lineage"]);
+    expect(a.ok).toBe(false);
+    if (!a.ok) expect(a.error).toContain("mutually exclusive");
+    const b = parseWatchArgs(["--follow-lineage", "--all"]);
+    expect(b.ok).toBe(false);
+  });
+
+  it("composes with replay and kind filters", () => {
+    const r = parseWatchArgs([
+      "sess_abcdef0123456789", "--follow-lineage", "--replay", "--decision-only",
+    ]);
+    expect(r.ok).toBe(true);
+    if (r.ok && !r.all) {
+      expect(r.followLineage).toBe(true);
+      expect(r.since).toBe(0);
+      expect(r.allowed).toEqual(new Set(DECISION_ONLY_KINDS));
+    }
+  });
+});
