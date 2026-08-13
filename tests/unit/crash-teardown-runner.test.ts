@@ -99,20 +99,33 @@ async function makeCtx(fake: FakeB): Promise<RunnerContext> {
   } as RunnerContext;
 }
 
+/** Shared real-clock lag tolerance: the drainUntil condition waits and the
+ * rotation-response guards bound the same class of fs/threadpool lag, so
+ * they carry one deadline — neither may be stricter than the other. Call
+ * sites that bound different work keep their own inline budgets. */
+const REAL_CLOCK_DEADLINE_MS = 5000;
+
+// Captured at module load, before any test fakes the clock: withTimeout's
+// diagnostic deadline stays real under vi.useFakeTimers, where the faked
+// setTimeout would never fire and a hung promise would ride unlabeled to
+// the harness timeout.
+const realSetTimeout = setTimeout;
+const realClearTimeout = clearTimeout;
+
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise((resolve, reject) => {
-    const t = setTimeout(
+    const t = realSetTimeout(
       () => reject(new Error(`${label} did not settle within ${ms}ms`)),
       ms
     );
     t.unref();
     p.then(
       (v) => {
-        clearTimeout(t);
+        realClearTimeout(t);
         resolve(v);
       },
       (e) => {
-        clearTimeout(t);
+        realClearTimeout(t);
         reject(e);
       }
     );
@@ -124,6 +137,21 @@ async function waitUntil(cond: () => boolean, ms = 2000): Promise<void> {
   while (!cond()) {
     if (Date.now() > deadline) throw new Error("condition not reached in time");
     await new Promise((r) => setTimeout(r, 5));
+  }
+}
+
+/** Fake-timer-safe condition wait: polls via setImmediate (never faked in
+ * this suite) under a real-clock deadline. The motivating case is asserts
+ * that depend on the send chain's real fs awaits (emitEvent = append +
+ * writeState) completing — the fs threadpool can lag arbitrarily under a
+ * parallel suite run, so a fixed round count would be a bet against fs
+ * latency. The setTimeout-based waitUntil above cannot serve here: under
+ * vi.useFakeTimers its sleep never fires. */
+async function drainUntil(cond: () => boolean): Promise<void> {
+  const dl = Date.now() + REAL_CLOCK_DEADLINE_MS;
+  while (!cond()) {
+    if (Date.now() > dl) throw new Error("drainUntil: condition not reached");
+    await new Promise((r) => setImmediate(r));
   }
 }
 
@@ -306,7 +334,7 @@ describe("handleUnexpectedBExit — crash during rotate (dogfood gen-2)", () => 
       const fake = makeFakeB();
       const ctx = await makeCtx(fake);
       const rotate = handleRequest(ctx, { id: "r1", op: "rotate" });
-      await drain();
+      await drainUntil(() => fake.writes.length === 1);
       expect(fake.writes).toHaveLength(1);
       await vi.advanceTimersByTimeAsync(600_000); // attempt 1 times out → SIGINT
       await drain();
@@ -320,7 +348,7 @@ describe("handleUnexpectedBExit — crash during rotate (dogfood gen-2)", () => 
       await drain();
       expect(await eventKinds()).not.toContain("session_stopped");
       await vi.advanceTimersByTimeAsync(15_000); // settle elapses → loop-top sees bExited
-      const resp = await withTimeout(rotate, 4000, "rotate");
+      const resp = await withTimeout(rotate, REAL_CLOCK_DEADLINE_MS, "rotate");
       expect(resp).toMatchObject({ ok: false, error: "ROTATION_FAILED" });
       await crashDone;
       const kinds = await eventKinds();
@@ -360,7 +388,7 @@ describe("handleUnexpectedBExit — crash during rotate (dogfood gen-2)", () => 
     const rotate = handleRequest(ctx, { id: "r1", op: "rotate" });
     await waitUntil(() => ctx.turnWaiters.size === 1); // terminal handover turn armed
     const crashDone = handleUnexpectedBExit(ctx, 0, null);
-    const resp = await withTimeout(rotate, 4000, "rotate");
+    const resp = await withTimeout(rotate, REAL_CLOCK_DEADLINE_MS, "rotate");
     expect(resp).toMatchObject({ ok: false, error: "MAX_GENERATIONS" });
     await crashDone;
     const kinds = await eventKinds();
@@ -378,13 +406,6 @@ describe("handleUnexpectedBExit — crash during rotate (dogfood gen-2)", () => 
     }) as never);
     // Real-time drains (timers are faked): drainUntil for progress,
     // drainFor to prove NOTHING happens across a genuine time window.
-    const drainUntil = async (cond: () => boolean) => {
-      const dl = Date.now() + 5000;
-      while (!cond()) {
-        if (Date.now() > dl) throw new Error("drainUntil: condition not reached");
-        await new Promise((r) => setImmediate(r));
-      }
-    };
     const drainFor = async (ms: number) => {
       const dl = Date.now() + ms;
       while (Date.now() < dl) await new Promise((r) => setImmediate(r));
@@ -436,17 +457,6 @@ describe("handleUnexpectedBExit — crash during rotate (dogfood gen-2)", () => 
       kills.push([pid, sig ?? "SIGTERM"]);
       return true;
     }) as never);
-    // Time-bounded condition polling, not a fixed round count — send_turn's
-    // own emitEvent is a REAL async fs write (append + writeState), and the
-    // fs threadpool can lag arbitrarily under a parallel suite run (same
-    // rationale as the sibling unit suites' own drainUntil helpers).
-    const drainUntil = async (cond: () => boolean) => {
-      const dl = Date.now() + 5000;
-      while (!cond()) {
-        if (Date.now() > dl) throw new Error("drainUntil: condition not reached");
-        await new Promise((r) => setImmediate(r));
-      }
-    };
     try {
       const fake = makeFakeB();
       const ctx = await makeCtx(fake);
@@ -475,7 +485,7 @@ describe("handleUnexpectedBExit — crash during rotate (dogfood gen-2)", () => 
       await drainUntil(() => ctx.crashTeardownEngaged);
       expect(await eventKinds()).not.toContain("session_stopped");
       await vi.advanceTimersByTimeAsync(15_000);
-      const resp = await withTimeout(rotate, 4000, "rotate");
+      const resp = await withTimeout(rotate, REAL_CLOCK_DEADLINE_MS, "rotate");
       expect(resp).toMatchObject({ ok: false, error: "ROTATION_FAILED" });
       expect((resp as { message: string }).message).toMatch(/use recover/);
       await crashDone;
@@ -504,13 +514,6 @@ describe("handleUnexpectedBExit — crash during rotate (dogfood gen-2)", () => 
       kills.push([pid, sig ?? "SIGTERM"]);
       return true;
     }) as never);
-    const drainUntil = async (cond: () => boolean) => {
-      const dl = Date.now() + 5000;
-      while (!cond()) {
-        if (Date.now() > dl) throw new Error("drainUntil: condition not reached");
-        await new Promise((r) => setImmediate(r));
-      }
-    };
     try {
       const fake = makeFakeB();
       const ctx = await makeCtx(fake);
@@ -530,9 +533,10 @@ describe("handleUnexpectedBExit — crash during rotate (dogfood gen-2)", () => 
       await drainUntil(() => ctx.stopping);
       expect(ctx.bExited).toBe(false);
       await vi.advanceTimersByTimeAsync(15_000);
-      const resp = await withTimeout(rotate, 4000, "rotate");
+      const resp = await withTimeout(rotate, REAL_CLOCK_DEADLINE_MS, "rotate");
       expect(resp).toMatchObject({ ok: false, error: "ROTATION_FAILED" });
       const { events } = await readEventsSince(eventsPath(SID), 0);
+      expect(events.filter((e) => e.kind === "rotation_failed")).toHaveLength(1);
       const rf = events.find((e) => e.kind === "rotation_failed");
       expect((rf as unknown as { reason: string }).reason).toBe(
         "session_stopping: stop or circuit breaker engaged during the handover turn"
@@ -561,9 +565,16 @@ describe("handleUnexpectedBExit — crash during rotate (dogfood gen-2)", () => 
     expect((resp as { message?: string }).message).toBe(
       "session process exited during the handover turn; rotation cannot complete — use recover (a crash handover is distilled best-effort)"
     );
-    // reason literal byte-identical to the loop-top cell's; exactly one
-    // turn_started (attempt 2 never sends); the dropped waiter is gone.
-    // rotation_failed reason === "b_exited: session process exited during the handover turn"
+    const { events } = await readEventsSince(eventsPath(SID), 0);
+    expect(events.filter((e) => e.kind === "rotation_failed")).toHaveLength(1);
+    // reason literal byte-identical to the loop-top cell's
+    const rf = events.find((e) => e.kind === "rotation_failed");
+    expect((rf as unknown as { reason: string }).reason).toBe(
+      "b_exited: session process exited during the handover turn"
+    );
+    // attempt 2 never sends
+    expect(events.filter((e) => e.kind === "turn_started")).toHaveLength(1);
+    // the dropped waiter is gone
     expect(ctx.turnWaiters.size).toBe(0);
   });
 });

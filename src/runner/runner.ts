@@ -1231,7 +1231,9 @@ export async function handleRequest(
         // (honest residue; state.turns agrees with it), but nothing may be
         // written to a dead stream. No await may ever sit between this check
         // and the write below — the synchronous segment is what closes the
-        // pre-write race. Same refusal surface as the entry guard.
+        // pre-write race. Same refusal surface as the entry guard. This
+        // return also skips the tool_output_provided emit and keeps the
+        // deferred record — the output was never delivered to B.
         return {
           id: req.id,
           ok: false,
