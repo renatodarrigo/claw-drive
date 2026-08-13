@@ -483,7 +483,8 @@ describe("stop racing B's own teardown-caused exit (both bExited and stopping tr
     const rotP = handleRequest(ctx, { id: "r1", op: "rotate" });
     // Sync on the actual stdin write — the same sync point as the sibling
     // tests. The poke below sits behind an awaited stop_session, so either
-    // form is deterministic here; the write is simply the stronger signal.
+    // form passes deterministically here; the write is simply the stronger
+    // signal.
     await settleUntil(() => fake.writes.length === 1);
     await handleRequest(ctx, { id: "s1", op: "stop_session" });
     await settle();

@@ -99,20 +99,27 @@ async function makeCtx(fake: FakeB): Promise<RunnerContext> {
   } as RunnerContext;
 }
 
+// Captured at module load, before any test fakes the clock: withTimeout's
+// diagnostic deadline stays real under vi.useFakeTimers, where the faked
+// setTimeout would never fire and a hung promise would ride unlabeled to
+// the harness timeout.
+const realSetTimeout = setTimeout;
+const realClearTimeout = clearTimeout;
+
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise((resolve, reject) => {
-    const t = setTimeout(
+    const t = realSetTimeout(
       () => reject(new Error(`${label} did not settle within ${ms}ms`)),
       ms
     );
     t.unref();
     p.then(
       (v) => {
-        clearTimeout(t);
+        realClearTimeout(t);
         resolve(v);
       },
       (e) => {
-        clearTimeout(t);
+        realClearTimeout(t);
         reject(e);
       }
     );
@@ -124,6 +131,21 @@ async function waitUntil(cond: () => boolean, ms = 2000): Promise<void> {
   while (!cond()) {
     if (Date.now() > deadline) throw new Error("condition not reached in time");
     await new Promise((r) => setTimeout(r, 5));
+  }
+}
+
+/** Fake-timer-safe condition wait: polls via setImmediate (never faked in
+ * this suite) under a real-clock deadline. The motivating case is asserts
+ * that depend on the send chain's real fs awaits (emitEvent = append +
+ * writeState) completing — the fs threadpool can lag arbitrarily under a
+ * parallel suite run, so a fixed round count would be a bet against fs
+ * latency. The setTimeout-based waitUntil above cannot serve here: under
+ * vi.useFakeTimers its sleep never fires. */
+async function drainUntil(cond: () => boolean): Promise<void> {
+  const dl = Date.now() + 5000;
+  while (!cond()) {
+    if (Date.now() > dl) throw new Error("drainUntil: condition not reached");
+    await new Promise((r) => setImmediate(r));
   }
 }
 
@@ -302,18 +324,6 @@ describe("handleUnexpectedBExit — crash during rotate (dogfood gen-2)", () => 
     const drain = async (rounds = 300) => {
       for (let i = 0; i < rounds; i++) await new Promise((r) => setImmediate(r));
     };
-    // Time-bounded condition polling for asserts that depend on the send
-    // completing — send_turn's own emitEvent is a REAL async fs write
-    // (append + writeState), and the fs threadpool can lag arbitrarily under
-    // a parallel suite run (same rationale as the sibling tests' drainUntil
-    // helpers). drain stays for steps that merely yield the event loop.
-    const drainUntil = async (cond: () => boolean) => {
-      const dl = Date.now() + 5000;
-      while (!cond()) {
-        if (Date.now() > dl) throw new Error("drainUntil: condition not reached");
-        await new Promise((r) => setImmediate(r));
-      }
-    };
     try {
       const fake = makeFakeB();
       const ctx = await makeCtx(fake);
@@ -390,13 +400,6 @@ describe("handleUnexpectedBExit — crash during rotate (dogfood gen-2)", () => 
     }) as never);
     // Real-time drains (timers are faked): drainUntil for progress,
     // drainFor to prove NOTHING happens across a genuine time window.
-    const drainUntil = async (cond: () => boolean) => {
-      const dl = Date.now() + 5000;
-      while (!cond()) {
-        if (Date.now() > dl) throw new Error("drainUntil: condition not reached");
-        await new Promise((r) => setImmediate(r));
-      }
-    };
     const drainFor = async (ms: number) => {
       const dl = Date.now() + ms;
       while (Date.now() < dl) await new Promise((r) => setImmediate(r));
@@ -448,17 +451,6 @@ describe("handleUnexpectedBExit — crash during rotate (dogfood gen-2)", () => 
       kills.push([pid, sig ?? "SIGTERM"]);
       return true;
     }) as never);
-    // Time-bounded condition polling, not a fixed round count — send_turn's
-    // own emitEvent is a REAL async fs write (append + writeState), and the
-    // fs threadpool can lag arbitrarily under a parallel suite run (same
-    // rationale as the sibling unit suites' own drainUntil helpers).
-    const drainUntil = async (cond: () => boolean) => {
-      const dl = Date.now() + 5000;
-      while (!cond()) {
-        if (Date.now() > dl) throw new Error("drainUntil: condition not reached");
-        await new Promise((r) => setImmediate(r));
-      }
-    };
     try {
       const fake = makeFakeB();
       const ctx = await makeCtx(fake);
@@ -516,13 +508,6 @@ describe("handleUnexpectedBExit — crash during rotate (dogfood gen-2)", () => 
       kills.push([pid, sig ?? "SIGTERM"]);
       return true;
     }) as never);
-    const drainUntil = async (cond: () => boolean) => {
-      const dl = Date.now() + 5000;
-      while (!cond()) {
-        if (Date.now() > dl) throw new Error("drainUntil: condition not reached");
-        await new Promise((r) => setImmediate(r));
-      }
-    };
     try {
       const fake = makeFakeB();
       const ctx = await makeCtx(fake);
@@ -545,6 +530,7 @@ describe("handleUnexpectedBExit — crash during rotate (dogfood gen-2)", () => 
       const resp = await withTimeout(rotate, 4000, "rotate");
       expect(resp).toMatchObject({ ok: false, error: "ROTATION_FAILED" });
       const { events } = await readEventsSince(eventsPath(SID), 0);
+      expect(events.filter((e) => e.kind === "rotation_failed")).toHaveLength(1);
       const rf = events.find((e) => e.kind === "rotation_failed");
       expect((rf as unknown as { reason: string }).reason).toBe(
         "session_stopping: stop or circuit breaker engaged during the handover turn"
@@ -574,6 +560,7 @@ describe("handleUnexpectedBExit — crash during rotate (dogfood gen-2)", () => 
       "session process exited during the handover turn; rotation cannot complete — use recover (a crash handover is distilled best-effort)"
     );
     const { events } = await readEventsSince(eventsPath(SID), 0);
+    expect(events.filter((e) => e.kind === "rotation_failed")).toHaveLength(1);
     // reason literal byte-identical to the loop-top cell's
     const rf = events.find((e) => e.kind === "rotation_failed");
     expect((rf as unknown as { reason: string }).reason).toBe(
