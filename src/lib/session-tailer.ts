@@ -56,6 +56,15 @@ export interface SessionTailerHandle {
    * cleanup path (close, watch error): awaiting it can never hang.
    */
   caughtUp: Promise<void>;
+  /**
+   * Forces one more drain pass over everything on disk at the moment of the
+   * call and resolves once it has been offered to the filter chain — a
+   * caller can await this right before close() to fold in output written
+   * since the last drain without waiting on fs.watch's own notification
+   * latency. Also resolves once the tailer is already finished (or finishes
+   * mid-call): awaiting it can never hang.
+   */
+  drainNow: () => Promise<void>;
   /** Idempotent teardown: stops the fs.watch + idle ticker and resolves `done`. */
   close: () => void;
 }
@@ -166,6 +175,32 @@ export function startSessionTailer(opts: SessionTailerOptions): SessionTailerHan
     maybeEmitIdle();
   };
 
+  // Serializes every post-catch-up drain pass — an fs.watch change and a
+  // drainNow() call alike — onto one chain, so overlapping callers never
+  // read the file concurrently and never offer the same line twice. Each
+  // call queues a fresh `drain()` after whatever is already pending, so the
+  // promise it returns always reflects a pass that started at or after the
+  // call, never a stale one already in flight when it was called.
+  let drainChain: Promise<void> = Promise.resolve();
+  const queueDrain = (): Promise<void> => {
+    const pass = drainChain.then(() => drain());
+    drainChain = pass.catch(() => {});
+    return pass;
+  };
+
+  const drainNow = async (): Promise<void> => {
+    if (finished) return;
+    // `cursor` isn't meaningful until catch-up assigns it — draining before
+    // this await would re-offer the whole file to the filter chain.
+    await caughtUp;
+    if (finished) return; // finished while waiting on caughtUp
+    try {
+      await queueDrain();
+    } catch {
+      /* swallow transient read errors, matching the change listener's drain */
+    }
+  };
+
   void (async () => {
     // Default (since==="current"): stream NEW events only, but catch up on
     // unresolved gates + session_stopped first (CLV-16 race fix).
@@ -230,7 +265,7 @@ export function startSessionTailer(opts: SessionTailerOptions): SessionTailerHan
 
     watcher.on("change", async () => {
       try {
-        await drain();
+        await queueDrain();
         if (stopped) cleanup();
       } catch {
         /* swallow transient read errors */
@@ -247,5 +282,5 @@ export function startSessionTailer(opts: SessionTailerOptions): SessionTailerHan
     }
   })();
 
-  return { done, caughtUp, close: cleanup };
+  return { done, caughtUp, drainNow, close: cleanup };
 }

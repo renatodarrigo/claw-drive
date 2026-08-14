@@ -255,4 +255,52 @@ describe("startLineageTailer — recover hops (state poll)", () => {
     handle.close();
     await handle.done;
   });
+
+  it("drains a post-start append before closing on a poll-forced hop, so no A output is lost to the race", async () => {
+    await makeSession(A, { status: "running", runner_pid: process.pid }, turnEvents());
+    await makeSession(B, { status: "stopped", runner_pid: null }, stoppedEvents());
+    const { lines, errors, handle } = collectLineage(A, {
+      filters: {
+        since: "current",
+        allowed: null,
+        noTokenFilter: false,
+        suspectedNeedsInput: true,
+        idleAfterSeconds: 0,
+      },
+      pollIntervalMs: 10,
+    });
+    // Let A's tailer clear its "current" catch-up and register fs.watch
+    // before appending — these are genuine post-start events, not folded
+    // into the initial read.
+    await delay(50);
+    const extra = [
+      { seq: 4, at: "t", kind: "turn_started", turn_id: "y", message: "go2" },
+      { seq: 5, at: "t", kind: "assistant_text", turn_id: "y", text: "done2\n[DONE]" },
+      { seq: 6, at: "t", kind: "turn_completed", turn_id: "y", stop_reason: "success" },
+      { seq: 7, at: "t", kind: "turn_started", turn_id: "z", message: "go3" },
+      { seq: 8, at: "t", kind: "assistant_text", turn_id: "z", text: "done3\n[DONE]" },
+      { seq: 9, at: "t", kind: "turn_completed", turn_id: "z", stop_reason: "success" },
+    ];
+    await fs.appendFile(
+      path.join(root, "sessions", A, "events.jsonl"),
+      extra.map((e) => JSON.stringify(e)).join("\n") + "\n"
+    );
+    // Immediately (no delay) mark A a corpse with a successor: races the
+    // poll tick against fs.watch's own not-yet-run drain of the append above.
+    await fs.writeFile(
+      path.join(root, "sessions", A, "state.json"),
+      JSON.stringify({ session_id: A, status: "running", runner_pid: DEAD_PID, rotated_to: B })
+    );
+    await handle.done;
+    expect(errors).toEqual([]);
+    const firstB = lines.findIndex((l) => l.session_id === B);
+    expect(firstB).toBeGreaterThanOrEqual(0);
+    for (const turnId of ["y", "z"]) {
+      const idx = lines.findIndex(
+        (l) => l.session_id === A && l.kind === "turn_completed" && l.turn_id === turnId
+      );
+      expect(idx).toBeGreaterThanOrEqual(0);
+      expect(idx).toBeLessThan(firstB);
+    }
+  });
 });

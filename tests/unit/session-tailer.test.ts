@@ -93,3 +93,55 @@ describe("startSessionTailer — caughtUp", () => {
     await handle.done;
   });
 });
+
+describe("startSessionTailer — drainNow", () => {
+  it("exists and resolves", async () => {
+    await writeEvents(REPLAYABLE); // no session_stopped: the tailer keeps running
+    const { handle } = collect();
+    await handle.caughtUp;
+    await expect(handle.drainNow()).resolves.toBeUndefined();
+    handle.close();
+    await handle.done;
+  });
+
+  it("emits events appended after tail start once it resolves, without waiting on fs.watch", async () => {
+    await writeEvents(REPLAYABLE);
+    const { lines, handle } = collect();
+    await handle.caughtUp;
+    const dir = path.join(root, "sessions", SID);
+    const followUp = [
+      { seq: 4, at: "t", kind: "turn_started", turn_id: "y", message: "go2" },
+      { seq: 5, at: "t", kind: "assistant_text", turn_id: "y", text: "done2\n[DONE]" },
+      { seq: 6, at: "t", kind: "turn_completed", turn_id: "y", stop_reason: "success" },
+    ];
+    await fs.appendFile(
+      path.join(dir, "events.jsonl"),
+      followUp.map((l) => JSON.stringify(l)).join("\n") + "\n"
+    );
+    await handle.drainNow(); // do NOT wait for fs.watch's own notification first
+    expect(lines.some((l) => l.includes('"turn_id":"y"') && l.includes('"turn_completed"'))).toBe(
+      true
+    );
+    handle.close();
+    await handle.done;
+  });
+
+  it("resolves immediately after close(), never hanging", async () => {
+    await writeEvents(REPLAYABLE);
+    const { handle } = collect();
+    await handle.caughtUp;
+    handle.close();
+    await handle.drainNow();
+  });
+
+  it("called before caughtUp on a 'current' tailer, resolves without replaying catch-up-consumed history", async () => {
+    await writeEvents(REPLAYABLE); // no session_stopped: the tailer keeps running
+    const { lines, handle } = collect({ since: "current" });
+    // Deliberately skip `await handle.caughtUp` — cursor isn't assigned yet,
+    // so an early drainNow() must not race it and re-offer the whole file.
+    await handle.drainNow();
+    expect(lines.some((l) => l.includes('"turn_completed"'))).toBe(false);
+    handle.close();
+    await handle.done;
+  });
+});

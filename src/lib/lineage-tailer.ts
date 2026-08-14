@@ -44,10 +44,10 @@ export interface LineageTailerHandle {
  *    the read is race-free); unset means lineage end.
  *  - a state poll for corpses: a member with a dead runner pid never writes
  *    session_stopped, so when its state gains `rotated_to` (recover) the
- *    poll closes the tailer — gated on `caughtUp` so a hop can never
- *    truncate the member's catch-up/replay emission. A live pid means a
- *    rotation is in flight (or a dangling pointer on a live predecessor):
- *    the natural stop handles it, the poll stays hands-off.
+ *    poll closes the tailer — gated on `caughtUp` and a final `drainNow()`
+ *    flush, so a hop can never truncate the member's emission. A live pid
+ *    means a rotation is in flight (or a dangling pointer on a live
+ *    predecessor): the natural stop handles it, the poll stays hands-off.
  */
 export function startLineageTailer(opts: LineageTailerOptions): LineageTailerHandle {
   const pollMs = opts.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
@@ -80,10 +80,12 @@ export function startLineageTailer(opts: LineageTailerOptions): LineageTailerHan
 
   // Recover-hop trigger. A corpse (dead runner pid) never writes
   // session_stopped, so its tailer never ends on its own; when its state
-  // gains `rotated_to`, close the tailer — after `caughtUp`, so the hop can
-  // never truncate catch-up/replay emission. A dead runner appends no
-  // further events, so a caught-up tailer has emitted everything it ever
-  // will. The close resolves tailer.done, which converges on advance().
+  // gains `rotated_to`, close the tailer — but only after two gates:
+  // `caughtUp` (the tail-start catch-up/replay is emitted) and `drainNow()`
+  // (anything appended since is flushed too). A dead runner appends no
+  // further events, so once both gates clear, the tailer has emitted
+  // everything it ever will. The close resolves tailer.done, which
+  // converges on advance().
   const startPoll = (
     id: string,
     tailer: SessionTailerHandle,
@@ -100,6 +102,8 @@ export function startLineageTailer(opts: LineageTailerOptions): LineageTailerHan
       if (st?.rotated_to === undefined) return;
       if (st.runner_pid !== null && isPidAlive(st.runner_pid)) return;
       await tailer.caughtUp;
+      if (finished || isAdvanced()) return;
+      await tailer.drainNow();
       if (finished || isAdvanced()) return;
       tailer.close();
     };
