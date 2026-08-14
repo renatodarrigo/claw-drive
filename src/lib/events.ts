@@ -91,9 +91,12 @@ export type Event =
       generation: number;
       handover_path: string;
       watch_command: string;
+      /** Who initiated: a commanded rotate ("manual") or the runner's own
+       * threshold-crossing dispatch ("auto"). Optional: events predate it. */
+      initiated_by?: "manual" | "auto";
     }
-  | { seq: number; at: string; kind: "rotation_failed"; reason: string }
-  | { seq: number; at: string; kind: "rotation_refused"; reason: string; detail?: string };
+  | { seq: number; at: string; kind: "rotation_failed"; reason: string; initiated_by?: "manual" | "auto" }
+  | { seq: number; at: string; kind: "rotation_refused"; reason: string; detail?: string; initiated_by?: "manual" | "auto" };
 
 export async function appendEvent(eventsFile: string, event: Event): Promise<void> {
   const line = JSON.stringify(event) + "\n";

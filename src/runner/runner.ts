@@ -140,6 +140,14 @@ export interface RunnerContext {
    * owner of rotation-outcome events, and the terminal event must come last.
    * Null when no rotate is in flight. */
   rotationSettled: Promise<void> | null;
+  /** Auto-rotation one-shot latch: set after an auto attempt ends in a policy
+   * refusal or a failure (autoOutcomeLatches) — both are futile or expensive
+   * to retry — cleared by an update_policy that changes the rotation block.
+   * Manual rotate never consults it. */
+  autoRotateLatched: boolean;
+  /** Cost warning once-per-process latch: set when cost_threshold_reached is
+   * emitted; cleared by an update_policy that changes warn_cost_usd. */
+  costWarned: boolean;
 }
 
 // Placeholder type; populated in Task 13 when the approval flow lands.
@@ -581,9 +589,10 @@ export type RotationOutcome =
  * handover at the cap) → handover turn → successor scaffold → lineage
  * pointer → session_rotated → predecessor self-teardown, with the
  * compensation and settle lifecycle unchanged. Returns a structured outcome;
- * the request handler maps it onto the response envelope.
+ * the request handler maps it onto the response envelope. initiatedBy stamps
+ * every outcome event (initiated_by).
  */
-export async function performRotation(ctx: RunnerContext): Promise<RotationOutcome> {
+export async function performRotation(ctx: RunnerContext, initiatedBy: "manual" | "auto"): Promise<RotationOutcome> {
   if (ctx.bExited) {
     // Checked BEFORE the gate: a death that killed an in-flight turn
     // leaves turnInFlight latched, and TURN_IN_FLIGHT's "retry at the
@@ -653,6 +662,7 @@ export async function performRotation(ctx: RunnerContext): Promise<RotationOutco
         reason:
           blocker.code === "MAX_GENERATIONS" ? "max_generations" : "bootstrap_exceeds_threshold",
         detail,
+        initiated_by: initiatedBy,
       } as Omit<Event, "seq" | "at">);
       return { ok: false, error: blocker.code, message: detail };
     }
@@ -675,6 +685,7 @@ export async function performRotation(ctx: RunnerContext): Promise<RotationOutco
           await emitEvent(ctx, {
             kind: "rotation_failed",
             reason: "b_exited: session process exited during the handover turn",
+            initiated_by: initiatedBy,
           } as Omit<Event, "seq" | "at">);
           return {
             ok: false,
@@ -690,6 +701,7 @@ export async function performRotation(ctx: RunnerContext): Promise<RotationOutco
           await emitEvent(ctx, {
             kind: "rotation_failed",
             reason: "session_stopping: stop or circuit breaker engaged during the handover turn",
+            initiated_by: initiatedBy,
           } as Omit<Event, "seq" | "at">);
           return {
             ok: false,
@@ -705,6 +717,7 @@ export async function performRotation(ctx: RunnerContext): Promise<RotationOutco
         await emitEvent(ctx, {
           kind: "rotation_failed",
           reason,
+          initiated_by: initiatedBy,
         } as Omit<Event, "seq" | "at">);
         return {
           ok: false,
@@ -736,6 +749,7 @@ export async function performRotation(ctx: RunnerContext): Promise<RotationOutco
           reason: stopOwnsExit
             ? "session_stopping: stop or circuit breaker engaged after the handover turn; successor not started"
             : "b_exited: session process exited after the handover turn; successor not started",
+          initiated_by: initiatedBy,
         } as Omit<Event, "seq" | "at">);
         return {
           ok: false,
@@ -813,6 +827,7 @@ export async function performRotation(ctx: RunnerContext): Promise<RotationOutco
         await emitEvent(ctx, {
           kind: "rotation_failed",
           reason: "successor_not_ready: runner did not become ready within 5s",
+          initiated_by: initiatedBy,
         } as Omit<Event, "seq" | "at">);
         return {
           ok: false,
@@ -841,6 +856,7 @@ export async function performRotation(ctx: RunnerContext): Promise<RotationOutco
         generation: generation + 1,
         handover_path: handoverPath(ctx.sessionId),
         watch_command: watchCommand,
+        initiated_by: initiatedBy,
       } as Omit<Event, "seq" | "at">);
       setImmediate(() => teardownSession(ctx, `rotated:${newId}`));
       return {
@@ -875,6 +891,7 @@ export async function performRotation(ctx: RunnerContext): Promise<RotationOutco
         await emitEvent(ctx, {
           kind: "rotation_failed",
           reason: message,
+          initiated_by: initiatedBy,
         } as Omit<Event, "seq" | "at">);
       } catch { /* best-effort */ }
       return { ok: false, error: "ROTATION_FAILED", message };
@@ -1156,7 +1173,7 @@ export async function handleRequest(
     }
 
     case "rotate": {
-      const out = await performRotation(ctx);
+      const out = await performRotation(ctx, "manual");
       return out.ok
         ? { id: req.id, ok: true, result: out.result }
         : { id: req.id, ok: false, error: out.error, message: out.message };
@@ -1515,6 +1532,8 @@ export async function runRunner(sessionId: string): Promise<void> {
     tearingDown: false,
     lastInterruptAt: null,
     rotationSettled: null,
+    autoRotateLatched: false,
+    costWarned: false,
   };
 
   // Start the stdout loop; run it in the background. If it fails, emit an
