@@ -346,4 +346,37 @@ else
 fi
 rm -rf "$ROTCOST_STUB_DIR" "$ROTCOST_CWD"
 
+section "watch --follow-lineage"
+# A fabricated dead lineage: A rotated to B, B stopped without a successor.
+# The walk needs no live runner — pure state/events files.
+LIN_A="sess_20200101T000000_aaaaaa"
+LIN_B="sess_20200101T000000_bbbbbb"
+mkdir -p "$TMPHOME/sessions/$LIN_A" "$TMPHOME/sessions/$LIN_B"
+printf '{"session_id":"%s","status":"stopped","runner_pid":null,"rotated_to":"%s","generation":1}\n' "$LIN_A" "$LIN_B" > "$TMPHOME/sessions/$LIN_A/state.json"
+printf '{"session_id":"%s","status":"stopped","runner_pid":null,"generation":2}\n' "$LIN_B" > "$TMPHOME/sessions/$LIN_B/state.json"
+{
+  printf '{"seq":1,"at":"t","kind":"session_rotated","new_session_id":"%s","generation":2,"handover_path":"h","watch_command":"w"}\n' "$LIN_B"
+  printf '{"seq":2,"at":"t","kind":"session_stopped","reason":"rotated:%s","exit_code":0}\n' "$LIN_B"
+} > "$TMPHOME/sessions/$LIN_A/events.jsonl"
+printf '{"seq":1,"at":"t","kind":"session_stopped","reason":"done","exit_code":0}\n' > "$TMPHOME/sessions/$LIN_B/events.jsonl"
+
+WLOUT="$TMPHOME/watch-lineage-out.txt"
+( "$BIN" watch "$LIN_A" --follow-lineage --replay >"$WLOUT" 2>&1; echo "EXIT=$?" >>"$WLOUT" ) &
+WL_PID=$!
+for _ in $(seq 1 50); do
+  kill -0 "$WL_PID" 2>/dev/null || break
+  sleep 0.2
+done
+if kill -0 "$WL_PID" 2>/dev/null; then
+  fail "follow-lineage walks a dead lineage and exits (still running after 10s)"
+  kill -9 "$WL_PID" 2>/dev/null || true
+else
+  pass "follow-lineage walks a dead lineage and exits"
+fi
+expect_file_contains "predecessor lines carry its tag"  "$WLOUT" "\"session_id\":\"$LIN_A\""
+expect_file_contains "the walk reaches the successor"   "$WLOUT" "\"session_id\":\"$LIN_B\""
+expect_file_contains "the walk exits 0 at lineage end"  "$WLOUT" "EXIT=0"
+expect_exit "watch --all --follow-lineage is a usage error" 2 "$BIN" watch --all --follow-lineage
+rm -rf "$TMPHOME/sessions/$LIN_A" "$TMPHOME/sessions/$LIN_B"
+
 summary

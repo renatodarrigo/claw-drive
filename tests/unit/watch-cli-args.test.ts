@@ -1,6 +1,7 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   parseWatchArgs,
+  cmdWatch,
   DECISION_ONLY_KINDS,
 } from "../../src/cli/commands/watch.js";
 
@@ -364,6 +365,59 @@ describe("parseWatchArgs — --all (CD-7 fleet mode)", () => {
       expect(r.since).toBe(0);
       expect(r.allowed!.has("turn_completed")).toBe(true);
       expect(r.allowed!.has("session_stopped")).toBe(true);
+    }
+  });
+});
+
+describe("parseWatchArgs — --follow-lineage", () => {
+  it("parses on a single-session watch", () => {
+    const r = parseWatchArgs(["sess_abcdef0123456789", "--follow-lineage"]);
+    expect(r.ok).toBe(true);
+    if (r.ok && !r.all) expect(r.followLineage).toBe(true);
+  });
+
+  it("defaults to false", () => {
+    const r = parseWatchArgs(["sess_abcdef0123456789"]);
+    expect(r.ok).toBe(true);
+    if (r.ok && !r.all) expect(r.followLineage).toBe(false);
+  });
+
+  it("rejects combining with --all, in either flag order", () => {
+    const a = parseWatchArgs(["--all", "--follow-lineage"]);
+    expect(a.ok).toBe(false);
+    if (!a.ok) expect(a.error).toContain("mutually exclusive");
+    const b = parseWatchArgs(["--follow-lineage", "--all"]);
+    expect(b.ok).toBe(false);
+  });
+
+  it("composes with replay and kind filters", () => {
+    const r = parseWatchArgs([
+      "sess_abcdef0123456789", "--follow-lineage", "--replay", "--decision-only",
+    ]);
+    expect(r.ok).toBe(true);
+    if (r.ok && !r.all) {
+      expect(r.followLineage).toBe(true);
+      expect(r.since).toBe(0);
+      expect(r.allowed).toEqual(new Set(DECISION_ONLY_KINDS));
+    }
+  });
+});
+
+describe("cmdWatch — usage text on a parse error", () => {
+  // cmdWatch's usage text is a string literal inlined in a console.error
+  // call, not an exported constant — capture it the way cmdRecover's own
+  // arg-parsing errors are pinned (recover.test.ts: vi.spyOn(console,
+  // "error") around a direct cmdWatch(argv) call).
+  it("pins --follow-lineage in both the flag summary and its explanation line", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const code = await cmdWatch([]); // missing session id: a parse error
+      expect(code).toBe(2);
+      const out = spy.mock.calls.flat().join("\n");
+      expect(out).toContain("[--follow-lineage]");
+      expect(out).toContain("--follow-lineage: follow the session's rotation lineage");
+    } finally {
+      spy.mockRestore();
     }
   });
 });
