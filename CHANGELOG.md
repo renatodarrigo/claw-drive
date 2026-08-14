@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **`watch <session> --follow-lineage` keeps streaming across a session's rotation lineage.** When the watched session rotates — or a crashed member is recovered — the watcher hops to the successor and continues, until a member stops without a successor. Every emitted line carries the additive `session_id` / `alias` / `generation` fields (the same trio `watch --all` emits), so a hop is visible as the tag and generation change, and a rotation additionally narrates itself through the predecessor's `session_rotated` event. `--replay` replays the entire lineage from its first member; `--since N` applies to the named session only; every filter flag applies inside each member's tail. A crashed member with no successor holds the stream open until a recovery appears or the watcher is interrupted; mutually exclusive with `--all`, whose live-set rescan already picks up successors.
+
 ## [1.5.4] — 2026-08-12
 
 ### Fixed
