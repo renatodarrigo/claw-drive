@@ -140,6 +140,9 @@ export interface RunnerContext {
    * owner of rotation-outcome events, and the terminal event must come last.
    * Null when no rotate is in flight. */
   rotationSettled: Promise<void> | null;
+  /** The id of the rotation choreography's own in-flight handover send — the
+   * one send_turn the rotating-guard admits. Null outside that window. */
+  rotationSendId: string | null;
   /** Auto-rotation one-shot latch: set after an auto attempt ends in a policy
    * refusal or a failure (autoOutcomeLatches) — both are futile or expensive
    * to retry — cleared by an update_policy that changes the rotation block.
@@ -541,10 +544,13 @@ async function runHandoverTurn(
     const done = new Promise<"completed" | "failed">((resolve) =>
       ctx.turnWaiters.set(turnId, resolve)
     );
+    ctx.rotationSendId = `handover_${attempt}`;
     const resp = await handleRequest(ctx, {
       id: `handover_${attempt}`,
       op: "send_turn",
       message: buildHandoverInstruction({ attempt }),
+    }).finally(() => {
+      ctx.rotationSendId = null;
     });
     if (!resp.ok) {
       // The send refused (dead-B SESSION_EXITED surface) — no turn was
@@ -957,6 +963,22 @@ export async function handleRequest(
           ok: false,
           error: "SESSION_EXITED",
           message: "session process has exited; turn cannot start — use recover",
+        };
+      }
+      if (ctx.rotating && req.id !== ctx.rotationSendId) {
+        // A rotation owns the session: its handover turn is running (or its
+        // teardown is imminent) and a user turn written to stdin now would
+        // interleave with the handover. Refuse before any state change —
+        // the dead-B gate's posture. The successor named by session_rotated
+        // is the retry target (an alias-addressed send lands there itself).
+        // One exception: the choreography's own handover send, identified by
+        // the sanctioned id in ctx.rotationSendId, is admitted.
+        return {
+          id: req.id,
+          ok: false,
+          error: "ROTATION_IN_PROGRESS",
+          message:
+            "a rotation is in flight for this session; wait for session_rotated and send to the successor",
         };
       }
       const turnId = `turn_${ctx.state.turns + 1}`;
@@ -1579,6 +1601,7 @@ export async function runRunner(sessionId: string): Promise<void> {
     tearingDown: false,
     lastInterruptAt: null,
     rotationSettled: null,
+    rotationSendId: null,
     autoRotateLatched: false,
     costWarned: false,
   };

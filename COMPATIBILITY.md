@@ -171,6 +171,9 @@ Send a user turn to a live session. Non-blocking; returns a `turn_id` to poll.
 
 Refuses with `SESSION_EXITED` if the session process has already exited, in which case use `recover_session`.
 
+Refuses with `ROTATION_IN_PROGRESS` while a rotation is in flight for the
+session — wait for `session_rotated` and send to the successor.
+
 #### `poll_turn`
 
 Fetch events and derived status for a specific turn.
