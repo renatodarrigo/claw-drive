@@ -9,6 +9,8 @@
  * exit_reason and a teardown.
  */
 
+import type { Policy } from "../lib/policy.js";
+
 export type BudgetCap =
   | "max_tool_calls"
   | "max_wall_clock_seconds"
@@ -22,6 +24,10 @@ export interface Budget {
   /** Cost-cap: lineage-cumulative estimated spend ceiling in USD (see
    * runner cost tracking). Strictly-greater-than breaches, like the others. */
   max_cost_usd?: number;
+  /** Cost warning line: not a cap — checkBudget ignores it. The runner emits
+   * cost_threshold_reached when the lineage total reaches it (warnCostOf /
+   * crossedCostWarning below). */
+  warn_cost_usd?: number;
 }
 
 export interface BudgetCounters {
@@ -108,4 +114,26 @@ export function createBudgetTracker(budget: Budget | undefined): BudgetTracker {
       return { toolCalls, consecutiveErrors, costUsd };
     },
   };
+}
+
+/** The configured cost-warning line, if any ("bypass" and absent budget read undefined). */
+export function warnCostOf(policy: Policy): number | undefined {
+  if (policy === "bypass") return undefined;
+  return policy.budget?.warn_cost_usd;
+}
+
+/** The configured cost cap, if any — payload context for the warning event. */
+export function maxCostOf(policy: Policy): number | undefined {
+  if (policy === "bypass") return undefined;
+  return policy.budget?.max_cost_usd;
+}
+
+/** At-or-over crossing check. No configured line or no reading never crosses
+ * (mirrors the cap's fail-open posture: an unpriced stream cannot warn). */
+export function crossedCostWarning(
+  warnCostUsd: number | undefined,
+  costUsd: number | undefined
+): boolean {
+  if (warnCostUsd === undefined || costUsd === undefined) return false;
+  return costUsd >= warnCostUsd;
 }

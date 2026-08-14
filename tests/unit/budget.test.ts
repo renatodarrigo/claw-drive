@@ -3,6 +3,9 @@ import {
   createBudgetTracker,
   checkBudget,
   budgetExceededReason,
+  warnCostOf,
+  maxCostOf,
+  crossedCostWarning,
   type Budget,
 } from "../../src/runner/budget.js";
 
@@ -143,3 +146,25 @@ describe("max_cost_usd (cost-cap)", () => {
     expect(t.check(0)).toBeNull();
   });
 });
+
+describe("cost-warning helpers", () => {
+  it("warnCostOf / maxCostOf read the budget, bypass and absent blocks read undefined", () => {
+    expect(warnCostOf("bypass")).toBeUndefined();
+    expect(warnCostOf({})).toBeUndefined();
+    expect(warnCostOf({ budget: { warn_cost_usd: 4 } })).toBe(4);
+    expect(maxCostOf("bypass")).toBeUndefined();
+    expect(maxCostOf({ budget: { warn_cost_usd: 4 } })).toBeUndefined();
+    expect(maxCostOf({ budget: { max_cost_usd: 5 } })).toBe(5);
+  });
+  it("crossedCostWarning: at-or-over crosses; under, unconfigured, and unread never cross", () => {
+    expect(crossedCostWarning(4, 4)).toBe(true);
+    expect(crossedCostWarning(4, 4.2)).toBe(true);
+    expect(crossedCostWarning(4, 3.99)).toBe(false);
+    expect(crossedCostWarning(undefined, 100)).toBe(false);
+    expect(crossedCostWarning(4, undefined)).toBe(false);
+  });
+  it("checkBudget ignores warn_cost_usd — a warning line is not a cap", () => {
+    expect(checkBudget({ warn_cost_usd: 0.01 }, { toolCalls: 5, elapsedSeconds: 5, consecutiveErrors: 0, costUsd: 100 })).toBeNull();
+  });
+});
+

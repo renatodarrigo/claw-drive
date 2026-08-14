@@ -5,6 +5,8 @@ import {
   checkRotateGate,
   effectiveMaxGenerations,
   DEFAULT_MAX_GENERATIONS,
+  shouldAttemptAutoRotation,
+  autoOutcomeLatches,
 } from "../../src/runner/context-tracker.js";
 
 const CFG = { threshold_tokens: 100_000 };
@@ -105,5 +107,38 @@ describe("checkRotateGate", () => {
     // (as a live update_policy would do) — now above the reading.
     const raised = { ...input, cfg: { ...CFG, threshold_tokens: 150_000 } };
     expect(checkRotateGate(raised)).toBeNull();
+  });
+});
+
+describe("shouldAttemptAutoRotation", () => {
+  const auto = { threshold_tokens: 1000, mode: "auto" as const };
+  it("attempts only in auto mode: manual, absent mode, and missing config all refuse", () => {
+    expect(shouldAttemptAutoRotation({ cfg: { threshold_tokens: 1000, mode: "manual" }, contextTokens: 5000, latched: false, rotating: false })).toBe(false);
+    expect(shouldAttemptAutoRotation({ cfg: { threshold_tokens: 1000 }, contextTokens: 5000, latched: false, rotating: false })).toBe(false);
+    expect(shouldAttemptAutoRotation({ cfg: null, contextTokens: 5000, latched: false, rotating: false })).toBe(false);
+  });
+  it("attempts at-or-over threshold, not under, never without a reading", () => {
+    expect(shouldAttemptAutoRotation({ cfg: auto, contextTokens: 1000, latched: false, rotating: false })).toBe(true);
+    expect(shouldAttemptAutoRotation({ cfg: auto, contextTokens: 999, latched: false, rotating: false })).toBe(false);
+    expect(shouldAttemptAutoRotation({ cfg: auto, contextTokens: null, latched: false, rotating: false })).toBe(false);
+  });
+  it("the latch and an in-flight rotation each suppress the attempt", () => {
+    expect(shouldAttemptAutoRotation({ cfg: auto, contextTokens: 5000, latched: true, rotating: false })).toBe(false);
+    expect(shouldAttemptAutoRotation({ cfg: auto, contextTokens: 5000, latched: false, rotating: true })).toBe(false);
+  });
+});
+
+describe("autoOutcomeLatches", () => {
+  it("latches on the deterministic refusals and on failure", () => {
+    expect(autoOutcomeLatches("MAX_GENERATIONS")).toBe(true);
+    expect(autoOutcomeLatches("BOOTSTRAP_EXCEEDS_THRESHOLD")).toBe(true);
+    expect(autoOutcomeLatches("ROTATION_FAILED")).toBe(true);
+  });
+  it("defers (no latch) on transient blockers and re-entry", () => {
+    expect(autoOutcomeLatches("TURN_IN_FLIGHT")).toBe(false);
+    expect(autoOutcomeLatches("DECISIONS_PENDING")).toBe(false);
+    expect(autoOutcomeLatches("INTERRUPT_GRACE")).toBe(false);
+    expect(autoOutcomeLatches("ROTATION_IN_PROGRESS")).toBe(false);
+    expect(autoOutcomeLatches("NO_ROTATION_CONFIG")).toBe(false);
   });
 });
