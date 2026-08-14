@@ -177,6 +177,21 @@ describe("startLineageTailer — natural-end walking", () => {
     expect(lines.every((l) => l.session_id !== B)).toBe(true);
   });
 
+  it("a pruned hop target fails loudly without losing A's already-tailed lines", async () => {
+    // A is healthy end-to-end and hops naturally; this time the HOP TARGET
+    // (B) is pruned — its whole session directory is gone — contrasting the
+    // watch-error case above, which breaks the FIRST member instead. That
+    // walk never produces any real output, so it can't show that a later
+    // hop failure leaves the predecessor's already-tailed lines intact.
+    await makeSession(A, { status: "stopped", runner_pid: null, rotated_to: B }, rotatedEvents(B));
+    // B's directory is intentionally never created.
+    const { lines, errors, handle } = collectLineage(A);
+    await handle.done;
+    expect(errors.length).toBe(1);
+    expect(lines.some((l) => l.session_id === A)).toBe(true);
+    expect(lines.every((l) => l.session_id !== B)).toBe(true);
+  });
+
   it("a hand-edited state cycle ends the walk loudly instead of looping", async () => {
     await makeSession(A, { status: "stopped", runner_pid: null, rotated_to: B }, rotatedEvents(B));
     await makeSession(B, { status: "stopped", runner_pid: null, rotated_to: A }, rotatedEvents(A));
@@ -196,6 +211,22 @@ describe("startLineageTailer — natural-end walking", () => {
     await waitUntil(() => lines.some((l) => l.session_id === B && l.kind === "turn_completed"));
     handle.close();
     await handle.done;
+  });
+
+  it("close() mid-walk with B already pointing at C emits no C-tagged line", async () => {
+    await makeSession(A, { status: "stopped", runner_pid: null, rotated_to: B }, rotatedEvents(B));
+    // B is live-ish (alive pid, no stop event — its tailer would wait
+    // forever) AND already carries a successor pointer, mirroring a
+    // dangling rotated_to on a live predecessor: the poll stays hands-off
+    // on a live pid, so only a real stop would hop — and close() lands
+    // before one ever comes.
+    await makeSession(B, { status: "running", runner_pid: process.pid, rotated_to: C }, turnEvents());
+    await makeSession(C, { status: "stopped", runner_pid: null }, stoppedEvents());
+    const { lines, handle } = collectLineage(A);
+    await waitUntil(() => lines.some((l) => l.session_id === B && l.kind === "turn_completed"));
+    handle.close();
+    await handle.done;
+    expect(lines.every((l) => l.session_id !== C)).toBe(true);
   });
 });
 
