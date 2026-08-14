@@ -288,7 +288,11 @@ describe("startLineageTailer — recover hops (state poll)", () => {
   });
 
   it("drains a post-start append before closing on a poll-forced hop, so no A output is lost to the race", async () => {
-    await makeSession(A, { status: "running", runner_pid: process.pid }, turnEvents());
+    const aEvents = [
+      ...turnEvents(),
+      { seq: 4, at: "t", kind: "tool_decision_required", turn_id: "w", call_id: "gate", tool: "Bash", args: {}, severity: "high", default_action: "defer", default_at: "t" },
+    ];
+    await makeSession(A, { status: "running", runner_pid: process.pid }, aEvents);
     await makeSession(B, { status: "stopped", runner_pid: null }, stoppedEvents());
     const { lines, errors, handle } = collectLineage(A, {
       filters: {
@@ -300,17 +304,21 @@ describe("startLineageTailer — recover hops (state poll)", () => {
       },
       pollIntervalMs: 10,
     });
-    // Let A's tailer clear its "current" catch-up and register fs.watch
-    // before appending — these are genuine post-start events, not folded
-    // into the initial read.
-    await delay(50);
+    // An observed A-tagged catch-up line proves the "current" catch-up
+    // read predates the append below (made only once this resolves) —
+    // so the appended events sit strictly past the cursor. Whichever
+    // drain runs first may surface them; the poll's pre-close flush
+    // catches whatever's left, so the close can never race past them.
+    await waitUntil(() =>
+      lines.some((l) => l.session_id === A && l.kind === "tool_decision_required")
+    );
     const extra = [
-      { seq: 4, at: "t", kind: "turn_started", turn_id: "y", message: "go2" },
-      { seq: 5, at: "t", kind: "assistant_text", turn_id: "y", text: "done2\n[DONE]" },
-      { seq: 6, at: "t", kind: "turn_completed", turn_id: "y", stop_reason: "success" },
-      { seq: 7, at: "t", kind: "turn_started", turn_id: "z", message: "go3" },
-      { seq: 8, at: "t", kind: "assistant_text", turn_id: "z", text: "done3\n[DONE]" },
-      { seq: 9, at: "t", kind: "turn_completed", turn_id: "z", stop_reason: "success" },
+      { seq: 5, at: "t", kind: "turn_started", turn_id: "y", message: "go2" },
+      { seq: 6, at: "t", kind: "assistant_text", turn_id: "y", text: "done2\n[DONE]" },
+      { seq: 7, at: "t", kind: "turn_completed", turn_id: "y", stop_reason: "success" },
+      { seq: 8, at: "t", kind: "turn_started", turn_id: "z", message: "go3" },
+      { seq: 9, at: "t", kind: "assistant_text", turn_id: "z", text: "done3\n[DONE]" },
+      { seq: 10, at: "t", kind: "turn_completed", turn_id: "z", stop_reason: "success" },
     ];
     await fs.appendFile(
       path.join(root, "sessions", A, "events.jsonl"),
