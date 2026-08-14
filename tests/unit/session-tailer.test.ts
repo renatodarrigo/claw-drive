@@ -73,6 +73,18 @@ describe("startSessionTailer — caughtUp", () => {
     expect(errors.length).toBe(1);
   });
 
+  it("resolves on the watch-error path when the initial drain hits a non-ENOENT read error, never hanging", async () => {
+    // events.jsonl exists but as a directory: readFile fails EISDIR, not the
+    // ENOENT that readEventsSince already swallows.
+    const dir = path.join(root, "sessions", SID);
+    await fs.mkdir(dir, { recursive: true });
+    await fs.mkdir(path.join(dir, "events.jsonl"));
+    const { errors, handle } = collect();
+    await handle.caughtUp;
+    await handle.done;
+    expect(errors.length).toBe(1);
+  });
+
   it("resolves when close() lands before the drain", async () => {
     await writeEvents(REPLAYABLE);
     const { handle } = collect();

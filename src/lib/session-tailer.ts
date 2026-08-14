@@ -192,7 +192,13 @@ export function startSessionTailer(opts: SessionTailerOptions): SessionTailerHan
     cursor = since;
 
     // Initial drain (only meaningful for --replay / --since < current).
-    await drain();
+    try {
+      await drain();
+    } catch (err) {
+      opts.onWatchError?.((err as Error).message);
+      cleanup();
+      return;
+    }
     resolveCaughtUp();
     if (finished) return; // closed during catch-up/drain
     if (stopped) {
