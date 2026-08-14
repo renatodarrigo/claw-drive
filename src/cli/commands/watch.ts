@@ -8,6 +8,7 @@ import {
 } from "../../lib/tokens.js";
 import { startSessionTailer } from "../../lib/session-tailer.js";
 import { startWatchMultiplexer } from "../../lib/watch-multiplexer.js";
+import { startLineageTailer } from "../../lib/lineage-tailer.js";
 
 /**
  * Filter predicate: true = emit (human/A needs to see this), false = drop.
@@ -531,6 +532,33 @@ export async function cmdWatch(argv: string[]): Promise<number> {
   if (resolvedId === null) {
     console.error(`no live session for '${parsed.sessionId}'`);
     return 2;
+  }
+  if (parsed.followLineage) {
+    // Lineage walk: sequential per-member tailers with the --all tag trio on
+    // every line; hops on rotation and recover successors; exits when a
+    // member stops without one. Wiring mirrors cmdWatchAll.
+    let watchError: string | null = null;
+    const lineage = startLineageTailer({
+      sessionId: resolvedId,
+      emit: (line) => process.stdout.write(line),
+      filters: {
+        since: parsed.since,
+        allowed: parsed.allowed,
+        noTokenFilter: parsed.noTokenFilter,
+        suspectedNeedsInput: parsed.suspectedNeedsInput,
+        idleAfterSeconds: parsed.idleAfterSeconds,
+      },
+      onWatchError: (msg) => {
+        watchError = msg;
+      },
+    });
+    process.once("SIGINT", () => lineage.close());
+    await lineage.done;
+    if (watchError !== null) {
+      console.error("cannot watch events.jsonl:", watchError);
+      return 1;
+    }
+    return 0;
   }
   // Single-session watch is now the tailer driven straight to stdout. The
   // tail loop (catch-up, cursor, fs.watch, idle ticker, filter chain,
