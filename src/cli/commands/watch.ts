@@ -555,7 +555,7 @@ export async function cmdWatch(argv: string[]): Promise<number> {
     process.once("SIGINT", () => lineage.close());
     await lineage.done;
     if (watchError !== null) {
-      console.error("cannot watch events.jsonl:", watchError);
+      console.error("cannot follow lineage:", watchError);
       return 1;
     }
     return 0;
