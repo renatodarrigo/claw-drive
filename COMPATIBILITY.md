@@ -333,12 +333,13 @@ context_threshold_reached
 session_rotated
 rotation_failed
 rotation_refused
+cost_threshold_reached
 ```
 
 #### `VALID_WATCH_KINDS` — watch-surfaced event kinds
 
 The `VALID_WATCH_KINDS` constant (exported from `src/cli/commands/watch.ts`)
-enumerates the 13 event kinds that `claw-drive watch` can surface to consumers.
+enumerates the 14 event kinds that `claw-drive watch` can surface to consumers.
 This set is part of the public contract:
 
 ```
@@ -355,11 +356,20 @@ rotation_failed
 rotation_refused
 tool_call_result
 idle
+cost_threshold_reached
 ```
 
 `idle` is a synthetic event (negative `seq`) emitted by `watch` when no
 surfaced activity has occurred for the configured threshold
 (`--idle-after SECONDS`, default 600).
+
+`cost_threshold_reached` (2026-08-14, v1.7.0 line): additive expansion —
+mirrors `context_threshold_reached` for the `budget.warn_cost_usd` warning
+line, watch-surfaced because warnings exist to be alerted on. Payload:
+`turn_id?`, `cost_usd` (lineage-cumulative reading), `warn_cost_usd`,
+`generation`, `max_cost_usd?` (present only when a cap is configured). Fires
+once per runner process; an `update_policy` changing `warn_cost_usd` re-arms
+it.
 
 ---
 

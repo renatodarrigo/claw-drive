@@ -26,6 +26,11 @@ describe("watch surfaces rotation kinds", () => {
     expect(DECISION_ONLY_KINDS.has("rotation_refused")).toBe(true);
     expect(DECISION_ONLY_KINDS.has("session_rotated")).toBe(false);
   });
+  it("cost_threshold_reached is watch-surfaced and decision-only-visible, like its context sibling", () => {
+    expect(VALID_WATCH_KINDS.has("cost_threshold_reached")).toBe(true);
+    expect(DECISION_ONLY_KINDS.has("cost_threshold_reached")).toBe(true);
+    expect(shouldEmit({ kind: "cost_threshold_reached" } as unknown as Event)).toBe(true);
+  });
 });
 
 describe("aliasWithGeneration", () => {

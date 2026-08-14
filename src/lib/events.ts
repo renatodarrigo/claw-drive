@@ -18,7 +18,8 @@ export type EventKind =
   | "context_threshold_reached"
   | "session_rotated"
   | "rotation_failed"
-  | "rotation_refused";
+  | "rotation_refused"
+  | "cost_threshold_reached";
 
 export type ResolvedBy = "policy" | "user_mcp" | "user_mcp_auto" | "user_cli" | "timeout";
 export type Severity = "low" | "medium" | "high";
@@ -96,7 +97,19 @@ export type Event =
       initiated_by?: "manual" | "auto";
     }
   | { seq: number; at: string; kind: "rotation_failed"; reason: string; initiated_by?: "manual" | "auto" }
-  | { seq: number; at: string; kind: "rotation_refused"; reason: string; detail?: string; initiated_by?: "manual" | "auto" };
+  | { seq: number; at: string; kind: "rotation_refused"; reason: string; detail?: string; initiated_by?: "manual" | "auto" }
+  | {
+      seq: number;
+      at: string;
+      turn_id?: string;
+      kind: "cost_threshold_reached";
+      /** Lineage-cumulative spend reading that crossed the line. */
+      cost_usd: number;
+      warn_cost_usd: number;
+      generation: number;
+      /** Present only when a cap is configured — the headroom context. */
+      max_cost_usd?: number;
+    };
 
 export async function appendEvent(eventsFile: string, event: Event): Promise<void> {
   const line = JSON.stringify(event) + "\n";

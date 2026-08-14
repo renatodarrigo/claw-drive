@@ -21,7 +21,7 @@ import { parseClaudeLine } from "./stream-parser.js";
 import { startSocketServer } from "./socket-server.js";
 import { buildClaudeArgs } from "./runner-args.js";
 import { scheduleDecisionTimeout } from "./decision-timeout.js";
-import { createBudgetTracker, budgetExceededReason, type BudgetTracker } from "./budget.js";
+import { createBudgetTracker, budgetExceededReason, warnCostOf, maxCostOf, crossedCostWarning, type BudgetTracker } from "./budget.js";
 import { rotationConfigOf, isOverThreshold, checkRotateGate, effectiveMaxGenerations, INTERRUPT_GRACE_MS, shouldAttemptAutoRotation, autoOutcomeLatches } from "./context-tracker.js";
 import { buildHandoverInstruction, extractHandover, composeSuccessorBrief } from "../lib/handover.js";
 import { buildCrashDigest, buildDistillerPrompt, runDistiller } from "../lib/distill.js";
@@ -365,6 +365,30 @@ export async function runStdoutLoop(ctx: RunnerContext): Promise<void> {
 }
 
 /**
+ * Cost-warning check, run at every turn boundary — completed AND failed
+ * (error results carry cost; a session burning money through failing turns
+ * warns the same). Fires once per runner process: the crossing is one fact,
+ * and each successor announces the inherited pressure once in its own
+ * stream. Cleared by an update_policy that changes warn_cost_usd. Latched
+ * before emitting, the breaker's own ordering.
+ */
+async function maybeWarnCost(ctx: RunnerContext, turnId: string | undefined): Promise<void> {
+  if (ctx.costWarned) return;
+  const warn = warnCostOf(ctx.state.policy);
+  if (!crossedCostWarning(warn, ctx.state.cost_usd)) return;
+  ctx.costWarned = true;
+  const maxCost = maxCostOf(ctx.state.policy);
+  await emitEvent(ctx, {
+    kind: "cost_threshold_reached",
+    ...(turnId !== undefined ? { turn_id: turnId } : {}),
+    cost_usd: ctx.state.cost_usd as number,
+    warn_cost_usd: warn as number,
+    generation: ctx.state.generation ?? 1,
+    ...(maxCost !== undefined ? { max_cost_usd: maxCost } : {}),
+  } as Omit<Event, "seq" | "at">);
+}
+
+/**
  * context-rotation turn-boundary bookkeeping, run after each parsed event is emitted:
  * maintains turnInFlight / completedTurns / turnWaiters, persists
  * context_tokens, records the first completed turn's reading for the
@@ -383,6 +407,7 @@ export async function afterEventBookkeeping(ctx: RunnerContext, ev: Event): Prom
       waiter(ev.kind === "turn_completed" ? "completed" : "failed");
     }
   }
+  await maybeWarnCost(ctx, turnId);
   if (ev.kind !== "turn_completed") return;
   // Proof of life: a COMPLETED turn means B survived any earlier interrupt —
   // clear the rotate gate's grace window. A failed turn proves nothing (the
@@ -1213,6 +1238,9 @@ export async function handleRequest(
         oldRot?.mode !== newRot?.mode
       ) {
         ctx.autoRotateLatched = false;
+      }
+      if (warnCostOf(ctx.state.policy) !== warnCostOf(policy as Policy)) {
+        ctx.costWarned = false;
       }
       ctx.state.policy = policy as Policy;
       await writeState(statePath(ctx.sessionId), ctx.state);
