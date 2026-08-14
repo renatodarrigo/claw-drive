@@ -22,7 +22,7 @@ import { startSocketServer } from "./socket-server.js";
 import { buildClaudeArgs } from "./runner-args.js";
 import { scheduleDecisionTimeout } from "./decision-timeout.js";
 import { createBudgetTracker, budgetExceededReason, type BudgetTracker } from "./budget.js";
-import { rotationConfigOf, isOverThreshold, checkRotateGate, effectiveMaxGenerations, INTERRUPT_GRACE_MS } from "./context-tracker.js";
+import { rotationConfigOf, isOverThreshold, checkRotateGate, effectiveMaxGenerations, INTERRUPT_GRACE_MS, shouldAttemptAutoRotation, autoOutcomeLatches } from "./context-tracker.js";
 import { buildHandoverInstruction, extractHandover, composeSuccessorBrief } from "../lib/handover.js";
 import { buildCrashDigest, buildDistillerPrompt, runDistiller } from "../lib/distill.js";
 import { newSessionId, readSessionMcpServers, scaffoldSessionDir, spawnRunnerDetached, waitForReady } from "../lib/spawn-session.js";
@@ -412,7 +412,42 @@ export async function afterEventBookkeeping(ctx: RunnerContext, ev: Event): Prom
       threshold_tokens: cfg.threshold_tokens,
       generation: ctx.state.generation ?? 1,
     } as Omit<Event, "seq" | "at">);
+    maybeAutoRotate(ctx);
   }
+}
+
+/**
+ * Auto-rotation dispatch, run at an over-threshold completed-turn boundary.
+ * Advisory pre-check only — the rotate gate inside performRotation is the
+ * single authority: a transient blocker there (a send won the race, decisions
+ * pending) returns without an event and the next boundary retries for free.
+ * Policy refusals and failures latch further attempts off (autoOutcomeLatches)
+ * until an update_policy changes the rotation block — a crashed attempt
+ * latches the same way, since retrying an attempt that just threw is no more
+ * promising than retrying a policy refusal. Dispatched via setImmediate —
+ * the choreography's handover turn needs the stdout loop this bookkeeping
+ * runs inside, so it must never be awaited from here.
+ */
+function maybeAutoRotate(ctx: RunnerContext): void {
+  if (
+    !shouldAttemptAutoRotation({
+      cfg: rotationConfigOf(ctx.state.policy),
+      contextTokens: ctx.lastContextTokens,
+      latched: ctx.autoRotateLatched,
+      rotating: ctx.rotating,
+    })
+  ) {
+    return;
+  }
+  setImmediate(() => {
+    void performRotation(ctx, "auto")
+      .then((out) => {
+        if (!out.ok && autoOutcomeLatches(out.error)) ctx.autoRotateLatched = true;
+      })
+      .catch(() => {
+        ctx.autoRotateLatched = true;
+      });
+  });
 }
 
 const HANDOVER_TURN_TIMEOUT_MS = 600_000;
@@ -1144,6 +1179,18 @@ export async function handleRequest(
           error: "INVALID_POLICY",
           message: v.error,
         };
+      }
+      // Auto-rotation latch re-arm: only a CHANGED rotation block re-arms —
+      // a byte-identical no-op update must not summon a duplicate
+      // deterministic refusal.
+      const oldRot = rotationConfigOf(ctx.state.policy);
+      const newRot = rotationConfigOf(policy as Policy);
+      if (
+        oldRot?.threshold_tokens !== newRot?.threshold_tokens ||
+        oldRot?.max_generations !== newRot?.max_generations ||
+        oldRot?.mode !== newRot?.mode
+      ) {
+        ctx.autoRotateLatched = false;
       }
       ctx.state.policy = policy as Policy;
       await writeState(statePath(ctx.sessionId), ctx.state);

@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "node:fs/promises";
+import { rmSync } from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import { EventEmitter } from "node:events";
@@ -14,7 +15,7 @@ import {
 import type { SessionState } from "../../src/lib/state.js";
 import { readEventsSince } from "../../src/lib/events.js";
 import type { Event } from "../../src/lib/events.js";
-import { eventsPath, handoverPath, statePath } from "../../src/lib/paths.js";
+import { eventsPath, handoverPath, statePath, sessionDir } from "../../src/lib/paths.js";
 import { readState } from "../../src/lib/state.js";
 
 const SID = "sess_autorot001";
@@ -233,5 +234,196 @@ describe("rotation outcomes carry their initiator", () => {
     expect(rotated[0].initiated_by).toBe("manual");
     fake.emitter.emit("exit", 0, null);
     await settleUntil(() => exitCalls.length > 0);
+  });
+});
+
+const turnCompleted = (id: string): Event =>
+  ({ seq: 0, at: new Date().toISOString(), kind: "turn_completed", turn_id: id, stop_reason: "success" } as Event);
+
+/** Simulate a completed-turn boundary at the given context reading. */
+async function boundary(ctx: RunnerContext, turnId: string, tokens: number): Promise<void> {
+  ctx.lastContextTokens = tokens;
+  await afterEventBookkeeping(ctx, turnCompleted(turnId));
+}
+
+describe("auto-rotation trigger", () => {
+  it("rotates at the crossing boundary: threshold event first, then session_rotated initiated_by auto, exactly once", async () => {
+    vi.useRealTimers();
+    const stubRunner = path.join(stubDir, "fake-runner");
+    await fs.writeFile(stubRunner, '#!/bin/sh\ntouch "$CLAW_DRIVE_HOME/sessions/$2/ready"\n', { mode: 0o755 });
+    await fs.chmod(stubRunner, 0o755);
+    process.env.CLAW_DRIVE_BIN = stubRunner;
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake);
+    const loop = runStdoutLoop(ctx);
+    const sendResp = await handleRequest(ctx, { id: "s1", op: "send_turn", message: "go" });
+    expect(sendResp).toMatchObject({ ok: true, result: { turn_id: "turn_1" } });
+    // Under threshold on the first turn (the bootstrap gate must not trip),
+    // over on the second: crossing happens at turn_2's boundary.
+    fake.stdout.write(assistantWithUsage(500) + resultLine(0.01));
+    await settleUntil(() => ctx.completedTurns === 1);
+    const send2 = await handleRequest(ctx, { id: "s2", op: "send_turn", message: "more" });
+    expect(send2).toMatchObject({ ok: true, result: { turn_id: "turn_2" } });
+    fake.stdout.write(assistantWithUsage(5000) + resultLine(0.02));
+    // Handover turn is turn_3 (state.turns numbering). Complete it with a
+    // handover block; the choreography then scaffolds the successor.
+    await completeHandoverTurn(ctx, "turn_3", true);
+    // The lineage pointer is written before session_rotated is appended, so
+    // the observed condition is the event itself, on disk.
+    await settleUntilAsync(async () => ofKind(await events(), "session_rotated").length > 0);
+    const evs = await events();
+    const rotated = ofKind(evs, "session_rotated");
+    expect(rotated).toHaveLength(1);
+    expect(rotated[0].initiated_by).toBe("auto");
+    const idxThreshold = evs.findIndex((e) => e.kind === "context_threshold_reached");
+    const idxRotated = evs.findIndex((e) => e.kind === "session_rotated");
+    expect(idxThreshold).toBeGreaterThanOrEqual(0);
+    expect(idxThreshold).toBeLessThan(idxRotated);
+    expect((await readState(statePath(SID)))?.rotated_to).toBe(rotated[0].new_session_id);
+    fake.stdout.end();
+    await loop;
+    fake.emitter.emit("exit", 0, null);
+    await settleUntil(() => exitCalls.length > 0);
+  });
+
+  it("manual mode never auto-rotates: over-threshold boundaries emit threshold events only", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake, { policy: { rotation: { threshold_tokens: 1000, mode: "manual" } } });
+    await boundary(ctx, "t1", 500);
+    await boundary(ctx, "t2", 5000);
+    await boundary(ctx, "t3", 6000);
+    await settle();
+    const evs = await events();
+    expect(ofKind(evs, "context_threshold_reached")).toHaveLength(2);
+    expect(ofKind(evs, "session_rotated")).toHaveLength(0);
+    expect(ofKind(evs, "rotation_refused")).toHaveLength(0);
+    expect(ofKind(evs, "rotation_failed")).toHaveLength(0);
+    expect(ctx.rotating).toBe(false);
+  });
+
+  it("a send that wins the boundary race defers the attempt silently; the next boundary retries", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake);
+    await boundary(ctx, "t1", 500);
+    await boundary(ctx, "t2", 5000);
+    // The attempt is queued behind setImmediate; a send that lands first
+    // (synchronously marking the turn in flight) must make it a no-op.
+    ctx.turnInFlight = true;
+    await settle();
+    let evs = await events();
+    expect(ofKind(evs, "rotation_refused")).toHaveLength(0);
+    expect(ofKind(evs, "rotation_failed")).toHaveLength(0);
+    expect(ofKind(evs, "session_rotated")).toHaveLength(0);
+    expect(ctx.autoRotateLatched).toBe(false);
+    // The racing turn completes: the next boundary retries the attempt —
+    // observed here through the rotation starting (its handover turn opens).
+    ctx.turnInFlight = false;
+    await boundary(ctx, "t3", 5000);
+    await settleUntil(() => ctx.rotating);
+    // Close the attempt deterministically: two handover tries, no handover
+    // block → rotation_failed (exercised in depth below).
+    await completeHandoverTurn(ctx, "turn_1", false);
+    await completeHandoverTurn(ctx, "turn_2", false);
+    await settleUntil(() => !ctx.rotating);
+    evs = await events();
+    expect(ofKind(evs, "rotation_failed")).toHaveLength(1);
+  });
+});
+
+describe("auto-rotation latch", () => {
+  it("bootstrap refusal fires once and latches; threshold events keep re-firing", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake);
+    await boundary(ctx, "t1", 5000); // FIRST completed turn over threshold
+    await settleUntil(() => !ctx.rotating && ctx.autoRotateLatched);
+    await boundary(ctx, "t2", 6000);
+    await boundary(ctx, "t3", 7000);
+    await settle();
+    const evs = await events();
+    const refused = ofKind(evs, "rotation_refused");
+    expect(refused).toHaveLength(1);
+    expect(refused[0].reason).toBe("bootstrap_exceeds_threshold");
+    expect(refused[0].initiated_by).toBe("auto");
+    expect(ofKind(evs, "context_threshold_reached")).toHaveLength(3);
+    expect(ofKind(evs, "session_rotated")).toHaveLength(0);
+  });
+
+  it("max_generations refusal runs the terminal-handover checkpoint once, then latches", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake, { generation: 10 });
+    await boundary(ctx, "t1", 500);
+    await boundary(ctx, "t2", 5000);
+    // The cap's refusal choreography runs a real handover turn (turn_1 by
+    // state.turns numbering — no send_turn ever bumped it here).
+    await completeHandoverTurn(ctx, "turn_1", true);
+    await settleUntil(() => !ctx.rotating && ctx.autoRotateLatched);
+    await boundary(ctx, "t3", 6000);
+    await settle();
+    const evs = await events();
+    const refused = ofKind(evs, "rotation_refused");
+    expect(refused).toHaveLength(1);
+    expect(refused[0].reason).toBe("max_generations");
+    expect(refused[0].initiated_by).toBe("auto");
+    const handover = await fs.readFile(handoverPath(SID), "utf-8");
+    expect(handover).toContain("state for the successor");
+    expect(ofKind(evs, "session_rotated")).toHaveLength(0);
+  });
+
+  it("a failed rotation latches: handover-generation failure fires once, later boundaries stay quiet", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake);
+    await boundary(ctx, "t1", 500);
+    await boundary(ctx, "t2", 5000);
+    await completeHandoverTurn(ctx, "turn_1", false);
+    await completeHandoverTurn(ctx, "turn_2", false);
+    await settleUntil(() => !ctx.rotating && ctx.autoRotateLatched);
+    await boundary(ctx, "t3", 6000);
+    await settle();
+    const evs = await events();
+    const failed = ofKind(evs, "rotation_failed");
+    expect(failed).toHaveLength(1);
+    expect(String(failed[0].reason)).toContain("handover_generation_failed");
+    expect(failed[0].initiated_by).toBe("auto");
+  });
+
+  it("update_policy re-arms the latch iff the rotation block changes", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake);
+    ctx.autoRotateLatched = true;
+    // Byte-identical rotation block → still latched.
+    const same = await handleRequest(ctx, {
+      id: "p1",
+      op: "update_policy",
+      policy: { rotation: { threshold_tokens: 1000, mode: "auto" } },
+    });
+    expect(same).toMatchObject({ ok: true });
+    expect(ctx.autoRotateLatched).toBe(true);
+    // Changed threshold → re-armed.
+    const changed = await handleRequest(ctx, {
+      id: "p2",
+      op: "update_policy",
+      policy: { rotation: { threshold_tokens: 200000, mode: "auto" } },
+    });
+    expect(changed).toMatchObject({ ok: true });
+    expect(ctx.autoRotateLatched).toBe(false);
+  });
+
+  it("a crashed attempt (its own refusal emit throws) latches instead of leaking an unhandled rejection", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake);
+    await boundary(ctx, "t1", 5000); // FIRST completed turn over threshold —
+    // queues the bootstrap-refusal attempt via setImmediate, not yet run:
+    // boundary's own await chain has fully unwound by the time this line
+    // runs, but the queued immediate only fires on the event loop's next
+    // check phase, after this synchronous continuation finishes.
+    rmSync(sessionDir(SID), { recursive: true, force: true });
+    // performRotation's own rotation_refused emit now throws ENOENT (its
+    // events.jsonl directory is gone) instead of completing. Observing the
+    // latch land — rather than settleUntil timing out — is the proof the
+    // dispatch chain's .catch, not just its .then, is wired: without it the
+    // rejection would go unhandled and neither this assertion nor the test
+    // process itself would survive to check it.
+    await settleUntil(() => ctx.autoRotateLatched);
+    expect(ctx.rotating).toBe(false);
   });
 });
