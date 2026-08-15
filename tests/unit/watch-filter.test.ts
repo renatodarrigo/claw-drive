@@ -139,7 +139,7 @@ describe("userFilter", () => {
 });
 
 describe("DECISION_ONLY_KINDS preset", () => {
-  it("includes the ten human-attention kinds", () => {
+  it("includes the eleven human-attention kinds", () => {
     expect(DECISION_ONLY_KINDS.has("tool_decision_required")).toBe(true);
     expect(DECISION_ONLY_KINDS.has("tool_decision_resolved")).toBe(true);
     expect(DECISION_ONLY_KINDS.has("turn_failed")).toBe(true);
