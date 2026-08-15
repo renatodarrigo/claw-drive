@@ -4,7 +4,7 @@
 
 ### Added
 
-- **`rotation.mode: "auto"` — the runner rotates the session itself.** At the completed-turn boundary that crosses `threshold_tokens`, the runner emits `context_threshold_reached` and then runs the standard rotation choreography — never mid-turn. Outcomes are stamped `initiated_by: "auto" | "manual"`; a `send_turn` racing an in-flight rotation is refused with `ROTATION_IN_PROGRESS` instead of interleaving with the handover. A one-shot latch stops repeat attempts after a refusal or failure (they cannot succeed until the config changes, and each attempt costs a handover turn); an `update_policy` that changes the rotation block re-arms it.
+- **`rotation.mode: "auto"` — the runner rotates the session itself.** At the completed-turn boundary that crosses `threshold_tokens`, the runner emits `context_threshold_reached` and then runs the standard rotation choreography — never mid-turn. Outcomes are stamped `initiated_by: "auto" | "manual"`; a `send_turn` racing an in-flight rotation is refused with `ROTATION_IN_PROGRESS` instead of interleaving with the handover. A one-shot latch stops repeat attempts after a refusal or failure (refusals are deterministic until the config changes, and every attempt costs a handover turn); an `update_policy` that changes the rotation block re-arms it.
 - **`budget.warn_cost_usd` — a spend warning line below the cap.** Crossing it emits the watch-surfaced `cost_threshold_reached` event (reading, line, cap, generation) once per runner process, on completed and failed turns alike — error results carry cost. Not a cap: nothing stops. Must sit strictly below `max_cost_usd` when both are present; works alone for monitoring-only setups.
 
 ## [1.6.0] — 2026-08-14
