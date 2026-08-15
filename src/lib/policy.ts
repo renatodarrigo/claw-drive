@@ -45,6 +45,10 @@ export interface PolicyObject {
     max_consecutive_errors?: number;
     /** Cost-cap: lineage-cumulative estimated spend ceiling in USD. */
     max_cost_usd?: number;
+    /** Cost warning: emit cost_threshold_reached once per runner process when
+     * the lineage-cumulative spend reaches this. Not a cap — nothing stops.
+     * Must be strictly below max_cost_usd when both are present. */
+    warn_cost_usd?: number;
   };
   /**
    * Optional per-segment Bash composition mode. Absent ⇒ "off" (today's
@@ -58,12 +62,14 @@ export interface PolicyObject {
    * tracking, no events — no behaviour change). threshold_tokens: emit
    * context_threshold_reached and allow `rotate` once B's main-loop context
    * reaches this. max_generations: lineage cap (absent ⇒ 10; 0 ⇒ unlimited).
-   * mode: only "manual" in this release — "auto" is rejected as reserved.
+   * mode: "manual" (absent ⇒ manual) — rotation only on command — or "auto":
+   * the runner itself initiates rotation at the completed-turn boundary that
+   * observes context at-or-over threshold_tokens.
    */
   rotation?: {
     threshold_tokens: number;
     max_generations?: number;
-    mode?: "manual";
+    mode?: "manual" | "auto";
   };
 }
 
@@ -486,6 +492,7 @@ export function validatePolicy(p: unknown): { ok: true } | { ok: false; error: s
       "max_wall_clock_seconds",
       "max_consecutive_errors",
       "max_cost_usd",
+      "warn_cost_usd",
     ];
     for (const key of Object.keys(b)) {
       if (key.startsWith("_")) continue;
@@ -500,6 +507,15 @@ export function validatePolicy(p: unknown): { ok: true } | { ok: false; error: s
         return { ok: false, error: `budget.${field} must be a positive number` };
       }
     }
+    const warn = b.warn_cost_usd;
+    const maxCost = b.max_cost_usd;
+    if (typeof warn === "number" && typeof maxCost === "number" && warn >= maxCost) {
+      return {
+        ok: false,
+        error:
+          "budget.warn_cost_usd must be less than max_cost_usd (a warning at or above the cap can never fire before it)",
+      };
+    }
   }
   if (obj.bash_composition !== undefined) {
     if (obj.bash_composition !== "off" && obj.bash_composition !== "per_segment") {
@@ -508,7 +524,7 @@ export function validatePolicy(p: unknown): { ok: true } | { ok: false; error: s
   }
   // rotation (context rotation): optional context-rotation config. threshold_tokens is
   // required when the block is present; max_generations is a non-negative
-  // integer (0 = unlimited); mode accepts only "manual" — "auto" is reserved.
+  // integer (0 = unlimited); mode accepts "manual" or "auto".
   if (obj.rotation !== undefined) {
     if (typeof obj.rotation !== "object" || obj.rotation === null || Array.isArray(obj.rotation)) {
       return { ok: false, error: "rotation must be an object" };
@@ -528,16 +544,8 @@ export function validatePolicy(p: unknown): { ok: true } | { ok: false; error: s
     if (mg !== undefined && (typeof mg !== "number" || !Number.isInteger(mg) || mg < 0)) {
       return { ok: false, error: "rotation.max_generations must be a non-negative integer (0 = unlimited)" };
     }
-    if (r.mode !== undefined) {
-      if (r.mode === "auto") {
-        return {
-          ok: false,
-          error: 'rotation.mode "auto" is reserved for a future release; only "manual" is supported',
-        };
-      }
-      if (r.mode !== "manual") {
-        return { ok: false, error: 'rotation.mode must be "manual"' };
-      }
+    if (r.mode !== undefined && r.mode !== "manual" && r.mode !== "auto") {
+      return { ok: false, error: 'rotation.mode must be "manual" or "auto"' };
     }
   }
   return { ok: true };

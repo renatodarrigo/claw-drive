@@ -388,3 +388,106 @@ describe("enforcement-site base term (lineage total = base + reading)", () => {
     expect(ctx.state.cost_usd).toBeCloseTo(5.5, 10);
   });
 });
+
+describe("cost_threshold_reached warning", () => {
+  const warnPolicy = {
+    rotation: { threshold_tokens: 100_000 },
+    budget: { warn_cost_usd: 1.0, max_cost_usd: 5.0 },
+  };
+
+  it("fires at the crossing completed-turn boundary with the full payload", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake, { policy: warnPolicy, generation: 3 });
+    const loop = runStdoutLoop(ctx);
+    fake.stdout.write(resultLine(1.25));
+    fake.stdout.end();
+    await loop;
+    const evs = (await readEventsSince(eventsPath(SID), 0)).events;
+    const warns = evs.filter((e) => e.kind === "cost_threshold_reached") as unknown as Array<Record<string, unknown>>;
+    expect(warns).toHaveLength(1);
+    expect(warns[0]).toMatchObject({
+      cost_usd: 1.25,
+      warn_cost_usd: 1.0,
+      generation: 3,
+      max_cost_usd: 5.0,
+    });
+    // Emitted AFTER the boundary event it rode in on.
+    const idxTurn = evs.findIndex((e) => e.kind === "turn_completed");
+    const idxWarn = evs.findIndex((e) => e.kind === "cost_threshold_reached");
+    expect(idxTurn).toBeGreaterThanOrEqual(0);
+    expect(idxWarn).toBeGreaterThan(idxTurn);
+  });
+
+  it("fires on a FAILED turn's boundary — error results carry cost", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake, { policy: warnPolicy });
+    const loop = runStdoutLoop(ctx);
+    fake.stdout.write(resultLine(1.5, { error: true }));
+    fake.stdout.end();
+    await loop;
+    const evs = (await readEventsSince(eventsPath(SID), 0)).events;
+    expect(evs.filter((e) => e.kind === "cost_threshold_reached")).toHaveLength(1);
+    expect(evs.find((e) => e.kind === "turn_failed")).toBeDefined();
+  });
+
+  it("fires once per runner process: staying above re-fires nothing", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake, { policy: warnPolicy });
+    const loop = runStdoutLoop(ctx);
+    fake.stdout.write(resultLine(1.25));
+    fake.stdout.write(resultLine(1.5));
+    fake.stdout.write(resultLine(2.0));
+    fake.stdout.end();
+    await loop;
+    const evs = (await readEventsSince(eventsPath(SID), 0)).events;
+    expect(evs.filter((e) => e.kind === "cost_threshold_reached")).toHaveLength(1);
+  });
+
+  it("update_policy re-arms iff warn_cost_usd changes", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake, { policy: warnPolicy });
+    const loop = runStdoutLoop(ctx);
+    fake.stdout.write(resultLine(1.25));
+    fake.stdout.end();
+    await loop;
+    // Same warn value → still warned; changed warn value → re-armed.
+    const same = await handleRequest(ctx, {
+      id: "p1",
+      op: "update_policy",
+      policy: { rotation: { threshold_tokens: 100_000 }, budget: { warn_cost_usd: 1.0, max_cost_usd: 5.0 } },
+    });
+    expect(same).toMatchObject({ ok: true });
+    expect(ctx.costWarned).toBe(true);
+    const changed = await handleRequest(ctx, {
+      id: "p2",
+      op: "update_policy",
+      policy: { rotation: { threshold_tokens: 100_000 }, budget: { warn_cost_usd: 2.0, max_cost_usd: 5.0 } },
+    });
+    expect(changed).toMatchObject({ ok: true });
+    expect(ctx.costWarned).toBe(false);
+  });
+
+  it("omits max_cost_usd from the payload when no cap is configured, and stays silent when warn is unconfigured", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake, { policy: { rotation: { threshold_tokens: 100_000 }, budget: { warn_cost_usd: 1.0 } } });
+    const loop = runStdoutLoop(ctx);
+    fake.stdout.write(resultLine(1.25));
+    fake.stdout.end();
+    await loop;
+    const evs = (await readEventsSince(eventsPath(SID), 0)).events;
+    const warn = evs.find((e) => e.kind === "cost_threshold_reached") as unknown as Record<string, unknown>;
+    expect(warn).toBeDefined();
+    expect("max_cost_usd" in warn).toBe(false);
+
+    // A policy with no budget at all never warns (makeCtx starts a fresh
+    // events file, so any warning here would be this stream's own).
+    const fake2 = makeFakeB();
+    const ctx2 = await makeCtx(fake2);
+    const loop2 = runStdoutLoop(ctx2);
+    fake2.stdout.write(resultLine(99));
+    fake2.stdout.end();
+    await loop2;
+    const evs2 = (await readEventsSince(eventsPath(SID), 0)).events;
+    expect(evs2.filter((e) => e.kind === "cost_threshold_reached")).toHaveLength(0);
+  });
+});

@@ -139,13 +139,14 @@ describe("userFilter", () => {
 });
 
 describe("DECISION_ONLY_KINDS preset", () => {
-  it("includes the ten human-attention kinds", () => {
+  it("includes the eleven human-attention kinds", () => {
     expect(DECISION_ONLY_KINDS.has("tool_decision_required")).toBe(true);
     expect(DECISION_ONLY_KINDS.has("tool_decision_resolved")).toBe(true);
     expect(DECISION_ONLY_KINDS.has("turn_failed")).toBe(true);
     expect(DECISION_ONLY_KINDS.has("error")).toBe(true);
     expect(DECISION_ONLY_KINDS.has("session_stopped")).toBe(true);
     expect(DECISION_ONLY_KINDS.has("context_threshold_reached")).toBe(true);
+    expect(DECISION_ONLY_KINDS.has("cost_threshold_reached")).toBe(true);
     expect(DECISION_ONLY_KINDS.has("rotation_failed")).toBe(true);
     expect(DECISION_ONLY_KINDS.has("rotation_refused")).toBe(true);
     expect(DECISION_ONLY_KINDS.has("tool_call_result")).toBe(true);
@@ -158,13 +159,13 @@ describe("DECISION_ONLY_KINDS preset", () => {
     expect(DECISION_ONLY_KINDS.has("session_rotated")).toBe(false);
   });
 
-  it("has exactly 10 entries", () => {
-    expect(DECISION_ONLY_KINDS.size).toBe(10);
+  it("has exactly 11 entries", () => {
+    expect(DECISION_ONLY_KINDS.size).toBe(11);
   });
 });
 
 describe("VALID_WATCH_KINDS", () => {
-  it("contains all 12 kinds shouldEmit can pass", () => {
+  it("contains all 13 kinds shouldEmit can pass", () => {
     expect(VALID_WATCH_KINDS.has("tool_decision_required")).toBe(true);
     expect(VALID_WATCH_KINDS.has("tool_decision_resolved")).toBe(true);
     expect(VALID_WATCH_KINDS.has("tool_output_provided")).toBe(true);
@@ -173,6 +174,7 @@ describe("VALID_WATCH_KINDS", () => {
     expect(VALID_WATCH_KINDS.has("error")).toBe(true);
     expect(VALID_WATCH_KINDS.has("session_stopped")).toBe(true);
     expect(VALID_WATCH_KINDS.has("context_threshold_reached")).toBe(true);
+    expect(VALID_WATCH_KINDS.has("cost_threshold_reached")).toBe(true);
     expect(VALID_WATCH_KINDS.has("session_rotated")).toBe(true);
     expect(VALID_WATCH_KINDS.has("rotation_failed")).toBe(true);
     expect(VALID_WATCH_KINDS.has("rotation_refused")).toBe(true);
@@ -188,8 +190,8 @@ describe("VALID_WATCH_KINDS", () => {
     expect(VALID_WATCH_KINDS.has("tool_call_started")).toBe(false);
   });
 
-  it("has exactly 13 entries", () => {
-    expect(VALID_WATCH_KINDS.size).toBe(13);
+  it("has exactly 14 entries", () => {
+    expect(VALID_WATCH_KINDS.size).toBe(14);
   });
 
   it("DECISION_ONLY_KINDS is a subset of VALID_WATCH_KINDS", () => {

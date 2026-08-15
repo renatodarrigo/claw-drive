@@ -379,4 +379,129 @@ expect_file_contains "the walk exits 0 at lineage end"  "$WLOUT" "EXIT=0"
 expect_exit "watch --all --follow-lineage is a usage error" 2 "$BIN" watch --all --follow-lineage
 rm -rf "$TMPHOME/sessions/$LIN_A" "$TMPHOME/sessions/$LIN_B"
 
+section "auto-rotation (stub session process)"
+# A stub claude that crosses the context threshold on its first driven turn
+# (assistant usage line + result line), then answers the auto-initiated
+# handover turn with a handover block. One send must produce the whole auto
+# choreography: context_threshold_reached, then session_rotated stamped
+# initiated_by auto, a live successor, and the predecessor runner exiting.
+AUTO_STUB_DIR="$(mktemp -d)"
+AUTO_CWD="$(mktemp -d "$HOME/.cache/claw-e2e-cwd.XXXXXX")"
+# Turn 1 stays UNDER the threshold — a first completed turn at-or-over it is
+# the bootstrap-insta-exceed refusal by design, never a rotation. Turn 2
+# crosses; turn 3 is the auto-initiated handover.
+cat > "$AUTO_STUB_DIR/claude" <<'EOF'
+#!/bin/sh
+IFS= read -r _line
+printf '{"type":"assistant","message":{"role":"assistant","content":[],"usage":{"input_tokens":10000}},"parent_tool_use_id":null}\n'
+printf '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"result":"ok","total_cost_usd":0.01}\n'
+IFS= read -r _line
+printf '{"type":"assistant","message":{"role":"assistant","content":[],"usage":{"input_tokens":50000}},"parent_tool_use_id":null}\n'
+printf '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"result":"ok","total_cost_usd":0.02}\n'
+IFS= read -r _line
+printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"<handover>auto successor state</handover>"}]},"parent_tool_use_id":null}\n'
+printf '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"result":"ok","total_cost_usd":0.03}\n'
+while IFS= read -r _l; do :; done
+exit 0
+EOF
+chmod +x "$AUTO_STUB_DIR/claude"
+AUTOPOLICY="$TMPHOME/auto-policy.json"
+printf '{"rotation":{"threshold_tokens":40000,"mode":"auto"}}\n' > "$AUTOPOLICY"
+
+SID_AUTO="$(PATH="$AUTO_STUB_DIR:$PATH" "$BIN" start --cwd "$AUTO_CWD" --policy "$AUTOPOLICY")"
+if [[ "$SID_AUTO" == sess_* ]]; then
+  pass "start accepts a rotation.mode auto policy (id: $SID_AUTO)"
+else
+  fail "start accepts a rotation.mode auto policy (got: $SID_AUTO)"
+fi
+
+AUTO_EVJ="$TMPHOME/sessions/$SID_AUTO/events.jsonl"
+# The driver serializes turns: send, observe the boundary, send again.
+"$BIN" send "$SID_AUTO" "warm up" >/dev/null 2>&1 || true
+for _ in $(seq 1 50); do
+  grep -q '"kind":"turn_completed"' "$AUTO_EVJ" 2>/dev/null && break
+  sleep 0.2
+done
+"$BIN" send "$SID_AUTO" "fill the window" >/dev/null 2>&1 || true
+for _ in $(seq 1 75); do
+  grep -q '"kind":"session_rotated"' "$AUTO_EVJ" 2>/dev/null && break
+  sleep 0.2
+done
+expect_file_contains "threshold event recorded"        "$AUTO_EVJ" '"kind":"context_threshold_reached"'
+expect_file_contains "auto rotation recorded"          "$AUTO_EVJ" '"kind":"session_rotated"'
+expect_file_contains "rotation stamped initiated_by auto" "$AUTO_EVJ" '"initiated_by":"auto"'
+
+SID_AUTO_SUCC="$(grep -o '"rotated_to": "[^"]*"' "$TMPHOME/sessions/$SID_AUTO/state.json" 2>/dev/null | head -1 | cut -d'"' -f4)"
+if [[ "$SID_AUTO_SUCC" == sess_* ]]; then
+  pass "predecessor state points at the successor ($SID_AUTO_SUCC)"
+else
+  fail "predecessor state points at the successor (got: ${SID_AUTO_SUCC:-none})"
+fi
+if [[ -f "$TMPHOME/sessions/$SID_AUTO_SUCC/state.json" ]]; then
+  pass "successor session scaffolded"
+else
+  fail "successor session scaffolded"
+fi
+
+APID="$(cat "$TMPHOME/sessions/$SID_AUTO/runner.pid" 2>/dev/null || true)"
+if [[ -n "$APID" ]]; then
+  for _ in $(seq 1 25); do
+    kill -0 "$APID" 2>/dev/null || break
+    sleep 0.2
+  done
+  if kill -0 "$APID" 2>/dev/null; then
+    fail "predecessor runner exits after auto-rotation (undead runner, pid $APID)"
+    kill -9 "$APID" 2>/dev/null || true
+  else
+    pass "predecessor runner exits after auto-rotation"
+  fi
+else
+  fail "predecessor runner exits after auto-rotation (no runner.pid recorded)"
+fi
+expect_exit "successor stop cleans up" 0 "$BIN" stop "$SID_AUTO_SUCC"
+rm -rf "$AUTO_STUB_DIR" "$AUTO_CWD"
+
+section "cost warning surfaces through watch"
+# Fabricated events file: the watch surface must render cost_threshold_reached
+# and --only must select it — no live runner needed.
+COSTW_SID="sess_20200101T000000_cccccc"
+mkdir -p "$TMPHOME/sessions/$COSTW_SID"
+printf '{"session_id":"%s","status":"stopped","runner_pid":null,"generation":1}\n' "$COSTW_SID" > "$TMPHOME/sessions/$COSTW_SID/state.json"
+{
+  printf '{"seq":1,"at":"t","kind":"cost_threshold_reached","turn_id":"turn_3","cost_usd":4.21,"warn_cost_usd":4.0,"generation":1,"max_cost_usd":5.0}\n'
+  printf '{"seq":2,"at":"t","kind":"session_stopped","reason":"done","exit_code":0}\n'
+} > "$TMPHOME/sessions/$COSTW_SID/events.jsonl"
+
+CWOUT="$TMPHOME/watch-costwarn-out.txt"
+( "$BIN" watch "$COSTW_SID" --replay >"$CWOUT" 2>&1; echo "EXIT=$?" >>"$CWOUT" ) &
+CW_PID=$!
+for _ in $(seq 1 50); do
+  kill -0 "$CW_PID" 2>/dev/null || break
+  sleep 0.2
+done
+if kill -0 "$CW_PID" 2>/dev/null; then
+  fail "watch replays a stream containing the cost warning and exits (still running after 10s)"
+  kill -9 "$CW_PID" 2>/dev/null || true
+else
+  pass "watch replays a stream containing the cost warning and exits"
+fi
+expect_file_contains "watch surfaces cost_threshold_reached" "$CWOUT" '"kind":"cost_threshold_reached"'
+expect_file_contains "the warning payload rides through"     "$CWOUT" '"warn_cost_usd":4'
+
+CWONLY="$TMPHOME/watch-costwarn-only.txt"
+( "$BIN" watch "$COSTW_SID" --replay --only cost_threshold_reached >"$CWONLY" 2>&1; echo "EXIT=$?" >>"$CWONLY" ) &
+CWO_PID=$!
+for _ in $(seq 1 50); do
+  kill -0 "$CWO_PID" 2>/dev/null || break
+  sleep 0.2
+done
+kill -9 "$CWO_PID" 2>/dev/null || true
+expect_file_contains "--only selects the new kind"          "$CWONLY" '"kind":"cost_threshold_reached"'
+if grep -q '"kind":"session_stopped"' "$CWONLY"; then
+  fail "--only cost_threshold_reached excludes other kinds"
+else
+  pass "--only cost_threshold_reached excludes other kinds"
+fi
+rm -rf "$TMPHOME/sessions/$COSTW_SID"
+
 summary

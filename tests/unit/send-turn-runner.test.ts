@@ -276,6 +276,44 @@ describe("provide_tool_output op — dead-B guard (twin of send_turn's)", () => 
   });
 });
 
+describe("send during rotation", () => {
+  it("refuses ROTATION_IN_PROGRESS: no event, no stdin write, turns not bumped", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake, { rotating: true });
+    const resp = await handleRequest(ctx, { id: "s1", op: "send_turn", message: "hello" });
+    expect(resp).toMatchObject({ ok: false, error: "ROTATION_IN_PROGRESS" });
+    expect((resp as { message: string }).message).toContain("session_rotated");
+    const evs = (await readEventsSince(eventsPath(SID), 0)).events;
+    expect(evs.find((e) => e.kind === "turn_started")).toBeUndefined();
+    expect(fake.writes).toHaveLength(0);
+    expect(ctx.state.turns).toBe(0);
+  });
+
+  it("sends normally when no rotation is in flight", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake);
+    const resp = await handleRequest(ctx, { id: "s2", op: "send_turn", message: "hello" });
+    expect(resp).toMatchObject({ ok: true, result: { turn_id: "turn_1" } });
+    expect(fake.writes).toHaveLength(1);
+  });
+
+  it("admits the rotation's own sanctioned handover send", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake, { rotating: true, rotationSendId: "handover_1" });
+    const resp = await handleRequest(ctx, { id: "handover_1", op: "send_turn", message: "handover instruction" });
+    expect(resp).toMatchObject({ ok: true, result: { turn_id: "turn_1" } });
+    expect(fake.writes).toHaveLength(1);
+  });
+
+  it("refuses a handover-shaped id when no sanctioned send is in flight", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake, { rotating: true });
+    const resp = await handleRequest(ctx, { id: "handover_1", op: "send_turn", message: "hello" });
+    expect(resp).toMatchObject({ ok: false, error: "ROTATION_IN_PROGRESS" });
+    expect(fake.writes).toHaveLength(0);
+  });
+});
+
 describe("attachBStdinErrorAbsorber", () => {
   it("attaches exactly one error listener and absorbs an emitted error, logging it to stderr", () => {
     const fake = makeFakeB();

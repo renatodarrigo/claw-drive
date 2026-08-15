@@ -119,3 +119,35 @@ export function checkRotateGate(input: RotateGateInput): RotateBlocker | null {
   }
   return null;
 }
+
+/** Auto-rotation advisory pre-check, run at a completed-turn boundary. The
+ * rotate gate inside the rotation op is the single authority — this only
+ * decides whether an attempt is worth dispatching at all. */
+export interface AutoRotationCheckInput {
+  cfg: RotationConfig | null;
+  contextTokens: number | null;
+  latched: boolean;
+  rotating: boolean;
+}
+
+export function shouldAttemptAutoRotation(input: AutoRotationCheckInput): boolean {
+  if (!input.cfg || input.cfg.mode !== "auto") return false;
+  if (input.latched || input.rotating) return false;
+  return isOverThreshold(input.cfg, input.contextTokens);
+}
+
+/**
+ * Which failed rotation outcomes latch auto-rotation off. Policy refusals
+ * are deterministic w.r.t. (config, session facts) — generation never
+ * decreases and the first turn's reading is fixed — so retrying without a
+ * config change is provably futile; failures each burn a full handover turn
+ * per attempt, so unbounded retry is the churn the latch exists to prevent.
+ * Transient blockers defer instead: the next boundary retries for free.
+ */
+export function autoOutcomeLatches(error: string): boolean {
+  return (
+    error === "MAX_GENERATIONS" ||
+    error === "BOOTSTRAP_EXCEEDS_THRESHOLD" ||
+    error === "ROTATION_FAILED"
+  );
+}

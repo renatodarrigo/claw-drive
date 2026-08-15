@@ -30,6 +30,7 @@ export function shouldEmit(ev: Event): boolean {
     case "session_rotated":
     case "rotation_failed":
     case "rotation_refused":
+    case "cost_threshold_reached":
       return true;
     case "tool_call_result":
       return (ev as any).is_error === true;
@@ -56,12 +57,13 @@ export const VALID_WATCH_KINDS: ReadonlySet<string> = new Set([
   "session_rotated",
   "rotation_failed",
   "rotation_refused",
+  "cost_threshold_reached",
   "tool_call_result",
   "idle",
 ]);
 
 /**
- * The `--decision-only` preset: the ten kinds that genuinely require human
+ * The `--decision-only` preset: the eleven kinds that genuinely require human
  * attention. Drops `turn_completed` (progress) and `tool_output_provided`
  * (confirmation that human-supplied output was relayed). Includes the three
  * rotation kinds that need a human decision (`context_threshold_reached`,
@@ -78,6 +80,7 @@ export const DECISION_ONLY_KINDS: ReadonlySet<string> = new Set([
   "context_threshold_reached",
   "rotation_failed",
   "rotation_refused",
+  "cost_threshold_reached",
   "tool_call_result",
   "idle",
 ]);

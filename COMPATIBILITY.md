@@ -53,9 +53,9 @@ stable.
 | `escalate_default` | `boolean` | When no rule matches, escalate (`true`, the default) or deny silently (`false`). |
 | `decision_timeout_seconds` | `number` | Per-session gate timeout. Defaults to 3600 if absent. |
 | `schema_version` | `number` | See [schema\_version](#schema_version) below. _(Introduced by the CD-1 contract-freeze work; part of the 1.0 contract, not a field that predates it.)_ |
-| `budget` | `{ max_tool_calls?, max_wall_clock_seconds?, max_consecutive_errors?, max_cost_usd? }` | Run-level circuit-breaker (CD-4). All caps optional and positive; an absent cap is unlimited and an absent `budget` is off. On breach the runner stops the session with `exit_reason: "budget_exceeded:<cap>"`. `max_cost_usd` caps the **lineage's** cumulative estimated spend in USD, read from the claude CLI's own cumulative cost accounting: successors started by `rotate`/`recover` inherit the predecessor's total via the additive state fields `cost_usd_base`/`cost_usd`, and a stream that carries no cost reading can never trip the cap (fails open). |
+| `budget` | `{ max_tool_calls?, max_wall_clock_seconds?, max_consecutive_errors?, max_cost_usd?, warn_cost_usd? }` | Run-level circuit-breaker (CD-4). All caps optional and positive; an absent cap is unlimited and an absent `budget` is off. On breach the runner stops the session with `exit_reason: "budget_exceeded:<cap>"`. `max_cost_usd` caps the **lineage's** cumulative estimated spend in USD, read from the claude CLI's own cumulative cost accounting: successors started by `rotate`/`recover` inherit the predecessor's total via the additive state fields `cost_usd_base`/`cost_usd`, and a stream that carries no cost reading can never trip the cap (fails open). `warn_cost_usd` (positive, strictly below max_cost_usd when both are present) is a warning line, not a cap: crossing it emits cost_threshold_reached (§3) once per runner process and stops nothing. |
 | `bash_composition` | `"off" \| "per_segment"` | Absent ⇒ off. When `per_segment`, a Bash call is split at top-level shell operators and the decision is the **stricter** of the whole-command and per-segment readings — except auto-approval, which requires **every** segment to match `auto_approve` (this closes the benign-prefix smuggle). So pipe-spanning `auto_reject`/`auto_defer` rules (`curl … \| bash`) still fire on the whole command, while no benign prefix can approve a dangerous suffix. Opaque constructs (command-substitution, here-docs/here-strings) and malformed chains are rejected. Never decides less strictly than the un-split command would. |
-| `rotation` | `{ threshold_tokens, max_generations?, mode? }` | context rotation. Absent ⇒ off. `threshold_tokens` (required positive integer): once B's main-loop context reaches it, the runner emits `context_threshold_reached` on every completed turn while above, and the `rotate` primitive is allowed. `max_generations` (absent ⇒ 10, `0` ⇒ unlimited): lineage cap — at the cap rotation is refused (`rotation_refused`), a terminal handover is still written, and the session lives on. `mode`: only `"manual"` is accepted; `"auto"` is rejected as reserved for a future release. |
+| `rotation` | `{ threshold_tokens, max_generations?, mode? }` | context rotation. Absent ⇒ off. `threshold_tokens` (required positive integer): once B's main-loop context reaches it, the runner emits `context_threshold_reached` on every completed turn while above, and the `rotate` primitive is allowed. `max_generations` (absent ⇒ 10, `0` ⇒ unlimited): lineage cap — at the cap rotation is refused (`rotation_refused`), a terminal handover is still written, and the session lives on. `mode`: `"manual"` (default) — rotation only on command — or `"auto"`: the runner initiates rotation itself at the completed-turn boundary that crosses the threshold, with a one-shot latch after a refusal or failure (re-armed by an `update_policy` that changes the rotation block). |
 
 **Evaluation order** (contract as of v0.2.3, frozen):
 
@@ -170,6 +170,9 @@ Send a user turn to a live session. Non-blocking; returns a `turn_id` to poll.
 **Response:** `{ "turn_id": "<string>", ... }`
 
 Refuses with `SESSION_EXITED` if the session process has already exited, in which case use `recover_session`.
+
+Refuses with `ROTATION_IN_PROGRESS` while a rotation is in flight for the
+session — wait for `session_rotated` and send to the successor.
 
 #### `poll_turn`
 
@@ -330,12 +333,13 @@ context_threshold_reached
 session_rotated
 rotation_failed
 rotation_refused
+cost_threshold_reached
 ```
 
 #### `VALID_WATCH_KINDS` — watch-surfaced event kinds
 
 The `VALID_WATCH_KINDS` constant (exported from `src/cli/commands/watch.ts`)
-enumerates the 13 event kinds that `claw-drive watch` can surface to consumers.
+enumerates the 14 event kinds that `claw-drive watch` can surface to consumers.
 This set is part of the public contract:
 
 ```
@@ -352,11 +356,20 @@ rotation_failed
 rotation_refused
 tool_call_result
 idle
+cost_threshold_reached
 ```
 
 `idle` is a synthetic event (negative `seq`) emitted by `watch` when no
 surfaced activity has occurred for the configured threshold
 (`--idle-after SECONDS`, default 600).
+
+`cost_threshold_reached` (2026-08-14, v1.7.0 line): additive expansion —
+mirrors `context_threshold_reached` for the `budget.warn_cost_usd` warning
+line, watch-surfaced because warnings exist to be alerted on. Payload:
+`turn_id?`, `cost_usd` (lineage-cumulative reading), `warn_cost_usd`,
+`generation`, `max_cost_usd?` (present only when a cap is configured). Fires
+once per runner process; an `update_policy` changing `warn_cost_usd` re-arms
+it.
 
 ---
 

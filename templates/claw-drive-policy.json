@@ -63,7 +63,7 @@
   },
 
   "_rotation_example": {
-    "_comment": "context rotation. RENAME this key to \"rotation\" to enable — OFF by default. threshold_tokens: emit context_threshold_reached and allow `claw-drive rotate` once B's context reaches this. max_generations: lineage cap (absent = 10, 0 = unlimited); on breach rotation is refused (session lives on toward native auto-compact). mode: only \"manual\" in this release.",
+    "_comment": "context rotation. RENAME this key to \"rotation\" to enable — OFF by default. threshold_tokens: emit context_threshold_reached and allow `claw-drive rotate` once B's context reaches this. max_generations: lineage cap (absent = 10, 0 = unlimited); on breach rotation is refused (session lives on toward native auto-compact). mode: \"manual\" (default) or \"auto\" — the runner rotates itself at the threshold crossing.",
     "threshold_tokens": 120000,
     "max_generations": 10,
     "mode": "manual"

@@ -21,8 +21,8 @@ import { parseClaudeLine } from "./stream-parser.js";
 import { startSocketServer } from "./socket-server.js";
 import { buildClaudeArgs } from "./runner-args.js";
 import { scheduleDecisionTimeout } from "./decision-timeout.js";
-import { createBudgetTracker, budgetExceededReason, type BudgetTracker } from "./budget.js";
-import { rotationConfigOf, isOverThreshold, checkRotateGate, effectiveMaxGenerations, INTERRUPT_GRACE_MS } from "./context-tracker.js";
+import { createBudgetTracker, budgetExceededReason, warnCostOf, maxCostOf, crossedCostWarning, type BudgetTracker } from "./budget.js";
+import { rotationConfigOf, isOverThreshold, checkRotateGate, effectiveMaxGenerations, INTERRUPT_GRACE_MS, shouldAttemptAutoRotation, autoOutcomeLatches } from "./context-tracker.js";
 import { buildHandoverInstruction, extractHandover, composeSuccessorBrief } from "../lib/handover.js";
 import { buildCrashDigest, buildDistillerPrompt, runDistiller } from "../lib/distill.js";
 import { newSessionId, readSessionMcpServers, scaffoldSessionDir, spawnRunnerDetached, waitForReady } from "../lib/spawn-session.js";
@@ -140,6 +140,17 @@ export interface RunnerContext {
    * owner of rotation-outcome events, and the terminal event must come last.
    * Null when no rotate is in flight. */
   rotationSettled: Promise<void> | null;
+  /** The id of the rotation choreography's own in-flight handover send — the
+   * one send_turn the rotating-guard admits. Null outside that window. */
+  rotationSendId: string | null;
+  /** Auto-rotation one-shot latch: set after an auto attempt ends in a policy
+   * refusal or a failure (autoOutcomeLatches) — both are futile or expensive
+   * to retry — cleared by an update_policy that changes the rotation block.
+   * Manual rotate never consults it. */
+  autoRotateLatched: boolean;
+  /** Cost warning once-per-process latch: set when cost_threshold_reached is
+   * emitted; cleared by an update_policy that changes warn_cost_usd. */
+  costWarned: boolean;
 }
 
 // Placeholder type; populated in Task 13 when the approval flow lands.
@@ -354,6 +365,30 @@ export async function runStdoutLoop(ctx: RunnerContext): Promise<void> {
 }
 
 /**
+ * Cost-warning check, run at every turn boundary — completed AND failed
+ * (error results carry cost; a session burning money through failing turns
+ * warns the same). Fires once per runner process: the crossing is one fact,
+ * and each successor announces the inherited pressure once in its own
+ * stream. Cleared by an update_policy that changes warn_cost_usd. Latched
+ * before emitting, the breaker's own ordering.
+ */
+async function maybeWarnCost(ctx: RunnerContext, turnId: string | undefined): Promise<void> {
+  if (ctx.costWarned) return;
+  const warn = warnCostOf(ctx.state.policy);
+  if (!crossedCostWarning(warn, ctx.state.cost_usd)) return;
+  ctx.costWarned = true;
+  const maxCost = maxCostOf(ctx.state.policy);
+  await emitEvent(ctx, {
+    kind: "cost_threshold_reached",
+    ...(turnId !== undefined ? { turn_id: turnId } : {}),
+    cost_usd: ctx.state.cost_usd as number,
+    warn_cost_usd: warn as number,
+    generation: ctx.state.generation ?? 1,
+    ...(maxCost !== undefined ? { max_cost_usd: maxCost } : {}),
+  } as Omit<Event, "seq" | "at">);
+}
+
+/**
  * context-rotation turn-boundary bookkeeping, run after each parsed event is emitted:
  * maintains turnInFlight / completedTurns / turnWaiters, persists
  * context_tokens, records the first completed turn's reading for the
@@ -372,6 +407,7 @@ export async function afterEventBookkeeping(ctx: RunnerContext, ev: Event): Prom
       waiter(ev.kind === "turn_completed" ? "completed" : "failed");
     }
   }
+  await maybeWarnCost(ctx, turnId);
   if (ev.kind !== "turn_completed") return;
   // Proof of life: a COMPLETED turn means B survived any earlier interrupt —
   // clear the rotate gate's grace window. A failed turn proves nothing (the
@@ -404,7 +440,42 @@ export async function afterEventBookkeeping(ctx: RunnerContext, ev: Event): Prom
       threshold_tokens: cfg.threshold_tokens,
       generation: ctx.state.generation ?? 1,
     } as Omit<Event, "seq" | "at">);
+    maybeAutoRotate(ctx);
   }
+}
+
+/**
+ * Auto-rotation dispatch, run at an over-threshold completed-turn boundary.
+ * Advisory pre-check only — the rotate gate inside performRotation is the
+ * single authority: a transient blocker there (a send won the race, decisions
+ * pending) returns without an event and the next boundary retries for free.
+ * Policy refusals and failures latch further attempts off (autoOutcomeLatches)
+ * until an update_policy changes the rotation block — a crashed attempt
+ * latches the same way, since retrying an attempt that just threw is no more
+ * promising than retrying a policy refusal. Dispatched via setImmediate —
+ * the choreography's handover turn needs the stdout loop this bookkeeping
+ * runs inside, so it must never be awaited from here.
+ */
+function maybeAutoRotate(ctx: RunnerContext): void {
+  if (
+    !shouldAttemptAutoRotation({
+      cfg: rotationConfigOf(ctx.state.policy),
+      contextTokens: ctx.lastContextTokens,
+      latched: ctx.autoRotateLatched,
+      rotating: ctx.rotating,
+    })
+  ) {
+    return;
+  }
+  setImmediate(() => {
+    void performRotation(ctx, "auto")
+      .then((out) => {
+        if (!out.ok && autoOutcomeLatches(out.error)) ctx.autoRotateLatched = true;
+      })
+      .catch(() => {
+        ctx.autoRotateLatched = true;
+      });
+  });
 }
 
 const HANDOVER_TURN_TIMEOUT_MS = 600_000;
@@ -498,10 +569,13 @@ async function runHandoverTurn(
     const done = new Promise<"completed" | "failed">((resolve) =>
       ctx.turnWaiters.set(turnId, resolve)
     );
+    ctx.rotationSendId = `handover_${attempt}`;
     const resp = await handleRequest(ctx, {
       id: `handover_${attempt}`,
       op: "send_turn",
       message: buildHandoverInstruction({ attempt }),
+    }).finally(() => {
+      ctx.rotationSendId = null;
     });
     if (!resp.ok) {
       // The send refused (dead-B SESSION_EXITED surface) — no turn was
@@ -562,6 +636,339 @@ async function runHandoverTurn(
   return null;
 }
 
+export type RotationOutcome =
+  | {
+      ok: true;
+      result: {
+        new_session_id: string;
+        alias?: string;
+        generation: number;
+        handover_path: string;
+        watch_command: string;
+      };
+    }
+  | { ok: false; error: string; message: string };
+
+/**
+ * The rotate choreography, callable by the rotate request handler and by the
+ * auto-rotation dispatch alike: gate → refusal choreography (terminal
+ * handover at the cap) → handover turn → successor scaffold → lineage
+ * pointer → session_rotated → predecessor self-teardown, with the
+ * compensation and settle lifecycle unchanged. Returns a structured outcome;
+ * the request handler maps it onto the response envelope. initiatedBy stamps
+ * every outcome event (initiated_by).
+ */
+export async function performRotation(ctx: RunnerContext, initiatedBy: "manual" | "auto"): Promise<RotationOutcome> {
+  if (ctx.bExited) {
+    // Checked BEFORE the gate: a death that killed an in-flight turn
+    // leaves turnInFlight latched, and TURN_IN_FLIGHT's "retry at the
+    // turn boundary" advice is unfollowable on a dead session. Keyed on
+    // bExited alone, however it latched — a crash (teardown in flight),
+    // or a stop/breaker teardown that already observed B's exit. Either
+    // way the session process is gone and its events are terminal — a
+    // rotation can never start. Plain error, no event.
+    return {
+      ok: false,
+      error: "ROTATION_FAILED",
+      message: "session process has exited; rotation cannot start — use recover",
+    };
+  }
+  const cfg = rotationConfigOf(ctx.state.policy);
+  const blocker = checkRotateGate({
+    cfg,
+    turnInFlight: ctx.turnInFlight,
+    pendingCallIds: [...ctx.pendingApprovals.keys()],
+    generation: ctx.state.generation ?? 1,
+    firstTurnContextTokens: ctx.firstTurnContextTokens,
+    msSinceInterrupt:
+      ctx.lastInterruptAt === null ? null : Date.now() - ctx.lastInterruptAt,
+  });
+  if (
+    blocker &&
+    (blocker.code === "NO_ROTATION_CONFIG" ||
+      blocker.code === "TURN_IN_FLIGHT" ||
+      blocker.code === "DECISIONS_PENDING" ||
+      blocker.code === "INTERRUPT_GRACE")
+  ) {
+    // Transient / config blockers: plain error, no event.
+    return { ok: false, error: blocker.code, message: blocker.message };
+  }
+  if (ctx.rotating) {
+    return {
+      ok: false,
+      error: "ROTATION_IN_PROGRESS",
+      message: "a rotation is already running for this session",
+    };
+  }
+  ctx.rotating = true;
+  let settleRotation!: () => void;
+  ctx.rotationSettled = new Promise<void>((r) => (settleRotation = r));
+  try {
+    if (blocker) {
+      // MAX_GENERATIONS or BOOTSTRAP_EXCEEDS_THRESHOLD — policy-level
+      // refusals: emit rotation_refused; at the cap, checkpoint a terminal
+      // handover FIRST (best-effort) so the human's re-brief starts from
+      // B's own report, not a post-hoc distillation.
+      let detail = blocker.message;
+      if (blocker.code === "MAX_GENERATIONS") {
+        const terminal = await runHandoverTurn(ctx);
+        if (terminal) {
+          // Best-effort: a write failure here must not prevent the
+          // refusal from completing — note it in the detail instead.
+          try {
+            await fs.writeFile(handoverPath(ctx.sessionId), terminal);
+            detail += ` Terminal handover written to ${handoverPath(ctx.sessionId)}.`;
+          } catch (err) {
+            detail += ` (best-effort terminal handover write failed: ${err instanceof Error ? err.message : String(err)})`;
+          }
+        }
+      }
+      await emitEvent(ctx, {
+        kind: "rotation_refused",
+        reason:
+          blocker.code === "MAX_GENERATIONS" ? "max_generations" : "bootstrap_exceeds_threshold",
+        detail,
+        initiated_by: initiatedBy,
+      } as Omit<Event, "seq" | "at">);
+      return { ok: false, error: blocker.code, message: detail };
+    }
+
+    // Happy path: handover → persist → successor → lineage → self-stop.
+    // freedAlias / scaffoldedId track in-flight side effects so an
+    // UNEXPECTED throw (caught below) can best-effort compensate — the
+    // guiding invariant is that a failed rotation never leaves the
+    // still-running predecessor worse off than before the attempt.
+    let freedAlias: string | undefined;
+    let scaffoldedId: string | undefined;
+    try {
+      const handoverFlags: { wedged?: boolean; bExited?: boolean; stopping?: boolean } = {};
+      const handover = await runHandoverTurn(ctx, handoverFlags);
+      if (!handover) {
+        if (handoverFlags.bExited) {
+          // This op owns the rotation-outcome event; the crash teardown
+          // holds session_stopped until this op settles, so the failure
+          // is recorded first.
+          await emitEvent(ctx, {
+            kind: "rotation_failed",
+            reason: "b_exited: session process exited during the handover turn",
+            initiated_by: initiatedBy,
+          } as Omit<Event, "seq" | "at">);
+          return {
+            ok: false,
+            error: "ROTATION_FAILED",
+            message:
+              "session process exited during the handover turn; rotation cannot complete — use recover (a crash handover is distilled best-effort)",
+          };
+        }
+        if (handoverFlags.stopping) {
+          // This op owns the rotation-outcome event; teardown's finish
+          // holds session_stopped until this op settles, so the failure
+          // is recorded first.
+          await emitEvent(ctx, {
+            kind: "rotation_failed",
+            reason: "session_stopping: stop or circuit breaker engaged during the handover turn",
+            initiated_by: initiatedBy,
+          } as Omit<Event, "seq" | "at">);
+          return {
+            ok: false,
+            error: "ROTATION_FAILED",
+            message: "session is stopping; rotation cannot complete",
+          };
+        }
+        // Truthful reason: the wedged-interrupt abort never ran attempt 2,
+        // so it must not be reported as the genuine both-attempts case.
+        const reason = handoverFlags.wedged
+          ? "handover_turn_wedged: interrupted turn never terminated within grace"
+          : "handover_generation_failed: no extractable <handover> block after 2 attempts";
+        await emitEvent(ctx, {
+          kind: "rotation_failed",
+          reason,
+          initiated_by: initiatedBy,
+        } as Omit<Event, "seq" | "at">);
+        return {
+          ok: false,
+          error: "ROTATION_FAILED",
+          message: handoverFlags.wedged
+            ? "handover turn never terminated after interrupt; session left running"
+            : "handover generation failed after 2 attempts; session left running",
+        };
+      }
+      await fs.writeFile(handoverPath(ctx.sessionId), handover);
+      if (ctx.bExited || ctx.stopping) {
+        // B died — or a stop/breaker teardown engaged — between
+        // completing the handover turn and the successor scaffold.
+        // Abort: a successor must never be spawned by a rotation whose
+        // predecessor-side choreography (alias handoff, self-teardown)
+        // can no longer run. The handover text survives in handover.md
+        // and events.jsonl, so recover's distillation loses nothing.
+        // Precedence: a stop/breaker teardown that OWNS the exit is the
+        // truthful cause when both hold — B's exit is that teardown's own
+        // doing (stdin EOF races the real process's exit ahead of this
+        // check, dogfood e2e). A crash owns the exit whenever
+        // crashTeardownEngaged is set, and a stop landing inside the crash
+        // teardown's settle-hold marks ctx.stopping before deferring to
+        // it — so that cell, like the bare crash, must report the death
+        // (and its "use recover" hint).
+        const stopOwnsExit = ctx.stopping && !ctx.crashTeardownEngaged;
+        await emitEvent(ctx, {
+          kind: "rotation_failed",
+          reason: stopOwnsExit
+            ? "session_stopping: stop or circuit breaker engaged after the handover turn; successor not started"
+            : "b_exited: session process exited after the handover turn; successor not started",
+          initiated_by: initiatedBy,
+        } as Omit<Event, "seq" | "at">);
+        return {
+          ok: false,
+          error: "ROTATION_FAILED",
+          message: stopOwnsExit
+            ? "session is stopping after writing the handover; successor not started"
+            : "session process exited after writing the handover; successor not started — use recover",
+        };
+      }
+
+      const generation = ctx.state.generation ?? 1;
+      const maxG = effectiveMaxGenerations(cfg!);
+      const newId = newSessionId();
+      // The lineage's TRUE original mission — never re-derive it from a
+      // predecessor's scenario_brief once that predecessor is itself a
+      // successor (that brief is already a composed handover, not the
+      // original; see original_brief's doc comment in state.ts).
+      const originalBrief =
+        ctx.state.original_brief ??
+        (ctx.state as unknown as { scenario_brief?: string }).scenario_brief ??
+        "(no original brief was recorded at session start)";
+      // Best-known lineage total to hand the successor: cost_usd once any
+      // priced result line has been read, else the base this session was
+      // itself born with — a session that has read no price of its own has
+      // still spent every inherited dollar. Selected, never summed: a
+      // chain of costless handoffs carries the same base unchanged.
+      // Mirrors recover's inheritedCost; omit the key when neither is set.
+      const inheritedCost = ctx.state.cost_usd ?? ctx.state.cost_usd_base;
+      const alias = ctx.state.alias;
+      if (alias !== undefined) {
+        // Free the alias BEFORE scaffolding the successor: alias uniqueness
+        // is among live sessions, and we are still live at this moment.
+        delete ctx.state.alias;
+        await writeState(statePath(ctx.sessionId), ctx.state);
+        freedAlias = alias;
+      }
+      scaffoldedId = newId;
+      await scaffoldSessionDir({
+        sessionId: newId,
+        cwd: ctx.state.cwd,
+        policy: ctx.state.policy,
+        decisionTimeoutSeconds: ctx.state.decision_timeout_seconds,
+        model: ctx.state.model,
+        scenarioBrief: composeSuccessorBrief({
+          originalBrief,
+          handover,
+          generation: generation + 1,
+          maxGenerations: maxG,
+          predecessorId: ctx.sessionId,
+          predecessorEventsPath: eventsPath(ctx.sessionId),
+        }),
+        originalBrief,
+        wrapper: ctx.state.wrapper,
+        alias,
+        mcpServers: await readSessionMcpServers(ctx.sessionId),
+        lineage: {
+          generation: generation + 1,
+          root_session_id: ctx.state.root_session_id ?? ctx.sessionId,
+          rotated_from: ctx.sessionId,
+          ...(inheritedCost !== undefined ? { cost_usd_base: inheritedCost } : {}),
+        },
+      });
+      spawnRunnerDetached(newId);
+      if (!(await waitForReady(newId, 5000))) {
+        // Restore the alias BEFORE the rm — fs.rm can itself throw
+        // (EACCES etc.), and the predecessor's alias must already be back
+        // before that risk is taken, not after.
+        if (alias !== undefined) {
+          ctx.state.alias = alias;
+          await writeState(statePath(ctx.sessionId), ctx.state);
+          freedAlias = undefined;
+        }
+        await fs.rm(sessionDir(newId), { recursive: true, force: true });
+        scaffoldedId = undefined;
+        await emitEvent(ctx, {
+          kind: "rotation_failed",
+          reason: "successor_not_ready: runner did not become ready within 5s",
+          initiated_by: initiatedBy,
+        } as Omit<Event, "seq" | "at">);
+        return {
+          ok: false,
+          error: "ROTATION_FAILED",
+          message: "successor runner did not become ready; predecessor left running",
+        };
+      }
+      // Past this point the successor is live and OWNS its session dir
+      // and the alias. Clear both compensation trackers so a throw from
+      // the remaining writeState/emitEvent below can never rm a running
+      // successor's state dir nor restore the alias into a two-live-
+      // holder conflict — the catch below would then just emit
+      // rotation_failed(internal_error:*) and return ROTATION_FAILED:
+      // loud, non-destructive, predecessor left alive and untorn (a
+      // dangling-but-recoverable lineage pointer on an extremely narrow
+      // path).
+      scaffoldedId = undefined;
+      freedAlias = undefined;
+      ctx.state.rotated_to = newId;
+      await writeState(statePath(ctx.sessionId), ctx.state);
+      const watchCommand = `${clawDriveBinPath()} watch ${newId}`;
+      await emitEvent(ctx, {
+        kind: "session_rotated",
+        new_session_id: newId,
+        ...(alias !== undefined ? { alias } : {}),
+        generation: generation + 1,
+        handover_path: handoverPath(ctx.sessionId),
+        watch_command: watchCommand,
+        initiated_by: initiatedBy,
+      } as Omit<Event, "seq" | "at">);
+      setImmediate(() => teardownSession(ctx, `rotated:${newId}`));
+      return {
+        ok: true,
+        result: {
+          new_session_id: newId,
+          ...(alias !== undefined ? { alias } : {}),
+          generation: generation + 1,
+          handover_path: handoverPath(ctx.sessionId),
+          watch_command: watchCommand,
+        },
+      };
+    } catch (err) {
+      // Unexpected throw (e.g. ENOSPC/EACCES out of scaffoldSessionDir, or
+      // any other stray fs error) — best-effort compensate so the
+      // still-running predecessor is never left worse off than before the
+      // attempt, then report a clean structured failure instead of letting
+      // the exception escape as a raw HANDLER_ERROR with no event at all.
+      if (freedAlias !== undefined) {
+        try {
+          ctx.state.alias = freedAlias;
+          await writeState(statePath(ctx.sessionId), ctx.state);
+        } catch { /* best-effort */ }
+      }
+      if (scaffoldedId !== undefined) {
+        try {
+          await fs.rm(sessionDir(scaffoldedId), { recursive: true, force: true });
+        } catch { /* best-effort */ }
+      }
+      const message = `internal_error: ${err instanceof Error ? err.message : String(err)}`;
+      try {
+        await emitEvent(ctx, {
+          kind: "rotation_failed",
+          reason: message,
+          initiated_by: initiatedBy,
+        } as Omit<Event, "seq" | "at">);
+      } catch { /* best-effort */ }
+      return { ok: false, error: "ROTATION_FAILED", message };
+    }
+  } finally {
+    ctx.rotating = false;
+    ctx.rotationSettled = null;
+    settleRotation();
+  }
+}
+
 export async function handleRequest(
   ctx: RunnerContext,
   req: ControlRequest
@@ -581,6 +988,22 @@ export async function handleRequest(
           ok: false,
           error: "SESSION_EXITED",
           message: "session process has exited; turn cannot start — use recover",
+        };
+      }
+      if (ctx.rotating && req.id !== ctx.rotationSendId) {
+        // A rotation owns the session: its handover turn is running (or its
+        // teardown is imminent) and a user turn written to stdin now would
+        // interleave with the handover. Refuse before any state change —
+        // the dead-B gate's posture. The successor named by session_rotated
+        // is the retry target (an alias-addressed send lands there itself).
+        // One exception: the choreography's own handover send, identified by
+        // the sanctioned id in ctx.rotationSendId, is admitted.
+        return {
+          id: req.id,
+          ok: false,
+          error: "ROTATION_IN_PROGRESS",
+          message:
+            "a rotation is in flight for this session; wait for session_rotated and send to the successor",
         };
       }
       const turnId = `turn_${ctx.state.turns + 1}`;
@@ -804,6 +1227,21 @@ export async function handleRequest(
           message: v.error,
         };
       }
+      // Auto-rotation latch re-arm: only a CHANGED rotation block re-arms —
+      // a byte-identical no-op update must not summon a duplicate
+      // deterministic refusal.
+      const oldRot = rotationConfigOf(ctx.state.policy);
+      const newRot = rotationConfigOf(policy as Policy);
+      if (
+        oldRot?.threshold_tokens !== newRot?.threshold_tokens ||
+        oldRot?.max_generations !== newRot?.max_generations ||
+        oldRot?.mode !== newRot?.mode
+      ) {
+        ctx.autoRotateLatched = false;
+      }
+      if (warnCostOf(ctx.state.policy) !== warnCostOf(policy as Policy)) {
+        ctx.costWarned = false;
+      }
       ctx.state.policy = policy as Policy;
       await writeState(statePath(ctx.sessionId), ctx.state);
       return { id: req.id, ok: true };
@@ -832,314 +1270,10 @@ export async function handleRequest(
     }
 
     case "rotate": {
-      if (ctx.bExited) {
-        // Checked BEFORE the gate: a death that killed an in-flight turn
-        // leaves turnInFlight latched, and TURN_IN_FLIGHT's "retry at the
-        // turn boundary" advice is unfollowable on a dead session. Keyed on
-        // bExited alone, however it latched — a crash (teardown in flight),
-        // or a stop/breaker teardown that already observed B's exit. Either
-        // way the session process is gone and its events are terminal — a
-        // rotation can never start. Plain error, no event.
-        return {
-          id: req.id,
-          ok: false,
-          error: "ROTATION_FAILED",
-          message: "session process has exited; rotation cannot start — use recover",
-        };
-      }
-      const cfg = rotationConfigOf(ctx.state.policy);
-      const blocker = checkRotateGate({
-        cfg,
-        turnInFlight: ctx.turnInFlight,
-        pendingCallIds: [...ctx.pendingApprovals.keys()],
-        generation: ctx.state.generation ?? 1,
-        firstTurnContextTokens: ctx.firstTurnContextTokens,
-        msSinceInterrupt:
-          ctx.lastInterruptAt === null ? null : Date.now() - ctx.lastInterruptAt,
-      });
-      if (
-        blocker &&
-        (blocker.code === "NO_ROTATION_CONFIG" ||
-          blocker.code === "TURN_IN_FLIGHT" ||
-          blocker.code === "DECISIONS_PENDING" ||
-          blocker.code === "INTERRUPT_GRACE")
-      ) {
-        // Transient / config blockers: plain error, no event.
-        return { id: req.id, ok: false, error: blocker.code, message: blocker.message };
-      }
-      if (ctx.rotating) {
-        return {
-          id: req.id,
-          ok: false,
-          error: "ROTATION_IN_PROGRESS",
-          message: "a rotation is already running for this session",
-        };
-      }
-      ctx.rotating = true;
-      let settleRotation!: () => void;
-      ctx.rotationSettled = new Promise<void>((r) => (settleRotation = r));
-      try {
-        if (blocker) {
-          // MAX_GENERATIONS or BOOTSTRAP_EXCEEDS_THRESHOLD — policy-level
-          // refusals: emit rotation_refused; at the cap, checkpoint a terminal
-          // handover FIRST (best-effort) so the human's re-brief starts from
-          // B's own report, not a post-hoc distillation.
-          let detail = blocker.message;
-          if (blocker.code === "MAX_GENERATIONS") {
-            const terminal = await runHandoverTurn(ctx);
-            if (terminal) {
-              // Best-effort: a write failure here must not prevent the
-              // refusal from completing — note it in the detail instead.
-              try {
-                await fs.writeFile(handoverPath(ctx.sessionId), terminal);
-                detail += ` Terminal handover written to ${handoverPath(ctx.sessionId)}.`;
-              } catch (err) {
-                detail += ` (best-effort terminal handover write failed: ${err instanceof Error ? err.message : String(err)})`;
-              }
-            }
-          }
-          await emitEvent(ctx, {
-            kind: "rotation_refused",
-            reason:
-              blocker.code === "MAX_GENERATIONS" ? "max_generations" : "bootstrap_exceeds_threshold",
-            detail,
-          } as Omit<Event, "seq" | "at">);
-          return { id: req.id, ok: false, error: blocker.code, message: detail };
-        }
-
-        // Happy path: handover → persist → successor → lineage → self-stop.
-        // freedAlias / scaffoldedId track in-flight side effects so an
-        // UNEXPECTED throw (caught below) can best-effort compensate — the
-        // guiding invariant is that a failed rotation never leaves the
-        // still-running predecessor worse off than before the attempt.
-        let freedAlias: string | undefined;
-        let scaffoldedId: string | undefined;
-        try {
-          const handoverFlags: { wedged?: boolean; bExited?: boolean; stopping?: boolean } = {};
-          const handover = await runHandoverTurn(ctx, handoverFlags);
-          if (!handover) {
-            if (handoverFlags.bExited) {
-              // This op owns the rotation-outcome event; the crash teardown
-              // holds session_stopped until this op settles, so the failure
-              // is recorded first.
-              await emitEvent(ctx, {
-                kind: "rotation_failed",
-                reason: "b_exited: session process exited during the handover turn",
-              } as Omit<Event, "seq" | "at">);
-              return {
-                id: req.id,
-                ok: false,
-                error: "ROTATION_FAILED",
-                message:
-                  "session process exited during the handover turn; rotation cannot complete — use recover (a crash handover is distilled best-effort)",
-              };
-            }
-            if (handoverFlags.stopping) {
-              // This op owns the rotation-outcome event; teardown's finish
-              // holds session_stopped until this op settles, so the failure
-              // is recorded first.
-              await emitEvent(ctx, {
-                kind: "rotation_failed",
-                reason: "session_stopping: stop or circuit breaker engaged during the handover turn",
-              } as Omit<Event, "seq" | "at">);
-              return {
-                id: req.id,
-                ok: false,
-                error: "ROTATION_FAILED",
-                message: "session is stopping; rotation cannot complete",
-              };
-            }
-            // Truthful reason: the wedged-interrupt abort never ran attempt 2,
-            // so it must not be reported as the genuine both-attempts case.
-            const reason = handoverFlags.wedged
-              ? "handover_turn_wedged: interrupted turn never terminated within grace"
-              : "handover_generation_failed: no extractable <handover> block after 2 attempts";
-            await emitEvent(ctx, {
-              kind: "rotation_failed",
-              reason,
-            } as Omit<Event, "seq" | "at">);
-            return {
-              id: req.id,
-              ok: false,
-              error: "ROTATION_FAILED",
-              message: handoverFlags.wedged
-                ? "handover turn never terminated after interrupt; session left running"
-                : "handover generation failed after 2 attempts; session left running",
-            };
-          }
-          await fs.writeFile(handoverPath(ctx.sessionId), handover);
-          if (ctx.bExited || ctx.stopping) {
-            // B died — or a stop/breaker teardown engaged — between
-            // completing the handover turn and the successor scaffold.
-            // Abort: a successor must never be spawned by a rotation whose
-            // predecessor-side choreography (alias handoff, self-teardown)
-            // can no longer run. The handover text survives in handover.md
-            // and events.jsonl, so recover's distillation loses nothing.
-            // Precedence: a stop/breaker teardown that OWNS the exit is the
-            // truthful cause when both hold — B's exit is that teardown's own
-            // doing (stdin EOF races the real process's exit ahead of this
-            // check, dogfood e2e). A crash owns the exit whenever
-            // crashTeardownEngaged is set, and a stop landing inside the crash
-            // teardown's settle-hold marks ctx.stopping before deferring to
-            // it — so that cell, like the bare crash, must report the death
-            // (and its "use recover" hint).
-            const stopOwnsExit = ctx.stopping && !ctx.crashTeardownEngaged;
-            await emitEvent(ctx, {
-              kind: "rotation_failed",
-              reason: stopOwnsExit
-                ? "session_stopping: stop or circuit breaker engaged after the handover turn; successor not started"
-                : "b_exited: session process exited after the handover turn; successor not started",
-            } as Omit<Event, "seq" | "at">);
-            return {
-              id: req.id,
-              ok: false,
-              error: "ROTATION_FAILED",
-              message: stopOwnsExit
-                ? "session is stopping after writing the handover; successor not started"
-                : "session process exited after writing the handover; successor not started — use recover",
-            };
-          }
-
-          const generation = ctx.state.generation ?? 1;
-          const maxG = effectiveMaxGenerations(cfg!);
-          const newId = newSessionId();
-          // The lineage's TRUE original mission — never re-derive it from a
-          // predecessor's scenario_brief once that predecessor is itself a
-          // successor (that brief is already a composed handover, not the
-          // original; see original_brief's doc comment in state.ts).
-          const originalBrief =
-            ctx.state.original_brief ??
-            (ctx.state as unknown as { scenario_brief?: string }).scenario_brief ??
-            "(no original brief was recorded at session start)";
-          // Best-known lineage total to hand the successor: cost_usd once any
-          // priced result line has been read, else the base this session was
-          // itself born with — a session that has read no price of its own has
-          // still spent every inherited dollar. Selected, never summed: a
-          // chain of costless handoffs carries the same base unchanged.
-          // Mirrors recover's inheritedCost; omit the key when neither is set.
-          const inheritedCost = ctx.state.cost_usd ?? ctx.state.cost_usd_base;
-          const alias = ctx.state.alias;
-          if (alias !== undefined) {
-            // Free the alias BEFORE scaffolding the successor: alias uniqueness
-            // is among live sessions, and we are still live at this moment.
-            delete ctx.state.alias;
-            await writeState(statePath(ctx.sessionId), ctx.state);
-            freedAlias = alias;
-          }
-          scaffoldedId = newId;
-          await scaffoldSessionDir({
-            sessionId: newId,
-            cwd: ctx.state.cwd,
-            policy: ctx.state.policy,
-            decisionTimeoutSeconds: ctx.state.decision_timeout_seconds,
-            model: ctx.state.model,
-            scenarioBrief: composeSuccessorBrief({
-              originalBrief,
-              handover,
-              generation: generation + 1,
-              maxGenerations: maxG,
-              predecessorId: ctx.sessionId,
-              predecessorEventsPath: eventsPath(ctx.sessionId),
-            }),
-            originalBrief,
-            wrapper: ctx.state.wrapper,
-            alias,
-            mcpServers: await readSessionMcpServers(ctx.sessionId),
-            lineage: {
-              generation: generation + 1,
-              root_session_id: ctx.state.root_session_id ?? ctx.sessionId,
-              rotated_from: ctx.sessionId,
-              ...(inheritedCost !== undefined ? { cost_usd_base: inheritedCost } : {}),
-            },
-          });
-          spawnRunnerDetached(newId);
-          if (!(await waitForReady(newId, 5000))) {
-            // Restore the alias BEFORE the rm — fs.rm can itself throw
-            // (EACCES etc.), and the predecessor's alias must already be back
-            // before that risk is taken, not after.
-            if (alias !== undefined) {
-              ctx.state.alias = alias;
-              await writeState(statePath(ctx.sessionId), ctx.state);
-              freedAlias = undefined;
-            }
-            await fs.rm(sessionDir(newId), { recursive: true, force: true });
-            scaffoldedId = undefined;
-            await emitEvent(ctx, {
-              kind: "rotation_failed",
-              reason: "successor_not_ready: runner did not become ready within 5s",
-            } as Omit<Event, "seq" | "at">);
-            return {
-              id: req.id,
-              ok: false,
-              error: "ROTATION_FAILED",
-              message: "successor runner did not become ready; predecessor left running",
-            };
-          }
-          // Past this point the successor is live and OWNS its session dir
-          // and the alias. Clear both compensation trackers so a throw from
-          // the remaining writeState/emitEvent below can never rm a running
-          // successor's state dir nor restore the alias into a two-live-
-          // holder conflict — the catch below would then just emit
-          // rotation_failed(internal_error:*) and return ROTATION_FAILED:
-          // loud, non-destructive, predecessor left alive and untorn (a
-          // dangling-but-recoverable lineage pointer on an extremely narrow
-          // path).
-          scaffoldedId = undefined;
-          freedAlias = undefined;
-          ctx.state.rotated_to = newId;
-          await writeState(statePath(ctx.sessionId), ctx.state);
-          const watchCommand = `${clawDriveBinPath()} watch ${newId}`;
-          await emitEvent(ctx, {
-            kind: "session_rotated",
-            new_session_id: newId,
-            ...(alias !== undefined ? { alias } : {}),
-            generation: generation + 1,
-            handover_path: handoverPath(ctx.sessionId),
-            watch_command: watchCommand,
-          } as Omit<Event, "seq" | "at">);
-          setImmediate(() => teardownSession(ctx, `rotated:${newId}`));
-          return {
-            id: req.id,
-            ok: true,
-            result: {
-              new_session_id: newId,
-              ...(alias !== undefined ? { alias } : {}),
-              generation: generation + 1,
-              handover_path: handoverPath(ctx.sessionId),
-              watch_command: watchCommand,
-            },
-          };
-        } catch (err) {
-          // Unexpected throw (e.g. ENOSPC/EACCES out of scaffoldSessionDir, or
-          // any other stray fs error) — best-effort compensate so the
-          // still-running predecessor is never left worse off than before the
-          // attempt, then report a clean structured failure instead of letting
-          // the exception escape as a raw HANDLER_ERROR with no event at all.
-          if (freedAlias !== undefined) {
-            try {
-              ctx.state.alias = freedAlias;
-              await writeState(statePath(ctx.sessionId), ctx.state);
-            } catch { /* best-effort */ }
-          }
-          if (scaffoldedId !== undefined) {
-            try {
-              await fs.rm(sessionDir(scaffoldedId), { recursive: true, force: true });
-            } catch { /* best-effort */ }
-          }
-          const message = `internal_error: ${err instanceof Error ? err.message : String(err)}`;
-          try {
-            await emitEvent(ctx, {
-              kind: "rotation_failed",
-              reason: message,
-            } as Omit<Event, "seq" | "at">);
-          } catch { /* best-effort */ }
-          return { id: req.id, ok: false, error: "ROTATION_FAILED", message };
-        }
-      } finally {
-        ctx.rotating = false;
-        ctx.rotationSettled = null;
-        settleRotation();
-      }
+      const out = await performRotation(ctx, "manual");
+      return out.ok
+        ? { id: req.id, ok: true, result: out.result }
+        : { id: req.id, ok: false, error: out.error, message: out.message };
     }
 
     case "provide_tool_output": {
@@ -1495,6 +1629,9 @@ export async function runRunner(sessionId: string): Promise<void> {
     tearingDown: false,
     lastInterruptAt: null,
     rotationSettled: null,
+    rotationSendId: null,
+    autoRotateLatched: false,
+    costWarned: false,
   };
 
   // Start the stdout loop; run it in the background. If it fails, emit an

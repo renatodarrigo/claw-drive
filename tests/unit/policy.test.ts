@@ -1589,10 +1589,42 @@ describe("validatePolicy context-rotation rotation block", () => {
     }
   });
 
-  it('rejects mode "auto" with the reserved-for-v2 message', () => {
-    const v = validatePolicy({ ...base, rotation: { threshold_tokens: 120000, mode: "auto" } });
+  it('accepts rotation.mode "auto"', () => {
+    const v = validatePolicy({ rotation: { threshold_tokens: 1000, mode: "auto" } });
+    expect(v.ok).toBe(true);
+  });
+
+  it('still accepts rotation.mode "manual" and absent mode', () => {
+    expect(validatePolicy({ rotation: { threshold_tokens: 1000, mode: "manual" } }).ok).toBe(true);
+    expect(validatePolicy({ rotation: { threshold_tokens: 1000 } }).ok).toBe(true);
+  });
+
+  it("rejects junk rotation.mode with the two-value message", () => {
+    const v = validatePolicy({ rotation: { threshold_tokens: 1000, mode: "turbo" } });
     expect(v.ok).toBe(false);
-    expect((v as { error: string }).error).toContain("reserved");
+    if (!v.ok) expect(v.error).toBe('rotation.mode must be "manual" or "auto"');
+  });
+
+  it("accepts budget.warn_cost_usd as a positive number, alone or beside a larger cap", () => {
+    expect(validatePolicy({ budget: { warn_cost_usd: 4 } }).ok).toBe(true);
+    expect(validatePolicy({ budget: { warn_cost_usd: 4, max_cost_usd: 5 } }).ok).toBe(true);
+  });
+
+  it("rejects non-positive / non-number warn_cost_usd via the shared budget-field check", () => {
+    expect(validatePolicy({ budget: { warn_cost_usd: 0 } }).ok).toBe(false);
+    expect(validatePolicy({ budget: { warn_cost_usd: -1 } }).ok).toBe(false);
+    expect(validatePolicy({ budget: { warn_cost_usd: "4" } }).ok).toBe(false);
+  });
+
+  it("rejects warn_cost_usd >= max_cost_usd (greater and equal)", () => {
+    const gt = validatePolicy({ budget: { warn_cost_usd: 6, max_cost_usd: 5 } });
+    expect(gt.ok).toBe(false);
+    if (!gt.ok) expect(gt.error).toContain("warn_cost_usd must be less than max_cost_usd");
+    expect(validatePolicy({ budget: { warn_cost_usd: 5, max_cost_usd: 5 } }).ok).toBe(false);
+  });
+
+  it("still rejects unknown budget keys", () => {
+    expect(validatePolicy({ budget: { warn_cost_us: 4 } }).ok).toBe(false);
   });
 
   it("rejects unknown rotation keys but ignores underscore keys", () => {
