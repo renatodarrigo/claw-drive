@@ -189,6 +189,7 @@ claw-drive policy lint --max-severity warn ./my-policy.json   # exit 1 on any wa
     "max_tool_calls": 500,
     "max_wall_clock_seconds": 1800,
     "max_consecutive_errors": 8,
+    "warn_cost_usd": 4.00,
     "max_cost_usd": 5.00
   }
 }</code></pre>
@@ -199,6 +200,7 @@ claw-drive policy lint --max-severity warn ./my-policy.json   # exit 1 on any wa
     </ul>
     <p>When a cap is exceeded the runner stops the session and records <code>exit_reason: "budget_exceeded:&lt;cap&gt;"</code> — e.g. <code>budget_exceeded:max_tool_calls</code> — surfaced like any other stop through a <code>session_stopped</code> event. Caps are independent: set only the ones you want, each a positive number; an absent cap is unlimited.</p>
     <p><code>max_cost_usd</code> is the spend cap: it stops the session once the lineage's cumulative estimated spend in USD exceeds it. The number is the claude CLI's own cost accounting — every model, subagent, and cache tier the session used, priced by the CLI's built-in per-model rates — so it tracks what the run actually costs, and it is exactly as current as your installed CLI. Unlike the other caps it does not reset on rotation: successors started by <code>rotate</code> or <code>recover</code> inherit the predecessor's total, so the cap bounds the whole mission. One-shot handover distillations run outside the session's own accounting and are not counted. On subscription auth the figure is the API-equivalent estimate. A stream that reports no cost can never trip the cap, and every session's running total is visible in <code>claw-drive status</code> whether or not a cap is set.</p>
+    <p><code>warn_cost_usd</code> is the cap's early-warning line, not a cap: crossing it emits a <code>cost_threshold_reached</code> event — carrying the reading, the line, and the cap when one is set — and stops nothing. It fires once per runner process, so each successor in a lineage announces the inherited spend once in its own stream; changing the value via <code>update_policy</code> re-arms it. It must sit strictly below <code>max_cost_usd</code> when both are present (a warning at or above the cap could never fire before it), and it works alone for monitoring-only setups. Like the cap, rotation cannot reset it: the reading is the lineage's cumulative total.</p>
 
     <h2 id="rotation">Context rotation (<code>rotation</code>)</h2>
     <p>An optional <code>rotation</code> block bounds how much context a single driven session accumulates before handing off to a fresh successor — the policy half of <a href="driving-patterns.html#rotation">Driving patterns → Context rotation</a>. <strong>Off by default:</strong> a policy without the block gets no context tracking, no threshold events, and no <code>rotate</code> — nothing about the session behaves differently.</p>
@@ -215,7 +217,7 @@ claw-drive policy lint --max-severity warn ./my-policy.json   # exit 1 on any wa
     <ul>
       <li><code>threshold_tokens</code> — required, a positive integer. Once B's tracked context reaches it, the runner emits <code>context_threshold_reached</code> on every completed turn while above it, and <code>rotate</code> becomes available.</li>
       <li><code>max_generations</code> — optional lineage cap; default <code>10</code>, <code>0</code> = unlimited. At the cap, rotation is <em>refused</em> (<code>MAX_GENERATIONS</code>) rather than the session being stopped: a terminal handover is still written, and the session lives on toward native auto-compact.</li>
-      <li><code>mode</code> — only <code>"manual"</code> is accepted: rotation happens when the driver calls it, never on its own. <code>"auto"</code> is rejected as reserved for a future release.</li>
+      <li><code>mode</code> — <code>"manual"</code> (the default): rotation happens when the driver calls it, never on its own. <code>"auto"</code>: the runner itself initiates the same rotation choreography at the completed-turn boundary that crosses <code>threshold_tokens</code> — see <a href="driving-patterns.html#rotation-auto">Driving patterns → Automatic rotation</a> for the trigger, the one-shot latch, and the send-during-rotation refusal.</li>
     </ul>
 
     <p>The starter template ships the block disabled as <code>_rotation_example</code> — the <code>_</code> prefix makes it a metadata key the validator ignores, per the underscore convention. Rename the key to <code>rotation</code> to turn the feature on.</p>
