@@ -100,6 +100,7 @@ async function makeCtx(fake: FakeB): Promise<RunnerContext> {
     rotationSendId: null,
     autoRotateLatched: false,
     costWarned: false,
+    rotationPolicyEpoch: 0,
   } satisfies RunnerContext;
 }
 

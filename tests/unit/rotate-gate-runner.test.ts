@@ -45,6 +45,7 @@ function fakeCtx(overrides: Partial<RunnerContext> & { policy?: SessionState["po
     rotationSendId: null,
     autoRotateLatched: false,
     costWarned: false,
+    rotationPolicyEpoch: 0,
   } satisfies RunnerContext;
   return { ...base, ...overrides };
 }

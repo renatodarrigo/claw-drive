@@ -9,6 +9,7 @@
 ### Fixed
 
 - **`provide_tool_output` can no longer write into a rotation's handover.** The rotate-window guard that already refused a racing `send_turn` now covers the deferred-output op too: while a rotation is in flight it refuses with `ROTATION_IN_PROGRESS` — no turn starts, nothing reaches the session's stdin, and the deferred-call record survives untouched. After `session_rotated`, send the output to the successor as a normal turn.
+- **A policy update landing mid-auto-rotation-attempt can no longer be re-latched away.** The auto-rotation latch now records an outcome only if it was produced under the current rotation config: an attempt that raced a rotation-block change settles without latching, and the next over-threshold boundary retries under the new config — on the crash path too.
 
 ## [1.7.0] — 2026-08-15
 

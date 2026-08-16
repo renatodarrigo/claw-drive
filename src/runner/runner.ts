@@ -146,11 +146,19 @@ export interface RunnerContext {
   /** Auto-rotation one-shot latch: set after an auto attempt ends in a policy
    * refusal or a failure (autoOutcomeLatches) — both are futile or expensive
    * to retry — cleared by an update_policy that changes the rotation block.
+   * An attempt that settles under a stale rotationPolicyEpoch never latches.
    * Manual rotate never consults it. */
   autoRotateLatched: boolean;
   /** Cost warning once-per-process latch: set when cost_threshold_reached is
    * emitted; cleared by an update_policy that changes warn_cost_usd. */
   costWarned: boolean;
+  /** Rotation-config generation: bumped by every update_policy that CHANGES
+   * the rotation block — the same condition that re-arms autoRotateLatched.
+   * maybeAutoRotate captures it at dispatch and compares before latching in
+   * .then and .catch alike, so the latch may only encode an outcome produced
+   * under the current rotation config; a stale attempt settles without
+   * latching and the next boundary retries under the new config. */
+  rotationPolicyEpoch: number;
 }
 
 // Placeholder type; populated in Task 13 when the approval flow lands.
@@ -468,12 +476,19 @@ function maybeAutoRotate(ctx: RunnerContext): void {
     return;
   }
   setImmediate(() => {
+    // Captured in the same synchronous segment as performRotation's entry
+    // config read: an outcome may latch only if the rotation config it ran
+    // under is still current when it settles — on the .catch path too, since
+    // a crash under a stale config is no evidence about the new one.
+    const epoch = ctx.rotationPolicyEpoch;
     void performRotation(ctx, "auto")
       .then((out) => {
-        if (!out.ok && autoOutcomeLatches(out.error)) ctx.autoRotateLatched = true;
+        if (!out.ok && autoOutcomeLatches(out.error) && ctx.rotationPolicyEpoch === epoch) {
+          ctx.autoRotateLatched = true;
+        }
       })
       .catch(() => {
-        ctx.autoRotateLatched = true;
+        if (ctx.rotationPolicyEpoch === epoch) ctx.autoRotateLatched = true;
       });
   });
 }
@@ -1238,6 +1253,7 @@ export async function handleRequest(
         oldRot?.mode !== newRot?.mode
       ) {
         ctx.autoRotateLatched = false;
+        ctx.rotationPolicyEpoch += 1;
       }
       if (warnCostOf(ctx.state.policy) !== warnCostOf(policy as Policy)) {
         ctx.costWarned = false;
@@ -1656,6 +1672,7 @@ export async function runRunner(sessionId: string): Promise<void> {
     rotationSendId: null,
     autoRotateLatched: false,
     costWarned: false,
+    rotationPolicyEpoch: 0,
   };
 
   // Start the stdout loop; run it in the background. If it fails, emit an

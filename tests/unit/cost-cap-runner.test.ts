@@ -133,6 +133,7 @@ async function makeCtx(fake: FakeB, statePatch?: Partial<SessionState>): Promise
     rotationSendId: null,
     autoRotateLatched: false,
     costWarned: false,
+    rotationPolicyEpoch: 0,
   } satisfies RunnerContext;
 }
 

@@ -107,6 +107,7 @@ async function makeCtx(fake: FakeB, overrides?: Partial<RunnerContext>): Promise
     rotationSendId: null,
     autoRotateLatched: false,
     costWarned: false,
+    rotationPolicyEpoch: 0,
   } satisfies RunnerContext;
   return { ...base, ...overrides };
 }

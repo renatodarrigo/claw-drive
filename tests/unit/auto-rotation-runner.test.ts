@@ -160,6 +160,7 @@ async function makeCtx(fake: FakeB, statePatch?: Partial<SessionState>): Promise
     rotationSendId: null,
     autoRotateLatched: false,
     costWarned: false,
+    rotationPolicyEpoch: 0,
   } satisfies RunnerContext;
 }
 
@@ -465,5 +466,81 @@ describe("auto-rotation latch", () => {
     // process itself would survive to check it.
     await settleUntil(() => ctx.autoRotateLatched);
     expect(ctx.rotating).toBe(false);
+  });
+});
+
+describe("policy-epoch guard on the latch", () => {
+  // The MAX_GENERATIONS refusal choreography runs a real handover turn, so
+  // the attempt window stays open until completeHandoverTurn — wide enough
+  // to land an update_policy inside it deterministically.
+
+  it("a rotation-block update mid-attempt keeps the stale refusal from latching; the next attempt latches under the new config", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake, { generation: 10 });
+    await boundary(ctx, "t1", 500);
+    await boundary(ctx, "t2", 5000);
+    // Once rotating is observable, the dispatch has already captured its
+    // epoch (both happen in the same synchronous segment).
+    await settleUntil(() => ctx.rotating);
+    const upd = await handleRequest(ctx, {
+      id: "p1",
+      op: "update_policy",
+      policy: { rotation: { threshold_tokens: 2000, mode: "auto" } },
+    });
+    expect(upd).toMatchObject({ ok: true });
+    await completeHandoverTurn(ctx, "turn_1", true);
+    await settleUntil(() => !ctx.rotating);
+    await settle();
+    expect(ctx.autoRotateLatched).toBe(false); // stale-epoch outcome must not latch
+    expect(ofKind(await events(), "rotation_refused")).toHaveLength(1);
+    // The re-armed attempt runs under the NEW config at the next boundary —
+    // still MAX_GENERATIONS, and THIS outcome (fresh epoch) latches.
+    await boundary(ctx, "t3", 6000);
+    await completeHandoverTurn(ctx, "turn_2", true);
+    await settleUntil(() => ctx.autoRotateLatched);
+    expect(ofKind(await events(), "rotation_refused")).toHaveLength(2);
+  });
+
+  it("a rotation-block update mid-attempt keeps a crashed attempt from latching (.catch path)", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake, { generation: 10 });
+    await boundary(ctx, "t1", 500);
+    await boundary(ctx, "t2", 5000);
+    await settleUntil(() => ctx.rotating);
+    const upd = await handleRequest(ctx, {
+      id: "p1",
+      op: "update_policy",
+      policy: { rotation: { threshold_tokens: 2000, mode: "auto" } },
+    });
+    expect(upd).toMatchObject({ ok: true });
+    // Crash the attempt instead of letting it refuse cleanly: with the
+    // session dir gone, readEventsSince tolerates the missing file (no
+    // handover extracted) but attempt 2's turn_started emit throws ENOENT,
+    // so performRotation rejects — the .catch path. The existing crashed-
+    // attempt test pins that this machinery latches WITHOUT an update; this
+    // pins that a stale epoch suppresses it.
+    rmSync(sessionDir(SID), { recursive: true, force: true });
+    await completeHandoverTurn(ctx, "turn_1", false);
+    await settleUntil(() => !ctx.rotating);
+    await settle();
+    expect(ctx.autoRotateLatched).toBe(false);
+  });
+
+  it("an unrelated policy update mid-attempt does not disturb the latch (epoch bumps only on rotation-block change)", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake, { generation: 10 });
+    await boundary(ctx, "t1", 500);
+    await boundary(ctx, "t2", 5000);
+    await settleUntil(() => ctx.rotating);
+    const upd = await handleRequest(ctx, {
+      id: "p1",
+      op: "update_policy",
+      policy: { rotation: { threshold_tokens: 1000, mode: "auto" }, budget: { warn_cost_usd: 5 } },
+    });
+    expect(upd).toMatchObject({ ok: true });
+    await completeHandoverTurn(ctx, "turn_1", true);
+    // Rotation block byte-identical → no bump → the refusal latches normally.
+    await settleUntil(() => ctx.autoRotateLatched);
+    expect(ofKind(await events(), "rotation_refused")).toHaveLength(1);
   });
 });
