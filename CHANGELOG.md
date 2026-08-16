@@ -6,6 +6,10 @@
 
 - **Unit test harnesses now fail to compile when the runner context grows a field they don't initialize.** Harness context literals are completeness-checked (`satisfies`) instead of cast, so a new runner field can't silently read as `undefined` in tests.
 
+### Fixed
+
+- **`provide_tool_output` can no longer write into a rotation's handover.** The rotate-window guard that already refused a racing `send_turn` now covers the deferred-output op too: while a rotation is in flight it refuses with `ROTATION_IN_PROGRESS` — no turn starts, nothing reaches the session's stdin, and the deferred-call record survives untouched. After `session_rotated`, send the output to the successor as a normal turn.
+
 ## [1.7.0] — 2026-08-15
 
 ### Added

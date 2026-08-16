@@ -229,6 +229,11 @@ the output as a new user turn; auto-resolves any still-pending approval as
 
 Refuses with `SESSION_EXITED` if the session process has already exited, in which case use `recover_session` — the pending approval still auto-resolves as `defer` first, but the output's own follow-up turn never reaches B.
 
+Refuses with `ROTATION_IN_PROGRESS` while a rotation is in flight for the
+session — wait for `session_rotated`, then send the output to the successor as
+a normal turn (the deferred-call record does not survive rotation; the
+handover narrates it).
+
 #### `update_policy`
 
 Replace a session's permission policy.

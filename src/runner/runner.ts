@@ -1277,6 +1277,30 @@ export async function handleRequest(
     }
 
     case "provide_tool_output": {
+      if (
+        ctx.rotating &&
+        (ctx.deferredCalls.has(req.call_id) || ctx.pendingApprovals.has(req.call_id))
+      ) {
+        // A rotation owns the session: the composed output turn below pipes
+        // into B's stdin exactly like send_turn, and its turn bookkeeping
+        // would mis-stamp the handover turn's parse-time output — so refuse
+        // in the send guard's posture, before any state change: no event, no
+        // stdin write, no auto-defer. Guarded only for KNOWN calls so an
+        // unknown call_id keeps its CALL_NOT_FOUND diagnostic; a still-
+        // pending call here is necessarily the handover turn's own (the
+        // rotate gate refused DECISIONS_PENDING at entry), and auto-
+        // deferring it would release the handover's hook with deny. The
+        // deferred record survives the refusal, but not the rotation — the
+        // handover narrates it, so the successor takes the output as a
+        // normal turn.
+        return {
+          id: req.id,
+          ok: false,
+          error: "ROTATION_IN_PROGRESS",
+          message:
+            "a rotation is in flight for this session; wait for session_rotated, then send the output to the successor as a normal turn",
+        };
+      }
       let deferred = ctx.deferredCalls.get(req.call_id);
 
       // If still pending (not yet resolved), auto-resolve as defer.

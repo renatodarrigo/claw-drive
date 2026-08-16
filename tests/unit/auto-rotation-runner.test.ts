@@ -236,6 +236,45 @@ describe("rotation outcomes carry their initiator", () => {
     fake.emitter.emit("exit", 0, null);
     await settleUntil(() => exitCalls.length > 0);
   });
+
+  it("a provide_tool_output racing the handover is refused; the rotation completes unperturbed", async () => {
+    vi.useRealTimers();
+    const stubRunner = path.join(stubDir, "fake-runner");
+    await fs.writeFile(stubRunner, '#!/bin/sh\ntouch "$CLAW_DRIVE_HOME/sessions/$2/ready"\n', { mode: 0o755 });
+    await fs.chmod(stubRunner, 0o755);
+    process.env.CLAW_DRIVE_BIN = stubRunner;
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake, { policy: { rotation: { threshold_tokens: 1000, mode: "manual" } } });
+    // A deferred call from before the rotation — the survives-into-rotation case.
+    ctx.deferredCalls.set("toolu_d1", {
+      call_id: "toolu_d1",
+      turn_id: "turn_0",
+      tool: "Bash",
+      args: { command: "echo hi" },
+      deferred_at: new Date().toISOString(),
+      reason: "human will run this manually",
+    });
+    const rotP = handleRequest(ctx, { id: "r1", op: "rotate" });
+    await settleUntil(() => ctx.rotating);
+    const provided = await handleRequest(ctx, {
+      id: "p1",
+      op: "provide_tool_output",
+      call_id: "toolu_d1",
+      stdout: "output from the human",
+    });
+    expect(provided).toMatchObject({ ok: false, error: "ROTATION_IN_PROGRESS" });
+    await completeHandoverTurn(ctx, "turn_1", true);
+    const resp = await rotP;
+    expect(resp).toMatchObject({ ok: true });
+    expect(ofKind(await events(), "session_rotated")).toHaveLength(1);
+    // Exactly one stdin write ever happened: the sanctioned handover send.
+    expect(fake.writes).toHaveLength(1);
+    expect(fake.writes[0]).not.toContain("toolu_d1");
+    // The record survived the refusal untouched.
+    expect(ctx.deferredCalls.has("toolu_d1")).toBe(true);
+    fake.emitter.emit("exit", 0, null);
+    await settleUntil(() => exitCalls.length > 0);
+  });
 });
 
 const turnCompleted = (id: string): Event =>
