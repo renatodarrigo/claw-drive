@@ -93,7 +93,7 @@
       </a>
       <a href="driving-patterns.html#rotation" class="pillar">
         <h3>Rotation &amp; recovery</h3>
-        <p>A task can outlive one context window. <code>rotate</code> hands off to a fresh successor on a structured handover at a policy-set threshold; <code>recover</code> continues a crashed session from its last record; <code>report</code> renders the post-mortem.</p>
+        <p>A task can outlive one context window. <code>rotate</code> hands off to a fresh successor on a structured handover at a policy-set threshold; <code>recover</code> continues a crashed session from its last record; <code>report</code> renders the post-mortem. With <code>rotation.mode: "auto"</code>, the runner rotates by itself at the threshold — no driver command needed — and <code>budget.warn_cost_usd</code> warns before spend reaches the cap.</p>
       </a>
     </div>
 
