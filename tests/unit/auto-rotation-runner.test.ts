@@ -157,9 +157,11 @@ async function makeCtx(fake: FakeB, statePatch?: Partial<SessionState>): Promise
     tearingDown: false,
     lastInterruptAt: null,
     rotationSettled: null,
+    rotationSendId: null,
     autoRotateLatched: false,
     costWarned: false,
-  } as RunnerContext;
+    rotationPolicyEpoch: 0,
+  } satisfies RunnerContext;
 }
 
 async function events(): Promise<Event[]> {
@@ -232,6 +234,45 @@ describe("rotation outcomes carry their initiator", () => {
     const rotated = ofKind(await events(), "session_rotated");
     expect(rotated).toHaveLength(1);
     expect(rotated[0].initiated_by).toBe("manual");
+    fake.emitter.emit("exit", 0, null);
+    await settleUntil(() => exitCalls.length > 0);
+  });
+
+  it("a provide_tool_output racing the handover is refused; the rotation completes unperturbed", async () => {
+    vi.useRealTimers();
+    const stubRunner = path.join(stubDir, "fake-runner");
+    await fs.writeFile(stubRunner, '#!/bin/sh\ntouch "$CLAW_DRIVE_HOME/sessions/$2/ready"\n', { mode: 0o755 });
+    await fs.chmod(stubRunner, 0o755);
+    process.env.CLAW_DRIVE_BIN = stubRunner;
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake, { policy: { rotation: { threshold_tokens: 1000, mode: "manual" } } });
+    // A deferred call from before the rotation — the survives-into-rotation case.
+    ctx.deferredCalls.set("toolu_d1", {
+      call_id: "toolu_d1",
+      turn_id: "turn_0",
+      tool: "Bash",
+      args: { command: "echo hi" },
+      deferred_at: new Date().toISOString(),
+      reason: "human will run this manually",
+    });
+    const rotP = handleRequest(ctx, { id: "r1", op: "rotate" });
+    await settleUntil(() => ctx.rotating);
+    const provided = await handleRequest(ctx, {
+      id: "p1",
+      op: "provide_tool_output",
+      call_id: "toolu_d1",
+      stdout: "output from the human",
+    });
+    expect(provided).toMatchObject({ ok: false, error: "ROTATION_IN_PROGRESS" });
+    await completeHandoverTurn(ctx, "turn_1", true);
+    const resp = await rotP;
+    expect(resp).toMatchObject({ ok: true });
+    expect(ofKind(await events(), "session_rotated")).toHaveLength(1);
+    // Exactly one stdin write ever happened: the sanctioned handover send.
+    expect(fake.writes).toHaveLength(1);
+    expect(fake.writes[0]).not.toContain("toolu_d1");
+    // The record survived the refusal untouched.
+    expect(ctx.deferredCalls.has("toolu_d1")).toBe(true);
     fake.emitter.emit("exit", 0, null);
     await settleUntil(() => exitCalls.length > 0);
   });
@@ -425,5 +466,81 @@ describe("auto-rotation latch", () => {
     // process itself would survive to check it.
     await settleUntil(() => ctx.autoRotateLatched);
     expect(ctx.rotating).toBe(false);
+  });
+});
+
+describe("policy-epoch guard on the latch", () => {
+  // The MAX_GENERATIONS refusal choreography runs a real handover turn, so
+  // the attempt window stays open until completeHandoverTurn — wide enough
+  // to land an update_policy inside it deterministically.
+
+  it("a rotation-block update mid-attempt keeps the stale refusal from latching; the next attempt latches under the new config", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake, { generation: 10 });
+    await boundary(ctx, "t1", 500);
+    await boundary(ctx, "t2", 5000);
+    // Once rotating is observable, the dispatch has already captured its
+    // epoch (both happen in the same synchronous segment).
+    await settleUntil(() => ctx.rotating);
+    const upd = await handleRequest(ctx, {
+      id: "p1",
+      op: "update_policy",
+      policy: { rotation: { threshold_tokens: 2000, mode: "auto" } },
+    });
+    expect(upd).toMatchObject({ ok: true });
+    await completeHandoverTurn(ctx, "turn_1", true);
+    await settleUntil(() => !ctx.rotating);
+    await settle();
+    expect(ctx.autoRotateLatched).toBe(false); // stale-epoch outcome must not latch
+    expect(ofKind(await events(), "rotation_refused")).toHaveLength(1);
+    // The re-armed attempt runs under the NEW config at the next boundary —
+    // still MAX_GENERATIONS, and THIS outcome (fresh epoch) latches.
+    await boundary(ctx, "t3", 6000);
+    await completeHandoverTurn(ctx, "turn_2", true);
+    await settleUntil(() => ctx.autoRotateLatched);
+    expect(ofKind(await events(), "rotation_refused")).toHaveLength(2);
+  });
+
+  it("a rotation-block update mid-attempt keeps a crashed attempt from latching (.catch path)", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake, { generation: 10 });
+    await boundary(ctx, "t1", 500);
+    await boundary(ctx, "t2", 5000);
+    await settleUntil(() => ctx.rotating);
+    const upd = await handleRequest(ctx, {
+      id: "p1",
+      op: "update_policy",
+      policy: { rotation: { threshold_tokens: 2000, mode: "auto" } },
+    });
+    expect(upd).toMatchObject({ ok: true });
+    // Crash the attempt instead of letting it refuse cleanly: with the
+    // session dir gone, readEventsSince tolerates the missing file (no
+    // handover extracted) but attempt 2's turn_started emit throws ENOENT,
+    // so performRotation rejects — the .catch path. The existing crashed-
+    // attempt test pins that this machinery latches WITHOUT an update; this
+    // pins that a stale epoch suppresses it.
+    rmSync(sessionDir(SID), { recursive: true, force: true });
+    await completeHandoverTurn(ctx, "turn_1", false);
+    await settleUntil(() => !ctx.rotating);
+    await settle();
+    expect(ctx.autoRotateLatched).toBe(false);
+  });
+
+  it("an unrelated policy update mid-attempt does not disturb the latch (epoch bumps only on rotation-block change)", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake, { generation: 10 });
+    await boundary(ctx, "t1", 500);
+    await boundary(ctx, "t2", 5000);
+    await settleUntil(() => ctx.rotating);
+    const upd = await handleRequest(ctx, {
+      id: "p1",
+      op: "update_policy",
+      policy: { rotation: { threshold_tokens: 1000, mode: "auto" }, budget: { warn_cost_usd: 5 } },
+    });
+    expect(upd).toMatchObject({ ok: true });
+    await completeHandoverTurn(ctx, "turn_1", true);
+    // Rotation block byte-identical → no bump → the refusal latches normally.
+    await settleUntil(() => ctx.autoRotateLatched);
+    expect(ofKind(await events(), "rotation_refused")).toHaveLength(1);
   });
 });

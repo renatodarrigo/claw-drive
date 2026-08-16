@@ -81,7 +81,7 @@ async function makeCtx(fake: FakeB, overrides?: Partial<RunnerContext>): Promise
     exit_reason: null,
   };
   await fs.writeFile(path.join(dir, "state.json"), JSON.stringify(state, null, 2));
-  return {
+  const base = {
     sessionId: SID,
     state,
     b: fake.b,
@@ -104,8 +104,12 @@ async function makeCtx(fake: FakeB, overrides?: Partial<RunnerContext>): Promise
     tearingDown: false,
     lastInterruptAt: null,
     rotationSettled: null,
-    ...overrides,
-  } as RunnerContext;
+    rotationSendId: null,
+    autoRotateLatched: false,
+    costWarned: false,
+    rotationPolicyEpoch: 0,
+  } satisfies RunnerContext;
+  return { ...base, ...overrides };
 }
 
 beforeEach(async () => {
@@ -311,6 +315,79 @@ describe("send during rotation", () => {
     const resp = await handleRequest(ctx, { id: "handover_1", op: "send_turn", message: "hello" });
     expect(resp).toMatchObject({ ok: false, error: "ROTATION_IN_PROGRESS" });
     expect(fake.writes).toHaveLength(0);
+  });
+});
+
+describe("provide_tool_output during rotation (twin of the send guard)", () => {
+  function seedDeferred(ctx: RunnerContext, callId: string): void {
+    ctx.deferredCalls.set(callId, {
+      call_id: callId,
+      turn_id: "turn_1",
+      tool: "Bash",
+      args: { command: "apt list --installed" },
+      deferred_at: new Date().toISOString(),
+      reason: "human will run this manually",
+    });
+  }
+
+  it("refuses a deferred call mid-rotation: no event, no stdin write, bookkeeping and record untouched", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake, { rotating: true });
+    seedDeferred(ctx, "toolu_r1");
+    const resp = await handleRequest(ctx, {
+      id: "pr1",
+      op: "provide_tool_output",
+      call_id: "toolu_r1",
+      stdout: "ok",
+    });
+    expect(resp).toMatchObject({ ok: false, error: "ROTATION_IN_PROGRESS" });
+    expect((resp as { message: string }).message).toContain("session_rotated");
+    expect(await eventKinds()).toEqual([]);
+    expect(fake.writes).toEqual([]);
+    expect(ctx.state.turns).toBe(0);
+    expect(ctx.currentTurnId).toBeNull();
+    expect(ctx.deferredCalls.has("toolu_r1")).toBe(true);
+  });
+
+  it("refuses a still-PENDING call mid-rotation without auto-deferring it — the handover turn's own hook stays paused", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake, { rotating: true });
+    const resolveSpy = vi.fn();
+    ctx.pendingApprovals.set("toolu_r2", {
+      call_id: "toolu_r2",
+      turn_id: "turn_1",
+      tool: "Bash",
+      args: { command: "echo hi" },
+      default_action: "defer",
+      resolve: resolveSpy,
+    });
+    const resp = await handleRequest(ctx, { id: "pr2", op: "provide_tool_output", call_id: "toolu_r2" });
+    expect(resp).toMatchObject({ ok: false, error: "ROTATION_IN_PROGRESS" });
+    expect(resolveSpy).not.toHaveBeenCalled();
+    expect(await eventKinds()).toEqual([]); // no tool_decision_resolved either
+    expect(ctx.pendingApprovals.has("toolu_r2")).toBe(true);
+    expect(ctx.deferredCalls.has("toolu_r2")).toBe(false);
+    expect(fake.writes).toEqual([]);
+  });
+
+  it("an unknown call_id keeps its CALL_NOT_FOUND diagnostic even mid-rotation", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake, { rotating: true });
+    const resp = await handleRequest(ctx, { id: "pr3", op: "provide_tool_output", call_id: "toolu_missing" });
+    expect(resp).toMatchObject({ ok: false, error: "CALL_NOT_FOUND" });
+  });
+
+  it("the guard is a window, not a latch: the same provide succeeds once rotating clears", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake, { rotating: true });
+    seedDeferred(ctx, "toolu_r4");
+    const refused = await handleRequest(ctx, { id: "pr4", op: "provide_tool_output", call_id: "toolu_r4", stdout: "ok" });
+    expect(refused).toMatchObject({ ok: false, error: "ROTATION_IN_PROGRESS" });
+    ctx.rotating = false; // e.g. the rotation failed and the predecessor lives on
+    const resp = await handleRequest(ctx, { id: "pr5", op: "provide_tool_output", call_id: "toolu_r4", stdout: "ok" });
+    expect(resp).toMatchObject({ ok: true, result: { turn_id: "turn_1" } });
+    expect(fake.writes).toHaveLength(1);
+    expect(ctx.deferredCalls.has("toolu_r4")).toBe(false);
   });
 });
 

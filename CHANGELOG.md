@@ -1,10 +1,21 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- **Unit test harnesses now fail to compile when the runner context grows a field they don't initialize.** Harness context literals are completeness-checked (`satisfies`) instead of cast, so a new runner field can't silently read as `undefined` in tests.
+
+### Fixed
+
+- **`provide_tool_output` can no longer write into a rotation's handover.** The rotate-window guard that already refused a racing `send_turn` now covers the deferred-output op too: while a rotation is in flight it refuses with `ROTATION_IN_PROGRESS` — no turn starts, nothing reaches the session's stdin, and the deferred-call record survives untouched. After `session_rotated`, send the output to the successor as a normal turn.
+- **A policy update landing mid-auto-rotation-attempt can no longer be re-latched away.** The auto-rotation latch now records an outcome only if it was produced under the current rotation config: an attempt that raced a rotation-block change settles without latching, and the next over-threshold boundary retries under the new config — on the crash path too.
+
 ## [1.7.0] — 2026-08-15
 
 ### Added
 
-- **`rotation.mode: "auto"` — the runner rotates the session itself.** At the completed-turn boundary that crosses `threshold_tokens`, the runner emits `context_threshold_reached` and then runs the standard rotation choreography — never mid-turn. Outcomes are stamped `initiated_by: "auto" | "manual"`; a `send_turn` racing an in-flight rotation is refused with `ROTATION_IN_PROGRESS` instead of interleaving with the handover. A one-shot latch stops repeat attempts after a refusal or failure (refusals are deterministic until the config changes, and every attempt costs a handover turn); an `update_policy` that changes the rotation block re-arms it.
+- **`rotation.mode: "auto"` — the runner rotates the session itself.** At the completed-turn boundary that crosses `threshold_tokens`, the runner emits `context_threshold_reached` and then runs the standard rotation choreography — never mid-turn. Outcomes are stamped `initiated_by: "auto" | "manual"`; a `send_turn` racing an in-flight rotation is refused with `ROTATION_IN_PROGRESS` instead of interleaving with the handover. A one-shot latch stops repeat attempts after a refusal or failure (refusals are deterministic until the config changes, and each failed attempt costs a real handover turn); an `update_policy` that changes the rotation block re-arms it.
 - **`budget.warn_cost_usd` — a spend warning line below the cap.** Crossing it emits the watch-surfaced `cost_threshold_reached` event (reading, line, cap, generation) once per runner process, on completed and failed turns alike — error results carry cost. Not a cap: nothing stops. Must sit strictly below `max_cost_usd` when both are present; works alone for monitoring-only setups.
 
 ## [1.6.0] — 2026-08-14

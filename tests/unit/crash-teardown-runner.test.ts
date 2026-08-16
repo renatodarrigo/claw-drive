@@ -86,6 +86,7 @@ async function makeCtx(fake: FakeB): Promise<RunnerContext> {
     budget: null,
     budgetBreached: false,
     lastContextTokens: null,
+    lastCostUsd: null,
     completedTurns: 0,
     turnInFlight: false,
     firstTurnContextTokens: null,
@@ -96,7 +97,11 @@ async function makeCtx(fake: FakeB): Promise<RunnerContext> {
     tearingDown: false,
     lastInterruptAt: null,
     rotationSettled: null,
-  } as RunnerContext;
+    rotationSendId: null,
+    autoRotateLatched: false,
+    costWarned: false,
+    rotationPolicyEpoch: 0,
+  } satisfies RunnerContext;
 }
 
 /** Shared real-clock lag tolerance: the drainUntil condition waits and the

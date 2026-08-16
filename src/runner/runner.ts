@@ -146,11 +146,19 @@ export interface RunnerContext {
   /** Auto-rotation one-shot latch: set after an auto attempt ends in a policy
    * refusal or a failure (autoOutcomeLatches) — both are futile or expensive
    * to retry — cleared by an update_policy that changes the rotation block.
+   * An attempt that settles under a stale rotationPolicyEpoch never latches.
    * Manual rotate never consults it. */
   autoRotateLatched: boolean;
   /** Cost warning once-per-process latch: set when cost_threshold_reached is
    * emitted; cleared by an update_policy that changes warn_cost_usd. */
   costWarned: boolean;
+  /** Rotation-config generation: bumped by every update_policy that CHANGES
+   * the rotation block — the same condition that re-arms autoRotateLatched.
+   * maybeAutoRotate captures it at dispatch and compares before latching in
+   * .then and .catch alike, so the latch may only encode an outcome produced
+   * under the current rotation config; a stale attempt settles without
+   * latching and the next boundary retries under the new config. */
+  rotationPolicyEpoch: number;
 }
 
 // Placeholder type; populated in Task 13 when the approval flow lands.
@@ -468,12 +476,19 @@ function maybeAutoRotate(ctx: RunnerContext): void {
     return;
   }
   setImmediate(() => {
+    // Captured in the same synchronous segment as performRotation's entry
+    // config read: an outcome may latch only if the rotation config it ran
+    // under is still current when it settles — on the .catch path too, since
+    // a crash under a stale config is no evidence about the new one.
+    const epoch = ctx.rotationPolicyEpoch;
     void performRotation(ctx, "auto")
       .then((out) => {
-        if (!out.ok && autoOutcomeLatches(out.error)) ctx.autoRotateLatched = true;
+        if (!out.ok && autoOutcomeLatches(out.error) && ctx.rotationPolicyEpoch === epoch) {
+          ctx.autoRotateLatched = true;
+        }
       })
       .catch(() => {
-        ctx.autoRotateLatched = true;
+        if (ctx.rotationPolicyEpoch === epoch) ctx.autoRotateLatched = true;
       });
   });
 }
@@ -1238,6 +1253,7 @@ export async function handleRequest(
         oldRot?.mode !== newRot?.mode
       ) {
         ctx.autoRotateLatched = false;
+        ctx.rotationPolicyEpoch += 1;
       }
       if (warnCostOf(ctx.state.policy) !== warnCostOf(policy as Policy)) {
         ctx.costWarned = false;
@@ -1277,6 +1293,30 @@ export async function handleRequest(
     }
 
     case "provide_tool_output": {
+      if (
+        ctx.rotating &&
+        (ctx.deferredCalls.has(req.call_id) || ctx.pendingApprovals.has(req.call_id))
+      ) {
+        // A rotation owns the session: the composed output turn below pipes
+        // into B's stdin exactly like send_turn, and its turn bookkeeping
+        // would mis-stamp the handover turn's parse-time output — so refuse
+        // in the send guard's posture, before any state change: no event, no
+        // stdin write, no auto-defer. Guarded only for KNOWN calls so an
+        // unknown call_id keeps its CALL_NOT_FOUND diagnostic; a still-
+        // pending call here is necessarily the handover turn's own (the
+        // rotate gate refused DECISIONS_PENDING at entry), and auto-
+        // deferring it would release the handover's hook with deny. The
+        // deferred record survives the refusal, but not the rotation — the
+        // handover narrates it, so the successor takes the output as a
+        // normal turn.
+        return {
+          id: req.id,
+          ok: false,
+          error: "ROTATION_IN_PROGRESS",
+          message:
+            "a rotation is in flight for this session; wait for session_rotated, then send the output to the successor as a normal turn",
+        };
+      }
       let deferred = ctx.deferredCalls.get(req.call_id);
 
       // If still pending (not yet resolved), auto-resolve as defer.
@@ -1632,6 +1672,7 @@ export async function runRunner(sessionId: string): Promise<void> {
     rotationSendId: null,
     autoRotateLatched: false,
     costWarned: false,
+    rotationPolicyEpoch: 0,
   };
 
   // Start the stdout loop; run it in the background. If it fails, emit an
