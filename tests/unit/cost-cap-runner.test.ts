@@ -119,6 +119,7 @@ async function makeCtx(fake: FakeB, statePatch?: Partial<SessionState>): Promise
     budget: null,
     budgetBreached: false,
     lastContextTokens: null,
+    lastCostUsd: null,
     completedTurns: 0,
     turnInFlight: false,
     firstTurnContextTokens: null,
@@ -129,7 +130,10 @@ async function makeCtx(fake: FakeB, statePatch?: Partial<SessionState>): Promise
     tearingDown: false,
     lastInterruptAt: null,
     rotationSettled: null,
-  } as RunnerContext;
+    rotationSendId: null,
+    autoRotateLatched: false,
+    costWarned: false,
+  } satisfies RunnerContext;
 }
 
 beforeEach(async () => {

@@ -157,9 +157,10 @@ async function makeCtx(fake: FakeB, statePatch?: Partial<SessionState>): Promise
     tearingDown: false,
     lastInterruptAt: null,
     rotationSettled: null,
+    rotationSendId: null,
     autoRotateLatched: false,
     costWarned: false,
-  } as RunnerContext;
+  } satisfies RunnerContext;
 }
 
 async function events(): Promise<Event[]> {

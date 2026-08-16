@@ -19,7 +19,7 @@ function fakeCtx(overrides: Partial<RunnerContext> & { policy?: SessionState["po
     exit_code: null,
     exit_reason: null,
   };
-  return {
+  const base = {
     sessionId: "sess_test",
     state,
     b: {} as ChildProcess,
@@ -31,6 +31,7 @@ function fakeCtx(overrides: Partial<RunnerContext> & { policy?: SessionState["po
     budget: null,
     budgetBreached: false,
     lastContextTokens: null,
+    lastCostUsd: null,
     completedTurns: 0,
     turnInFlight: false,
     firstTurnContextTokens: null,
@@ -41,8 +42,11 @@ function fakeCtx(overrides: Partial<RunnerContext> & { policy?: SessionState["po
     tearingDown: false,
     lastInterruptAt: null,
     rotationSettled: null,
-    ...overrides,
-  } as RunnerContext;
+    rotationSendId: null,
+    autoRotateLatched: false,
+    costWarned: false,
+  } satisfies RunnerContext;
+  return { ...base, ...overrides };
 }
 
 const ROTATE = { id: "t", op: "rotate" as const };

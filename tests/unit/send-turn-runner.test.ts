@@ -81,7 +81,7 @@ async function makeCtx(fake: FakeB, overrides?: Partial<RunnerContext>): Promise
     exit_reason: null,
   };
   await fs.writeFile(path.join(dir, "state.json"), JSON.stringify(state, null, 2));
-  return {
+  const base = {
     sessionId: SID,
     state,
     b: fake.b,
@@ -104,8 +104,11 @@ async function makeCtx(fake: FakeB, overrides?: Partial<RunnerContext>): Promise
     tearingDown: false,
     lastInterruptAt: null,
     rotationSettled: null,
-    ...overrides,
-  } as RunnerContext;
+    rotationSendId: null,
+    autoRotateLatched: false,
+    costWarned: false,
+  } satisfies RunnerContext;
+  return { ...base, ...overrides };
 }
 
 beforeEach(async () => {

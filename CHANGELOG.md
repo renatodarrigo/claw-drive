@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- **Unit test harnesses now fail to compile when the runner context grows a field they don't initialize.** Harness context literals are completeness-checked (`satisfies`) instead of cast, so a new runner field can't silently read as `undefined` in tests.
+
 ## [1.7.0] — 2026-08-15
 
 ### Added
