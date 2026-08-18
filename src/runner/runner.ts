@@ -460,7 +460,12 @@ export async function afterEventBookkeeping(ctx: RunnerContext, ev: Event): Prom
  * Policy refusals and failures latch further attempts off (autoOutcomeLatches)
  * until an update_policy changes the rotation block — a crashed attempt
  * latches the same way, since retrying an attempt that just threw is no more
- * promising than retrying a policy refusal. Dispatched via setImmediate —
+ * promising than retrying a policy refusal.
+ * Latching is epoch-guarded: the attempt captures rotationPolicyEpoch at
+ * dispatch and latches only if the rotation config is unchanged when it
+ * settles — a stale outcome settles without latching and the next
+ * boundary retries under the new config.
+ * Dispatched via setImmediate —
  * the choreography's handover turn needs the stdout loop this bookkeeping
  * runs inside, so it must never be awaited from here.
  */
