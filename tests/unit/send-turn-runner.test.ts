@@ -131,6 +131,17 @@ async function eventKinds(): Promise<string[]> {
 
 const REFUSAL_MESSAGE = "session process has exited; turn cannot start — use recover";
 
+function seedDeferred(ctx: RunnerContext, callId: string): void {
+  ctx.deferredCalls.set(callId, {
+    call_id: callId,
+    turn_id: "turn_1",
+    tool: "Bash",
+    args: { command: "apt list --installed" },
+    deferred_at: new Date().toISOString(),
+    reason: "human will run this manually",
+  });
+}
+
 describe("send_turn op — dead-B guard", () => {
   it("refuses a dead-B send: error result, no turn_started event, no stdin write, ctx left untouched", async () => {
     const fake = makeFakeB();
@@ -177,17 +188,6 @@ describe("send_turn op — dead-B guard", () => {
 });
 
 describe("provide_tool_output op — dead-B guard (twin of send_turn's)", () => {
-  function seedDeferred(ctx: RunnerContext, callId: string): void {
-    ctx.deferredCalls.set(callId, {
-      call_id: callId,
-      turn_id: "turn_1",
-      tool: "Bash",
-      args: { command: "apt list --installed" },
-      deferred_at: new Date().toISOString(),
-      reason: "human will run this manually",
-    });
-  }
-
   it("refuses a deferred call on a dead B: error result, no turn_started, no tool_output_provided, no stdin write", async () => {
     const fake = makeFakeB();
     const ctx = await makeCtx(fake, { bExited: true });
@@ -319,17 +319,6 @@ describe("send during rotation", () => {
 });
 
 describe("provide_tool_output during rotation (twin of the send guard)", () => {
-  function seedDeferred(ctx: RunnerContext, callId: string): void {
-    ctx.deferredCalls.set(callId, {
-      call_id: callId,
-      turn_id: "turn_1",
-      tool: "Bash",
-      args: { command: "apt list --installed" },
-      deferred_at: new Date().toISOString(),
-      reason: "human will run this manually",
-    });
-  }
-
   it("refuses a deferred call mid-rotation: no event, no stdin write, bookkeeping and record untouched", async () => {
     const fake = makeFakeB();
     const ctx = await makeCtx(fake, { rotating: true });
