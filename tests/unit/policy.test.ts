@@ -1768,3 +1768,80 @@ describe("validatePolicy arg_matches: compile parity with bash_command_matches",
     expect(validatePolicy(p)).toEqual({ ok: true });
   });
 });
+
+describe("redirect and path forms a shell accepts that the reject rules missed", () => {
+  // Both rules were written as if a shell required whitespace after `>` and a
+  // leading `/` before a relative path. It requires neither. The existing
+  // destructive-pattern cases only ever exercised the spaced form
+  // (`echo bad > /dev/sda`), so nine dangerous forms fell through to the
+  // read-only auto_approve rule — matched on their leading `cat`/`echo` — and
+  // were approved silently, without a human ever seeing them.
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = nodePath.dirname(__filename);
+  const starter: Policy = JSON.parse(
+    fsSync.readFileSync(nodePath.resolve(__dirname, "..", "..", "templates", "claw-drive-policy.json"), "utf-8")
+  );
+  const permissive: Policy = JSON.parse(
+    fsSync.readFileSync(nodePath.resolve(__dirname, "..", "..", "templates", "claw-drive-policy-permissive.json"), "utf-8")
+  );
+  const templates: Array<[string, Policy]> = [
+    ["starter", starter],
+    ["permissive", permissive],
+  ];
+
+  // Block-device writes with no space, a tab, two spaces, or an append redirect.
+  const deviceCases: string[] = [
+    "cat img >/dev/sda",
+    "cat img>/dev/sda",
+    "cat img >>/dev/sda",
+    "cat img >\t/dev/sda",
+    "cat img >  /dev/nvme0n1",
+    "echo bad >/dev/vda",
+    "echo bad >/dev/mmcblk0",
+  ];
+
+  // Writes into claw-drive's own runtime state by an ordinary relative path.
+  // The `>`-prefixed forms are the ones a prefix character class cannot fix:
+  // `>{1,2}` has already consumed the redirect, so nothing precedes the path
+  // for such a class to match. That branch drops the anchor instead.
+  const runtimeStateCases: string[] = [
+    "echo x > .claw-drive/sessions/y",
+    "echo x >.claw-drive/sessions/y",
+    "echo x >> .claw-drive/sessions/y",
+    "echo x >>.claw-drive/sessions/y",
+    "cp foo .claw-drive/bar",
+    "tee .claw-drive/x",
+    "sed -i s/a/b/ .claw-drive/policy.json",
+  ];
+
+  for (const [tplName, policy] of templates) {
+    for (const command of [...deviceCases, ...runtimeStateCases]) {
+      it(`${tplName}: ${JSON.stringify(command)} → escalate/reject`, () => {
+        const r = matchPolicy(policy, { tool: "Bash", args: { command } });
+        expect(r.decision).toBe("escalate");
+        if (r.decision === "escalate") {
+          expect(r.default_action).toBe("reject");
+        }
+      });
+    }
+  }
+
+  // The widened patterns must not start escalating ordinary reads. /dev/null is
+  // not a block device, and reading claw-drive state is not writing it.
+  const stillApproved: string[] = [
+    "echo x > /dev/null",
+    "cat /dev/urandom",
+    "cat .claw-drive/policy.json",
+    "ls .claw-drive/",
+    "git status",
+    "echo hello",
+  ];
+
+  for (const [tplName, policy] of templates) {
+    for (const command of stillApproved) {
+      it(`${tplName}: ${JSON.stringify(command)} stays approve_silent`, () => {
+        expect(matchPolicy(policy, { tool: "Bash", args: { command } }).decision).toBe("approve_silent");
+      });
+    }
+  }
+});

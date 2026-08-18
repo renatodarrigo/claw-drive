@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **Both shipped policy templates silently auto-approved block-device writes and writes into claw-drive's own runtime state.** The destructive rule matched `> /dev/sd…` with a literal space, and the runtime-state rule required `.claw-drive/` to start the command or follow a `/`. A shell requires neither, so `cat img >/dev/sda`, `cat img >>/dev/sda`, `echo x > .claw-drive/sessions/y` and `cp foo .claw-drive/bar` all missed every reject rule and fell through to the read-only auto-approve rule — matched on their leading `cat`/`echo` — reaching `approve_silent` without a human ever seeing them. Nine such forms were auto-approved across both templates; all now escalate with a default of reject.
+
+  The device rule takes `>\s*/dev/…`, which covers the no-space, extra-space, tab and `>>` append forms in one. The runtime-state rule drops its path anchor in both branches rather than widening it: a prefix character class cannot work in either, because `>{1,2}` and `\btee\s+` have already consumed the character such a class would need to match. Each branch has independently established a write before it looks for the path, so the anchor earned nothing. The `Edit`/`Write` rules matching `arg_matches.file_path` are deliberately unchanged — a path argument is a whole path, not a command line, so no redirect can precede it there.
+
+  Reads are unaffected: `echo x > /dev/null`, `cat .claw-drive/policy.json` and `ls .claw-drive/` all still auto-approve, and are now pinned by tests. The existing destructive-pattern cases only ever exercised the spaced form (`echo bad > /dev/sda`), which is why the gap survived.
+
 ## [1.7.2] — 2026-08-18
 
 ### Changed
