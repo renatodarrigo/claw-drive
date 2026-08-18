@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.7.2] — 2026-08-18
+
+### Changed
+
+- **`npm run typecheck` covers the test suite.** A second, noEmit pass (`tsconfig.tests.json`) type-checks `tests/` under the same strict flags as `src/`; the unchecked casts it surfaced are replaced with honest narrows — a shared `new_session_id` helper and discriminant guards — so contract drift in the tests fails to compile instead of surfacing at runtime.
+- **Test fakes stamp exits like a real child process.** The cost-cap and crash-teardown suites' fake session processes set `exitCode`/`signalCode` by the time `'exit'` fires — the same protection the auto-rotation suite carries — so an exit emitted before a listener registers is still observed by the teardown that follows.
+
+### Fixed
+
+- **Documentation matches behavior in four small places.** Both `watch --all` tables name the `--follow-lineage` exception; the compatibility notes pin that a deferred-call record does not survive rotation into the successor's context; the driving patterns note that `provide_tool_output` shares the send guard's in-flight refusal; the auto-rotation dispatch doc carries the same epoch clause as its field doc.
+
 ## [1.7.1] — 2026-08-16
 
 ### Changed
