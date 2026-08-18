@@ -303,7 +303,7 @@ describe("permissive policy template", () => {
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = nodePath.dirname(__filename);
   const templatePath = nodePath.resolve(__dirname, "..", "..", "templates", "claw-drive-policy-permissive.json");
-  const policy: Policy = JSON.parse(fsSync.readFileSync(templatePath, "utf-8"));
+  const policy: Exclude<Policy, "bypass"> = JSON.parse(fsSync.readFileSync(templatePath, "utf-8"));
 
   it("validates without errors", () => {
     const v = validatePolicy(policy);
@@ -1087,10 +1087,10 @@ describe("v0.5.9 — permissive hardening from claw-crypto", () => {
 describe("CD-3 — interpreter one-liner escapes (defer in both templates)", () => {
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = nodePath.dirname(__filename);
-  const starter: Policy = JSON.parse(
+  const starter: Exclude<Policy, "bypass"> = JSON.parse(
     fsSync.readFileSync(nodePath.resolve(__dirname, "..", "..", "templates", "claw-drive-policy.json"), "utf-8")
   );
-  const permissive: Policy = JSON.parse(
+  const permissive: Exclude<Policy, "bypass"> = JSON.parse(
     fsSync.readFileSync(nodePath.resolve(__dirname, "..", "..", "templates", "claw-drive-policy-permissive.json"), "utf-8")
   );
   const templates: Array<[string, Policy]> = [

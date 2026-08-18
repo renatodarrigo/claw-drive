@@ -12,6 +12,7 @@ import { readEventsSince } from "../../src/lib/events.js";
 import { eventsPath, statePath } from "../../src/lib/paths.js";
 import { readState } from "../../src/lib/state.js";
 import type { Event } from "../../src/lib/events.js";
+import { newSessionIdOf } from "../helpers/control-response.js";
 
 const SID = "sess_costcap001";
 
@@ -50,6 +51,14 @@ function makeFakeB(): FakeB {
     on: emitter.on.bind(emitter),
     once: emitter.once.bind(emitter),
   } as unknown as ChildProcess;
+  // Stamp the exit like a real ChildProcess (exitCode is set by the time
+  // 'exit' fires): a test may emit B's exit before an exit listener is
+  // registered, and only the stamped exitCode lets teardown's dead-B
+  // early path observe it.
+  emitter.on("exit", (code: number | null, signal: string | null) => {
+    (b as { exitCode: number | null }).exitCode = code;
+    (b as { signalCode: string | null }).signalCode = signal ?? null;
+  });
   return { writes, emitter, stdout, b };
 }
 
@@ -331,7 +340,7 @@ describe("cost carried across the rotation handoff", () => {
     waiter("completed");
     const resp = await rotP;
     expect(resp).toMatchObject({ ok: true });
-    const newId = (resp as { result: { new_session_id: string } }).result.new_session_id;
+    const newId = newSessionIdOf(resp);
     const succ = await readState(statePath(newId));
     expect(succ?.cost_usd_base).toBeCloseTo(2.5, 10);
     expect(succ?.cost_usd).toBeCloseTo(2.5, 10);
@@ -353,7 +362,7 @@ describe("cost carried across the rotation handoff", () => {
     waiter("completed");
     const resp = await rotP;
     expect(resp).toMatchObject({ ok: true });
-    const newId = (resp as { result: { new_session_id: string } }).result.new_session_id;
+    const newId = newSessionIdOf(resp);
     const succ = await readState(statePath(newId));
     expect(succ?.cost_usd_base).toBeCloseTo(4.0, 10);
     fake.emitter.emit("exit", 0, null);
@@ -370,7 +379,7 @@ describe("cost carried across the rotation handoff", () => {
     waiter("completed");
     const resp = await rotP;
     expect(resp).toMatchObject({ ok: true });
-    const newId = (resp as { result: { new_session_id: string } }).result.new_session_id;
+    const newId = newSessionIdOf(resp);
     const succ = await readState(statePath(newId));
     expect(succ?.cost_usd_base).toBeUndefined();
     expect(succ?.cost_usd).toBeUndefined();

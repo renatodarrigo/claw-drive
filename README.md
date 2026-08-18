@@ -341,7 +341,7 @@ B's echo fires the hook → policy defers → monitor alerts A → human answers
 | `policy-test '<command>' [flags]` | Diagnose a tool call against a policy. Three output formats (default human, `--explain`, `--json`); multi-tool via `--tool TOOL --arg KEY=VALUE`; `--policy starter\|permissive\|bypass\|<file>`; `--exit-on reject\|defer\|approve\|escalate` for CI gating. |
 | `prune [--older-than 24h] [--force]` | Remove dead sessions older than cutoff. `--force` also removes a dead session whose crash-handover hasn't been consumed yet. |
 | `watch <session> [--since N \| --replay] [--only KIND[,KIND]... \| --decision-only] [--idle-after SECONDS] [--no-token-filter] [--no-suspected-needs-input] [--follow-lineage]` | Stream noteworthy events as JSONL. Used by Monitor flows. Sentinel filter is on by default (`turn_completed` surfaces only when the trailing `[TOKEN]` is present). `--no-token-filter` disables the sentinel filter entirely. `--decision-only` and `--only` are kind-level subset filters that compose with the sentinel filter. `--idle-after SECONDS` (default `600`, `0` disables) emits a synthetic `idle` event when no surfaced event has been seen for that long. The silent-miss backstop surfaces a no-token `turn_completed` whose final line ends in `?` with an additive `suspected_needs_input` marker; `--no-suspected-needs-input` disables it. `--follow-lineage` keeps the stream alive across the lineage — on rotation or recovery the watcher hops to the successor, until a member stops without one. |
-| `watch --all [same flags]` | Merge every live session into one JSONL stream, each line tagged with an additive `session_id`. Dynamic membership (sessions spawned later join via a periodic rescan); runs until SIGINT. All single-session filters apply per session. `status` (no arg) is the point-in-time fleet-snapshot companion. |
+| `watch --all [same flags except --follow-lineage]` | Merge every live session into one JSONL stream, each line tagged with an additive `session_id`. Dynamic membership (sessions spawned later join via a periodic rescan); runs until SIGINT. All single-session filters apply per session. `status` (no arg) is the point-in-time fleet-snapshot companion. |
 | `provide-output <call_id> [--stdout S] [--stderr S] [--exit N] [--extra S] [--from-file PATH]` | Relay human-run command output to a deferred call |
 
 ### Decision context (rationale + diff)
@@ -445,7 +445,7 @@ Because a crash-handover may be the only distilled record of a session's final s
 
 ## Testing
 
-- `npm run test:unit` — 1151 unit tests, no real claude invocation
+- `npm run test:unit` — 1159 unit tests, no real claude invocation
 - `npm run test:integration` — 29 integration tests. The suite spawns real claude sessions and costs real tokens; the rotation lineage test is the long one, running several minutes across two full context rotations.
 - `bash scripts/self-dogfood.sh` — end-to-end acceptance smoke
 

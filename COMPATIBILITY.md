@@ -231,7 +231,7 @@ Refuses with `SESSION_EXITED` if the session process has already exited, in whic
 
 Refuses with `ROTATION_IN_PROGRESS` while a rotation is in flight for the
 session — wait for `session_rotated`, then send the output to the successor as
-a normal turn (the deferred-call record does not survive rotation; the
+a normal turn (the deferred-call record does not survive rotation into the successor's context; the
 handover narrates it).
 
 #### `update_policy`

@@ -12,6 +12,7 @@ import {
 import type { SessionState } from "../../src/lib/state.js";
 import { readEventsSince } from "../../src/lib/events.js";
 import { eventsPath } from "../../src/lib/paths.js";
+import { newSessionIdOf } from "../helpers/control-response.js";
 
 // Dogfood 2026-08-04, gen-2 `crashed:0`: B died 42s into the rotate's handover
 // turn. The rotate client hung (the turn waiter can never fire once B's stdout
@@ -52,6 +53,14 @@ function makeFakeB(): FakeB {
     on: emitter.on.bind(emitter),
     once: emitter.once.bind(emitter),
   } as unknown as ChildProcess;
+  // Stamp the exit like a real ChildProcess (exitCode is set by the time
+  // 'exit' fires): a test may emit B's exit before an exit listener is
+  // registered, and only the stamped exitCode lets teardown's dead-B
+  // early path observe it.
+  emitter.on("exit", (code: number | null, signal: string | null) => {
+    (b as { exitCode: number | null }).exitCode = code;
+    (b as { signalCode: string | null }).signalCode = signal ?? null;
+  });
   return { writes, emitter, b };
 }
 
@@ -316,7 +325,7 @@ describe("handleUnexpectedBExit — crash during rotate (dogfood gen-2)", () => 
       waiter("completed");
       const resp = await withTimeout(rotate, 8000, "rotate");
       expect(resp).toMatchObject({ ok: true });
-      const newId = (resp as { result: { new_session_id: string } }).result.new_session_id;
+      const newId = newSessionIdOf(resp);
       const mcp = JSON.parse(
         await fs.readFile(path.join(root, "sessions", newId, "mcp.json"), "utf-8")
       ) as { mcpServers: Record<string, unknown> };
