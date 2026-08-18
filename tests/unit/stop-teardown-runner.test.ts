@@ -9,6 +9,7 @@ import { readState, type SessionState } from "../../src/lib/state.js";
 import { readEventsSince } from "../../src/lib/events.js";
 import { eventsPath, statePath } from "../../src/lib/paths.js";
 import { waitForReady } from "../../src/lib/spawn-session.js";
+import { newSessionIdOf } from "../helpers/control-response.js";
 
 // A2 hardening (July orphaned runners; SIGTERM wedge): the teardown path must
 // escalate SIGTERM→SIGKILL against an unresponsive B, and must short-circuit
@@ -445,7 +446,7 @@ describe("stop_session mid-rotation (session-scoped stop)", () => {
     ctx.turnWaiters.get("turn_1")!("completed");
     const resp = await rotP;
     expect(resp).toMatchObject({ ok: true });
-    const newId = (resp as { result: { new_session_id: string } }).result.new_session_id;
+    const newId = newSessionIdOf(resp);
     expect(ctx.state.rotated_to).toBe(newId);
     const beforeStop = await eventKinds();
     expect(beforeStop).toContain("session_rotated");

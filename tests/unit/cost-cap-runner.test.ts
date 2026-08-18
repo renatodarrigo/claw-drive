@@ -12,6 +12,7 @@ import { readEventsSince } from "../../src/lib/events.js";
 import { eventsPath, statePath } from "../../src/lib/paths.js";
 import { readState } from "../../src/lib/state.js";
 import type { Event } from "../../src/lib/events.js";
+import { newSessionIdOf } from "../helpers/control-response.js";
 
 const SID = "sess_costcap001";
 
@@ -331,7 +332,7 @@ describe("cost carried across the rotation handoff", () => {
     waiter("completed");
     const resp = await rotP;
     expect(resp).toMatchObject({ ok: true });
-    const newId = (resp as { result: { new_session_id: string } }).result.new_session_id;
+    const newId = newSessionIdOf(resp);
     const succ = await readState(statePath(newId));
     expect(succ?.cost_usd_base).toBeCloseTo(2.5, 10);
     expect(succ?.cost_usd).toBeCloseTo(2.5, 10);
@@ -353,7 +354,7 @@ describe("cost carried across the rotation handoff", () => {
     waiter("completed");
     const resp = await rotP;
     expect(resp).toMatchObject({ ok: true });
-    const newId = (resp as { result: { new_session_id: string } }).result.new_session_id;
+    const newId = newSessionIdOf(resp);
     const succ = await readState(statePath(newId));
     expect(succ?.cost_usd_base).toBeCloseTo(4.0, 10);
     fake.emitter.emit("exit", 0, null);
@@ -370,7 +371,7 @@ describe("cost carried across the rotation handoff", () => {
     waiter("completed");
     const resp = await rotP;
     expect(resp).toMatchObject({ ok: true });
-    const newId = (resp as { result: { new_session_id: string } }).result.new_session_id;
+    const newId = newSessionIdOf(resp);
     const succ = await readState(statePath(newId));
     expect(succ?.cost_usd_base).toBeUndefined();
     expect(succ?.cost_usd).toBeUndefined();

@@ -177,7 +177,9 @@ describe("policy-test resolvePolicySource", () => {
     if (r.ok) {
       expect(r.source.kind).toBe("file");
       expect(r.source.label).toBe("starter");
-      expect(r.source.path).toMatch(/templates\/claw-drive-policy\.json$/);
+      if (r.source.kind === "file") {
+        expect(r.source.path).toMatch(/templates\/claw-drive-policy\.json$/);
+      }
       expect(typeof r.policy).toBe("object");
     }
   });
@@ -192,8 +194,11 @@ describe("policy-test resolvePolicySource", () => {
     const r = resolvePolicySource("permissive", REPO_ROOT);
     expect(r.ok).toBe(true);
     if (r.ok) {
+      expect(r.source.kind).toBe("file");
       expect(r.source.label).toBe("permissive");
-      expect(r.source.path).toMatch(/permissive\.json$/);
+      if (r.source.kind === "file") {
+        expect(r.source.path).toMatch(/permissive\.json$/);
+      }
     }
   });
 
@@ -217,7 +222,9 @@ describe("policy-test resolvePolicySource", () => {
       expect(r.ok).toBe(true);
       if (r.ok) {
         expect(r.source.kind).toBe("file");
-        expect(r.source.path).toBe(file);
+        if (r.source.kind === "file") {
+          expect(r.source.path).toBe(file);
+        }
         expect(r.source.label).toBe("file");
         expect(r.policy).toEqual(p);
       }

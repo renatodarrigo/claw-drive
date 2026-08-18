@@ -316,7 +316,7 @@ describe("parseWatchArgs — --all (CD-7 fleet mode)", () => {
     expect(r.ok).toBe(true);
     if (r.ok) {
       expect(r.all).toBe(true);
-      expect((r as Record<string, unknown>).sessionId).toBeUndefined();
+      expect((r as unknown as Record<string, unknown>).sessionId).toBeUndefined();
     }
   });
 
