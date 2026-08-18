@@ -53,6 +53,14 @@ function makeFakeB(): FakeB {
     on: emitter.on.bind(emitter),
     once: emitter.once.bind(emitter),
   } as unknown as ChildProcess;
+  // Stamp the exit like a real ChildProcess (exitCode is set by the time
+  // 'exit' fires): a test may emit B's exit before an exit listener is
+  // registered, and only the stamped exitCode lets teardown's dead-B
+  // early path observe it.
+  emitter.on("exit", (code: number | null, signal: string | null) => {
+    (b as { exitCode: number | null }).exitCode = code;
+    (b as { signalCode: string | null }).signalCode = signal ?? null;
+  });
   return { writes, emitter, b };
 }
 
