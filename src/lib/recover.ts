@@ -31,6 +31,10 @@ export interface RecoverInput {
   sessionId: string;
   model?: string | null;
   noStart?: boolean;
+  /** Crash auto-respawn (runner-internal): consecutive-respawn streak to
+   * stamp on the successor. Manual recover callers omit it — a human
+   * recover resets the chain. */
+  respawnStreak?: number;
 }
 
 export type RecoverOutcome =
@@ -160,6 +164,7 @@ export async function recoverSession(input: RecoverInput): Promise<RecoverOutcom
       root_session_id: state.root_session_id ?? input.sessionId,
       rotated_from: input.sessionId,
       ...(inheritedCost !== undefined ? { cost_usd_base: inheritedCost } : {}),
+      ...(input.respawnStreak !== undefined ? { respawn_streak: input.respawnStreak } : {}),
     },
   });
   spawnRunnerDetached(newId);

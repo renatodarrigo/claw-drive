@@ -178,3 +178,28 @@ describe("cost_usd_base lineage stamp (cost-cap)", () => {
     expect(state?.cost_usd).toBeUndefined();
   });
 });
+
+describe("respawn_streak lineage stamp (crash auto-respawn)", () => {
+  it("stamps lineage.respawn_streak when provided and omits it otherwise", async () => {
+    const withStreak = "sess_20200101T000000_rsp001";
+    await scaffoldSessionDir({
+      ...baseInput(withStreak),
+      scenarioBrief: "b",
+      lineage: {
+        generation: 2,
+        root_session_id: "sess_root",
+        rotated_from: "sess_prev",
+        respawn_streak: 3,
+      },
+    });
+    expect((await readState(statePath(withStreak)))?.respawn_streak).toBe(3);
+
+    const without = "sess_20200101T000000_rsp002";
+    await scaffoldSessionDir({
+      ...baseInput(without),
+      scenarioBrief: "b",
+      lineage: { generation: 2, root_session_id: "sess_root", rotated_from: "sess_prev" },
+    });
+    expect((await readState(statePath(without)))?.respawn_streak).toBeUndefined();
+  });
+});

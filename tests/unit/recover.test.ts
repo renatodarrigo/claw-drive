@@ -6,6 +6,7 @@ import { recoverSession } from "../../src/lib/recover.js";
 import { cmdRecover } from "../../src/cli/commands/recover.js";
 import { sessionDir, statePath, crashHandoverPath } from "../../src/lib/paths.js";
 import { readState } from "../../src/lib/state.js";
+import { newSessionIdOf } from "../helpers/control-response.js";
 
 let home: string;
 let savedEnv: string | undefined;
@@ -125,6 +126,26 @@ describe("recoverSession successor scaffolding (stub runner bin)", () => {
     const succ = await readState(statePath(newId));
     expect(succ?.cost_usd_base).toBeCloseTo(3.0, 10);
     expect(succ?.cost_usd).toBeCloseTo(3.0, 10);
+  });
+
+  it("stamps respawn_streak on the successor when respawnStreak is passed (crash auto-respawn path)", async () => {
+    const id = "sess_20200101T000000_streak1";
+    await deadSession(id);
+    await fs.writeFile(crashHandoverPath(id), "## Current objective\nresume");
+    const r = await recoverSession({ sessionId: id, respawnStreak: 2 });
+    expect(r.ok).toBe(true);
+    const succ = await readState(statePath(newSessionIdOf(r)));
+    expect(succ?.respawn_streak).toBe(2);
+  });
+
+  it("leaves respawn_streak absent on a manual recover (no respawnStreak input)", async () => {
+    const id = "sess_20200101T000000_streak2";
+    await deadSession(id, { respawn_streak: 1 });
+    await fs.writeFile(crashHandoverPath(id), "## Current objective\nresume");
+    const r = await recoverSession({ sessionId: id });
+    expect(r.ok).toBe(true);
+    const succ = await readState(statePath(newSessionIdOf(r)));
+    expect(succ?.respawn_streak).toBeUndefined();
   });
 });
 
