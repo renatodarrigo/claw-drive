@@ -329,7 +329,7 @@ First stable release. claw-drive 1.0 freezes the public surfaces — the policy 
 - `claw-drive status --watch` streaming refresh. Snapshot-on-demand only in v0.5.5.
 - Filter / sort / search flags on the summary table. Add when there's observed need.
 - An MCP-tool exposure of the status snapshot. CLI is sufficient for the observed pain.
-- The v0.5.6 sentinel wrapper itself (designed at `.superpowers/specs/2026-04-27-v0.5.6-sentinel-wrapper-draft.md`, not implemented here).
+- The v0.5.6 sentinel wrapper itself (designed in a separate draft, not implemented here).
 
 ## [0.5.4] — 2026-04-27
 
