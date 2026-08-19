@@ -11,6 +11,7 @@ import {
   compositionDenyMessage,
   POLICY_SCHEMA_VERSION,
   type Policy,
+  type PolicyObject,
   type Rule,
 } from "../../src/lib/policy.js";
 import * as fsSync from "node:fs";
