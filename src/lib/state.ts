@@ -59,6 +59,12 @@ export interface SessionState {
    * cost_usd_base: dollars inherited from the predecessor at scaffold time;
    * absent for generation 1 and for successors whose predecessor carried
    * neither.
+   *
+   * Crash auto-respawn (additive-optional).
+   * respawn_streak: consecutive auto-respawns without a completed turn, as of
+   * this member's birth; absent = 0. Stamped at scaffold by the crash path's
+   * recover call, cleared on the member's first completed turn, and never
+   * stamped by manual recover — human intervention resets the chain.
    */
   context_tokens?: number;
   generation?: number;
@@ -69,6 +75,7 @@ export interface SessionState {
   original_brief?: string;
   cost_usd?: number;
   cost_usd_base?: number;
+  respawn_streak?: number;
 }
 
 export async function readState(statePath: string): Promise<SessionState | null> {

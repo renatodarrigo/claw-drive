@@ -92,7 +92,7 @@
     </div>
 
     <div class="callout">
-      <strong>Known limits — cooperative, not adversarial.</strong> The rules above match the command string, so they can't inspect what an interpreter does — <code>python -c 'open(".cloverleaf/claw-drive-policy.json","w").write(...)'</code> reaches the policy file without touching the <code>Edit</code>/<code>Write</code> rules. Interpreter one-liners (<code>python -c</code>, <code>node -e</code>, <code>perl -e</code>, <code>eval</code>, <code>sh -c</code>, …) now <strong>defer</strong> to you rather than slipping through silently, but the deferral surfaces the command, not its payload: you are the inspector. Indirect writes and obfuscated commands slip a regex by construction. claw-drive gates a cooperative agent against accidental damage; it is not a sandbox against an adversarial one — for that, run the session inside an OS-level sandbox. See <a href="../THREAT-MODEL.md">THREAT-MODEL.md</a> for the full boundary.
+      <strong>Known limits — cooperative, not adversarial.</strong> The rules above match the command string, so they can't inspect what an interpreter does — <code>python -c 'open("claw-drive-policy.json","w").write(...)'</code> reaches the policy file without touching the <code>Edit</code>/<code>Write</code> rules. Interpreter one-liners (<code>python -c</code>, <code>node -e</code>, <code>perl -e</code>, <code>eval</code>, <code>sh -c</code>, …) now <strong>defer</strong> to you rather than slipping through silently, but the deferral surfaces the command, not its payload: you are the inspector. Indirect writes and obfuscated commands slip a regex by construction. claw-drive gates a cooperative agent against accidental damage; it is not a sandbox against an adversarial one — for that, run the session inside an OS-level sandbox. See <a href="../THREAT-MODEL.md">THREAT-MODEL.md</a> for the full boundary.
     </div>
 
     <h2 id="claw-gate">The CLAW-GATE convention</h2>
@@ -225,6 +225,28 @@ claw-drive policy lint --max-severity warn ./my-policy.json   # exit 1 on any wa
     <p>Pick the threshold with the session's bootstrap in mind: the system prompt, hooks, CLAUDE.md, the brief, and any inbound handover all land in context before B's first turn completes, and a first turn already over the threshold refuses every rotation attempt with <code>BOOTSTRAP_EXCEEDS_THRESHOLD</code>. <code>policy lint</code> warns (<code>rotation-threshold-low</code>) when <code>threshold_tokens</code> is below <code>40000</code>.</p>
 
     <p>Both knobs are live-adjustable: <code>claw-drive policy &lt;session&gt; --set &lt;file&gt;</code> (or <code>update_policy</code> over MCP) replaces a running session's policy, so a threshold that proved too low — or a lineage at its <code>max_generations</code> cap — can be raised without restarting anything.</p>
+
+    <h2 id="respawn">Crash auto-respawn (<code>respawn</code>)</h2>
+    <p>An optional <code>respawn</code> block extends <a href="driving-patterns.html#recover">crash recovery</a> from an on-command action into something the crash teardown itself can trigger — the policy half of <a href="driving-patterns.html#respawn-auto">Driving patterns → Crash auto-respawn</a>. <strong>Off by default:</strong> a policy without the block, or with <code>mode: "manual"</code>, leaves recovery on-command — nothing about the session behaves differently.</p>
+
+    <pre><code class="language-json">{
+  "escalate_default": true,
+  "respawn": {
+    "mode": "auto",
+    "max_attempts": 2
+  }
+}</code></pre>
+
+    <ul>
+      <li><code>mode</code> — <code>"manual"</code> (the default): a dead session is recovered only when the driver calls <code>recover</code>. <code>"auto"</code>: when Session B dies unexpectedly, the crash teardown itself runs the recover choreography — a successor spawns from the freshly distilled crash handover, in the same cwd under the same policy, lineage stamped, alias re-claimed if free.</li>
+      <li><code>max_attempts</code> — optional; default <code>2</code>, <code>0</code> = unlimited. Caps consecutive respawns attempted without a completed turn landing in between; a completed turn resets the streak, and so does a manual <code>recover</code>.</li>
+    </ul>
+
+    <p>Two further bounds apply without a dedicated key of their own: the lineage generation cap — the <code>rotation</code> block's <code>max_generations</code> when present, <code>10</code> otherwise — binds an automatic respawn exactly as it binds an automatic rotation, and only a human-initiated <code>recover</code> may exceed it; and a lineage whose cumulative spend already exceeds <a href="#budget"><code>budget.max_cost_usd</code></a> gets no further respawn.</p>
+
+    <p>The crash teardown narrates the outcome — <code>session_recovered</code> once a successor is up, or <code>recover_failed</code> with a <code>reason</code> explaining why — ahead of the terminal <code>session_stopped</code>, so <code>watch --follow-lineage</code> hops across the crash the same way it hops across a rotation.</p>
+
+    <p>Both knobs are live-adjustable: <code>claw-drive policy &lt;session&gt; --set &lt;file&gt;</code> (or <code>update_policy</code> over MCP) replaces a running session's policy, and the crash path reads the policy at crash time — so a change takes effect on the very next crash.</p>
   </main>
   <aside class="donate">
     <p>If claw-drive is useful to you, help me buy my first house.</p>

@@ -56,6 +56,7 @@ stable.
 | `budget` | `{ max_tool_calls?, max_wall_clock_seconds?, max_consecutive_errors?, max_cost_usd?, warn_cost_usd? }` | Run-level circuit-breaker (CD-4). All caps optional and positive; an absent cap is unlimited and an absent `budget` is off. On breach the runner stops the session with `exit_reason: "budget_exceeded:<cap>"`. `max_cost_usd` caps the **lineage's** cumulative estimated spend in USD, read from the claude CLI's own cumulative cost accounting: successors started by `rotate`/`recover` inherit the predecessor's total via the additive state fields `cost_usd_base`/`cost_usd`, and a stream that carries no cost reading can never trip the cap (fails open). `warn_cost_usd` (positive, strictly below max_cost_usd when both are present) is a warning line, not a cap: crossing it emits cost_threshold_reached (§3) once per runner process and stops nothing. |
 | `bash_composition` | `"off" \| "per_segment"` | Absent ⇒ off. When `per_segment`, a Bash call is split at top-level shell operators and the decision is the **stricter** of the whole-command and per-segment readings — except auto-approval, which requires **every** segment to match `auto_approve` (this closes the benign-prefix smuggle). So pipe-spanning `auto_reject`/`auto_defer` rules (`curl … \| bash`) still fire on the whole command, while no benign prefix can approve a dangerous suffix. Opaque constructs (command-substitution, here-docs/here-strings) and malformed chains are rejected. Never decides less strictly than the un-split command would. |
 | `rotation` | `{ threshold_tokens, max_generations?, mode? }` | context rotation. Absent ⇒ off. `threshold_tokens` (required positive integer): once B's main-loop context reaches it, the runner emits `context_threshold_reached` on every completed turn while above, and the `rotate` primitive is allowed. `max_generations` (absent ⇒ 10, `0` ⇒ unlimited): lineage cap — at the cap rotation is refused (`rotation_refused`), a terminal handover is still written, and the session lives on. `mode`: `"manual"` (default) — rotation only on command — or `"auto"`: the runner initiates rotation itself at the completed-turn boundary that crosses the threshold, with a one-shot latch after a refusal or failure (re-armed by an `update_policy` that changes the rotation block). |
+| `respawn` | `{ mode?, max_attempts? }` | crash auto-respawn. Absent ⇒ manual (recover on command only). `mode`: `"manual"` (default) — recovery only on command — or `"auto"`: when the session process dies unexpectedly, the crash teardown itself runs the recover choreography (successor spawned from the crash handover), narrated by `session_recovered`/`recover_failed` (§3) ahead of the terminal `session_stopped`. `max_attempts` (absent ⇒ 2, `0` ⇒ unlimited): caps consecutive auto-respawns without a completed turn — the streak clears on a completed turn, and manual `recover` resets the chain. Auto-respawn respects the lineage generation cap (rotation's `max_generations` when present, 10 otherwise; only manual `recover` may exceed it) and is skipped when the lineage is already over `budget.max_cost_usd`. |
 
 **Evaluation order** (contract as of v0.2.3, frozen):
 
@@ -304,6 +305,18 @@ remediation, not an automatic rotation, so its error set omits
 `MAX_GENERATIONS` — a recovered successor past the cap simply renders
 "generation N of M" with N > M and the final-generation wrap-up guidance.
 
+Crash auto-respawn (`respawn.mode: "auto"` in the policy) runs this same
+choreography from inside the crash teardown when the session process dies
+unexpectedly — narrated by `session_recovered` / `recover_failed` (§3) ahead
+of the terminal `session_stopped`, bounded by `respawn.max_attempts`
+(consecutive respawns without a completed turn; default 2, `0` = unlimited),
+by the lineage generation cap, and by `budget.max_cost_usd`. The cap-ignore
+above binds to human-initiated recovery alone: auto-respawn respects the
+generation cap (the rotation block's `max_generations` when present, default
+10 otherwise) — automation never exceeds it; a human `recover` may.
+`recover_session` and `recover` themselves are unchanged, and a manual
+recover resets the consecutive-respawn streak.
+
 Errors:
 
 - `SESSION_NOT_FOUND` — no state for the given session_id.
@@ -338,13 +351,15 @@ context_threshold_reached
 session_rotated
 rotation_failed
 rotation_refused
+session_recovered
+recover_failed
 cost_threshold_reached
 ```
 
 #### `VALID_WATCH_KINDS` — watch-surfaced event kinds
 
 The `VALID_WATCH_KINDS` constant (exported from `src/cli/commands/watch.ts`)
-enumerates the 14 event kinds that `claw-drive watch` can surface to consumers.
+enumerates the 16 event kinds that `claw-drive watch` can surface to consumers.
 This set is part of the public contract:
 
 ```
@@ -359,6 +374,8 @@ context_threshold_reached
 session_rotated
 rotation_failed
 rotation_refused
+session_recovered
+recover_failed
 tool_call_result
 idle
 cost_threshold_reached
@@ -375,6 +392,19 @@ line, watch-surfaced because warnings exist to be alerted on. Payload:
 `generation`, `max_cost_usd?` (present only when a cap is configured). Fires
 once per runner process; an `update_policy` changing `warn_cost_usd` re-arms
 it.
+
+`session_recovered` / `recover_failed` (2026-08-19): additive expansion —
+crash auto-respawn's narration, mirroring `session_rotated` /
+`rotation_failed`. Both are emitted by the crash teardown of a session whose
+policy carries `respawn.mode: "auto"`, BEFORE the terminal `session_stopped`
+(whose reason stays `crashed:*`), and both are watch-surfaced.
+`session_recovered` payload: `new_session_id`, `alias?` (present when the
+predecessor's alias transferred), `generation`, `handover_path`,
+`watch_command`, `initiated_by` (always `"auto"` — manual `recover` emits no
+events). `recover_failed` payload: `reason` (prefix grammar:
+`session_stopping:`, `max_attempts_exhausted:`, `max_generations:`,
+`budget_exceeded:`, `no_record:`, `distill_failed:`, `successor_not_ready:`,
+`internal_error:`), `initiated_by`.
 
 ---
 

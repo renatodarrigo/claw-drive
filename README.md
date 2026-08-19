@@ -425,6 +425,25 @@ Turn it on with a `rotation` block in the policy (rename the `_rotation_example`
 
 Absent `rotation`, nothing changes — no tracking, no events, no behavior difference from a session without the block.
 
+A sibling `respawn` block covers the other failure mode — a session that dies outright instead of filling its context window:
+
+```json
+{
+  "escalate_default": true,
+  "respawn": {
+    "mode": "auto",
+    "max_attempts": 2
+  }
+}
+```
+
+- **`mode`** — `"manual"` (the default): recovery happens only when the driver calls `recover`. `"auto"`: the crash teardown itself runs the recover choreography — a successor spawns from the freshly distilled crash handover, same cwd/policy, lineage stamped, alias re-claimed if free.
+- **`max_attempts`** (optional; default `2`, `0` = unlimited) — caps consecutive respawns attempted without a completed turn landing in between; a completed turn, or a manual `recover`, resets the streak.
+
+Two further bounds apply automatically: the lineage generation cap (the `rotation` block's `max_generations` when present, `10` otherwise — only a human-initiated `recover` may exceed it), and a lineage already over `budget.max_cost_usd`, which gets no further respawn.
+
+Absent `respawn`, or with `mode: "manual"`, nothing changes — recovery stays on-command.
+
 ### The driving flow
 
 1. B's tracked context crosses `threshold_tokens` → the runner emits `context_threshold_reached` (surfaced by `watch` like any other decision-relevant event).
@@ -443,9 +462,11 @@ Rotation needs a live, responsive B. `claw-drive recover <dead-session>` (or `re
 
 Because a crash-handover may be the only distilled record of a session's final state, `claw-drive prune` skips a dead session that still has an unconsumed one — pass `--force` to prune it anyway. A `recover` call that sets `rotated_to` marks the handover consumed, and prune removes the session normally from then on.
 
+A `respawn` block (`mode: "auto"`) lets the crash teardown run this same choreography on its own when B dies unexpectedly — narrating `session_recovered`, or `recover_failed` with a reason, ahead of the terminal `session_stopped`, bounded by `max_attempts`, the lineage generation cap, and `budget.max_cost_usd`. See [docs/driving-patterns.html](https://renatodarrigo.github.io/claw-drive/driving-patterns.html#respawn-auto) for the full choreography.
+
 ## Testing
 
-- `npm run test:unit` — 1199 unit tests, no real claude invocation
+- `npm run test:unit` — 1236 unit tests, no real claude invocation
 - `npm run test:integration` — 29 integration tests. The suite spawns real claude sessions and costs real tokens; the rotation lineage test is the long one, running several minutes across two full context rotations.
 - `bash scripts/self-dogfood.sh` — end-to-end acceptance smoke
 

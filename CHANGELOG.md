@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **Crash auto-respawn.** A policy `respawn` block (`{ "mode": "auto", "max_attempts": 2 }`) lets the runner itself run the recover choreography when the session process dies unexpectedly: the crash teardown spawns a successor from the freshly distilled crash handover, transfers the alias when it is free, stamps the lineage, and narrates the outcome with two new watch-surfaced events — `session_recovered` (mirroring `session_rotated`) and `recover_failed` (reason-prefixed like `rotation_failed`). The successor pointer lands before the terminal `session_stopped`, so `watch --follow-lineage` hops across a crash instead of ending at it. Automation is triple-bounded: `max_attempts` caps consecutive respawns without a completed turn (default 2, `0` = unlimited; a completed turn resets the streak, and manual `recover` resets the chain), the lineage generation cap binds (default 10 without a rotation block — only human-initiated `recover` may exceed it), and a lineage already over `max_cost_usd` is never respawned. Manual `recover` is unchanged.
+
 ## [1.7.3] — 2026-08-18
 
 ### Fixed
@@ -323,7 +329,7 @@ First stable release. claw-drive 1.0 freezes the public surfaces — the policy 
 - `claw-drive status --watch` streaming refresh. Snapshot-on-demand only in v0.5.5.
 - Filter / sort / search flags on the summary table. Add when there's observed need.
 - An MCP-tool exposure of the status snapshot. CLI is sufficient for the observed pain.
-- The v0.5.6 sentinel wrapper itself (designed at `.superpowers/specs/2026-04-27-v0.5.6-sentinel-wrapper-draft.md`, not implemented here).
+- The v0.5.6 sentinel wrapper itself (designed in a separate draft, not implemented here).
 
 ## [0.5.4] — 2026-04-27
 

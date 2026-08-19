@@ -7,6 +7,11 @@ import {
   DEFAULT_MAX_GENERATIONS,
   shouldAttemptAutoRotation,
   autoOutcomeLatches,
+  respawnConfigOf,
+  effectiveMaxAttempts,
+  DEFAULT_RESPAWN_MAX_ATTEMPTS,
+  checkRespawnGate,
+  type RespawnGateInput,
 } from "../../src/runner/context-tracker.js";
 
 const CFG = { threshold_tokens: 100_000 };
@@ -140,5 +145,106 @@ describe("autoOutcomeLatches", () => {
     expect(autoOutcomeLatches("INTERRUPT_GRACE")).toBe(false);
     expect(autoOutcomeLatches("ROTATION_IN_PROGRESS")).toBe(false);
     expect(autoOutcomeLatches("NO_ROTATION_CONFIG")).toBe(false);
+  });
+});
+
+describe("crash auto-respawn config helpers", () => {
+  it("respawnConfigOf: bypass and absent block are null; present block returned", () => {
+    expect(respawnConfigOf("bypass")).toBeNull();
+    expect(respawnConfigOf({ escalate_default: true })).toBeNull();
+    expect(respawnConfigOf({ respawn: { mode: "auto" } })).toEqual({ mode: "auto" });
+  });
+  it("effectiveMaxAttempts: default 2, explicit value, 0 preserved", () => {
+    expect(effectiveMaxAttempts({})).toBe(DEFAULT_RESPAWN_MAX_ATTEMPTS);
+    expect(effectiveMaxAttempts({ max_attempts: 5 })).toBe(5);
+    expect(effectiveMaxAttempts({ max_attempts: 0 })).toBe(0);
+  });
+});
+
+describe("checkRespawnGate", () => {
+  const proceed: RespawnGateInput = {
+    respawnCfg: { mode: "auto" },
+    rotationCfg: null,
+    rotatedTo: undefined,
+    stopping: false,
+    respawnStreak: 0,
+    generation: 1,
+    lineageCostUsd: undefined,
+    maxCostUsd: undefined,
+  };
+
+  it("proceeds on the baseline input", () => {
+    expect(checkRespawnGate(proceed)).toBeNull();
+  });
+  it("silent NOT_CONFIGURED: no block, manual mode, and modeless block alike", () => {
+    for (const cfg of [null, { mode: "manual" as const }, {}]) {
+      expect(checkRespawnGate({ ...proceed, respawnCfg: cfg })).toEqual({
+        kind: "silent",
+        code: "NOT_CONFIGURED",
+      });
+    }
+  });
+  it("silent ALREADY_HAS_SUCCESSOR wins over stopping (session_rotated already narrated)", () => {
+    expect(
+      checkRespawnGate({ ...proceed, rotatedTo: "sess_x", stopping: true })
+    ).toEqual({ kind: "silent", code: "ALREADY_HAS_SUCCESSOR" });
+  });
+  it("narrates session_stopping when a stop engaged", () => {
+    const b = checkRespawnGate({ ...proceed, stopping: true });
+    expect(b?.kind).toBe("narrated");
+    expect((b as { reason: string }).reason).toMatch(/^session_stopping: /);
+  });
+  it("narrates max_attempts_exhausted at the streak budget (default 2)", () => {
+    const b = checkRespawnGate({ ...proceed, respawnStreak: 2 });
+    expect((b as { reason: string }).reason).toMatch(/^max_attempts_exhausted: /);
+  });
+  it("streak below the budget proceeds; max_attempts 0 is unlimited", () => {
+    expect(checkRespawnGate({ ...proceed, respawnStreak: 1 })).toBeNull();
+    expect(
+      checkRespawnGate({ ...proceed, respawnCfg: { mode: "auto", max_attempts: 0 }, respawnStreak: 99 })
+    ).toBeNull();
+  });
+  it("narrates max_generations at the cap — default 10 without a rotation block", () => {
+    const b = checkRespawnGate({ ...proceed, generation: 10 });
+    expect((b as { reason: string }).reason).toMatch(/^max_generations: /);
+  });
+  it("rotation block's cap applies when present; 0 is unlimited", () => {
+    expect(
+      checkRespawnGate({
+        ...proceed,
+        rotationCfg: { threshold_tokens: 100_000, max_generations: 12 },
+        generation: 10,
+      })
+    ).toBeNull();
+    expect(
+      checkRespawnGate({
+        ...proceed,
+        rotationCfg: { threshold_tokens: 100_000, max_generations: 0 },
+        generation: 99,
+      })
+    ).toBeNull();
+    const b = checkRespawnGate({
+      ...proceed,
+      rotationCfg: { threshold_tokens: 100_000, max_generations: 3 },
+      generation: 3,
+    });
+    expect((b as { reason: string }).reason).toMatch(/^max_generations: /);
+  });
+  it("narrates budget_exceeded only when a cap exists and the lineage total exceeds it", () => {
+    const b = checkRespawnGate({ ...proceed, lineageCostUsd: 6, maxCostUsd: 5 });
+    expect((b as { reason: string }).reason).toMatch(/^budget_exceeded: /);
+    expect(checkRespawnGate({ ...proceed, lineageCostUsd: 5, maxCostUsd: 5 })).toBeNull();
+    expect(checkRespawnGate({ ...proceed, lineageCostUsd: 6, maxCostUsd: undefined })).toBeNull();
+    expect(checkRespawnGate({ ...proceed, lineageCostUsd: undefined, maxCostUsd: 5 })).toBeNull();
+  });
+  it("check order: streak narrates before generation and budget", () => {
+    const b = checkRespawnGate({
+      ...proceed,
+      respawnStreak: 2,
+      generation: 10,
+      lineageCostUsd: 6,
+      maxCostUsd: 5,
+    });
+    expect((b as { reason: string }).reason).toMatch(/^max_attempts_exhausted: /);
   });
 });

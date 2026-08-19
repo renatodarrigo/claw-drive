@@ -56,7 +56,14 @@ export interface ScaffoldInput {
   /** Context rotation: lineage stamp for rotation/recover successors. Absent on
    * fresh starts. cost_usd_base: the predecessor's lineage-cumulative spend at
    * handover time (cost-cap) — omitted when the predecessor never stamped one. */
-  lineage?: { generation: number; root_session_id: string; rotated_from: string; cost_usd_base?: number };
+  lineage?: {
+    generation: number;
+    root_session_id: string;
+    rotated_from: string;
+    cost_usd_base?: number;
+    /** Crash auto-respawn: consecutive-respawn streak to stamp on the successor. */
+    respawn_streak?: number;
+  };
 }
 
 export async function scaffoldSessionDir(input: ScaffoldInput): Promise<void> {
@@ -125,6 +132,9 @@ export async function scaffoldSessionDir(input: ScaffoldInput): Promise<void> {
       // so displays and recover read a truthful cost_usd before the
       // successor's first priced result line refreshes it.
       state.cost_usd = input.lineage.cost_usd_base;
+    }
+    if (input.lineage.respawn_streak !== undefined) {
+      state.respawn_streak = input.lineage.respawn_streak;
     }
   } else if (input.policy !== "bypass" && input.policy.rotation) {
     // Context rotation: a rotation-configured fresh start begins its lineage at

@@ -151,3 +151,101 @@ export function autoOutcomeLatches(error: string): boolean {
     error === "ROTATION_FAILED"
   );
 }
+
+/** Derived from the policy schema so the two can never drift. */
+export type RespawnConfig = NonNullable<PolicyObject["respawn"]>;
+
+export const DEFAULT_RESPAWN_MAX_ATTEMPTS = 2;
+
+export function respawnConfigOf(policy: Policy): RespawnConfig | null {
+  if (policy === "bypass") return null;
+  return policy.respawn ?? null;
+}
+
+/** Effective consecutive-respawn budget with the default applied; 0 = unlimited. */
+export function effectiveMaxAttempts(cfg: RespawnConfig): number {
+  return cfg.max_attempts ?? DEFAULT_RESPAWN_MAX_ATTEMPTS;
+}
+
+export interface RespawnGateInput {
+  respawnCfg: RespawnConfig | null;
+  /** For the lineage generation cap; null when the policy has no rotation block. */
+  rotationCfg: RotationConfig | null;
+  /** state.rotated_to — a successor already exists (rotation won mid-crash). */
+  rotatedTo: string | undefined;
+  /** ctx.stopping — a stop or breaker teardown engaged during the crash. */
+  stopping: boolean;
+  /** state.respawn_streak ?? 0. */
+  respawnStreak: number;
+  /** state.generation ?? 1. */
+  generation: number;
+  /** state.cost_usd ?? state.cost_usd_base — best-known lineage total. */
+  lineageCostUsd: number | undefined;
+  /** budget.max_cost_usd when configured. */
+  maxCostUsd: number | undefined;
+}
+
+export type RespawnBlocker =
+  | { kind: "silent"; code: "NOT_CONFIGURED" | "ALREADY_HAS_SUCCESSOR" }
+  | { kind: "narrated"; reason: string };
+
+/**
+ * Crash auto-respawn pre-checks, in a stable order (checkRotateGate's
+ * pattern: pure, config passed per call, unit-testable without a runner).
+ * Silent blockers first — an unconfigured session has nothing to narrate,
+ * and an already-successored crash was narrated by session_rotated, so it
+ * outranks even a stop: a "successor not started" reason would contradict
+ * the recorded rotation. Narrated blockers carry the recover_failed reason
+ * with the normative `prefix:` grammar. Null ⇒ respawn proceeds. The
+ * generation cap reads the rotation block when present and defaults to
+ * DEFAULT_MAX_GENERATIONS otherwise — automation always has a lineage
+ * bound; only manual recover may exceed it.
+ */
+export function checkRespawnGate(input: RespawnGateInput): RespawnBlocker | null {
+  if (!input.respawnCfg || input.respawnCfg.mode !== "auto") {
+    return { kind: "silent", code: "NOT_CONFIGURED" };
+  }
+  if (input.rotatedTo !== undefined) {
+    return { kind: "silent", code: "ALREADY_HAS_SUCCESSOR" };
+  }
+  if (input.stopping) {
+    return {
+      kind: "narrated",
+      reason:
+        "session_stopping: stop or circuit breaker engaged during crash teardown; successor not started",
+    };
+  }
+  const maxA = effectiveMaxAttempts(input.respawnCfg);
+  if (maxA !== 0 && input.respawnStreak >= maxA) {
+    return {
+      kind: "narrated",
+      reason:
+        `max_attempts_exhausted: ${input.respawnStreak} consecutive respawns without a completed turn ` +
+        `(max_attempts ${maxA}); successor not started — recover manually to restart the chain`,
+    };
+  }
+  const maxG = input.rotationCfg
+    ? effectiveMaxGenerations(input.rotationCfg)
+    : DEFAULT_MAX_GENERATIONS;
+  if (maxG !== 0 && input.generation >= maxG) {
+    return {
+      kind: "narrated",
+      reason:
+        `max_generations: generation ${input.generation} is the last permitted (max_generations ${maxG}); ` +
+        `successor not started — recover manually to exceed the cap`,
+    };
+  }
+  if (
+    input.maxCostUsd !== undefined &&
+    input.lineageCostUsd !== undefined &&
+    input.lineageCostUsd > input.maxCostUsd
+  ) {
+    return {
+      kind: "narrated",
+      reason:
+        `budget_exceeded: lineage cost ${input.lineageCostUsd} exceeds max_cost_usd ${input.maxCostUsd}; ` +
+        `successor not started`,
+    };
+  }
+  return null;
+}

@@ -30,6 +30,8 @@ export function shouldEmit(ev: Event): boolean {
     case "session_rotated":
     case "rotation_failed":
     case "rotation_refused":
+    case "session_recovered":
+    case "recover_failed":
     case "cost_threshold_reached":
       return true;
     case "tool_call_result":
@@ -57,6 +59,8 @@ export const VALID_WATCH_KINDS: ReadonlySet<string> = new Set([
   "session_rotated",
   "rotation_failed",
   "rotation_refused",
+  "session_recovered",
+  "recover_failed",
   "cost_threshold_reached",
   "tool_call_result",
   "idle",
