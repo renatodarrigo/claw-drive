@@ -244,7 +244,7 @@ claw-drive policy lint --max-severity warn ./my-policy.json   # exit 1 on any wa
 
     <p>Two further bounds apply without a dedicated key of their own: the lineage generation cap — the <code>rotation</code> block's <code>max_generations</code> when present, <code>10</code> otherwise — binds an automatic respawn exactly as it binds an automatic rotation, and only a human-initiated <code>recover</code> may exceed it; and a lineage whose cumulative spend already exceeds <a href="#budget"><code>budget.max_cost_usd</code></a> gets no further respawn.</p>
 
-    <p>Before a successor spawns, the crash teardown narrates <code>session_recovered</code> — or, when no successor could be produced, <code>recover_failed</code> with a <code>reason</code> explaining why — ahead of the terminal <code>session_stopped</code>, so <code>watch --follow-lineage</code> hops across the crash the same way it hops across a rotation.</p>
+    <p>The crash teardown narrates the outcome — <code>session_recovered</code> once a successor is up, or <code>recover_failed</code> with a <code>reason</code> explaining why — ahead of the terminal <code>session_stopped</code>, so <code>watch --follow-lineage</code> hops across the crash the same way it hops across a rotation.</p>
 
     <p>Both knobs are live-adjustable: <code>claw-drive policy &lt;session&gt; --set &lt;file&gt;</code> (or <code>update_policy</code> over MCP) replaces a running session's policy, and the crash path reads the policy at crash time — so a change takes effect on the very next crash.</p>
   </main>
