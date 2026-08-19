@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- **`watch --decision-only` now includes `recover_failed`.** A failed auto-respawn ends the lineage without a successor — a human has to decide whether to `recover` by hand, so the preset surfaces it alongside its rotation sibling `rotation_failed`. `session_recovered` stays out of the preset: it is informational, for the same reason `session_rotated` is — the successor is already recorded and a `--follow-lineage` watcher hops to it.
+
 ## [1.8.0] — 2026-08-19
 
 ### Added
