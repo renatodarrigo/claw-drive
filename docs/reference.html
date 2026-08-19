@@ -112,7 +112,7 @@
         <tr>
           <td>Policy schema</td>
           <td><code>src/lib/policy.ts</code></td>
-          <td>All <code>PolicyObject</code> top-level keys (<code>auto_reject</code>, <code>auto_defer</code>, <code>auto_approve</code>, <code>escalate_default</code>, <code>decision_timeout_seconds</code>, <code>schema_version</code>, <code>budget</code>, <code>bash_composition</code>, <code>rotation</code>), the <code>Rule</code> field set, the <code>"bypass"</code> string form, evaluation order, and <code>_</code>-prefixed metadata convention.</td>
+          <td>All <code>PolicyObject</code> top-level keys (<code>auto_reject</code>, <code>auto_defer</code>, <code>auto_approve</code>, <code>escalate_default</code>, <code>decision_timeout_seconds</code>, <code>schema_version</code>, <code>budget</code>, <code>bash_composition</code>, <code>rotation</code>, <code>respawn</code>), the <code>Rule</code> field set, the <code>"bypass"</code> string form, evaluation order, and <code>_</code>-prefixed metadata convention.</td>
         </tr>
         <tr>
           <td>MCP tools</td>
@@ -122,7 +122,7 @@
         <tr>
           <td>Event <code>kind</code> set</td>
           <td><code>src/lib/events.ts</code></td>
-          <td>All 19 event kinds written to <code>events.jsonl</code>, and the 14-kind <code>VALID_WATCH_KINDS</code> set surfaced by <code>claw-drive watch</code> (including the synthetic <code>idle</code> kind).</td>
+          <td>All 21 event kinds written to <code>events.jsonl</code>, and the 16-kind <code>VALID_WATCH_KINDS</code> set surfaced by <code>claw-drive watch</code> (including the synthetic <code>idle</code> kind).</td>
         </tr>
         <tr>
           <td>CLI subcommands</td>
