@@ -1635,6 +1635,46 @@ describe("validatePolicy context-rotation rotation block", () => {
   });
 });
 
+describe("validatePolicy crash auto-respawn respawn block", () => {
+  const base: PolicyObject = { escalate_default: true };
+
+  it("accepts an absent respawn block (feature off)", () => {
+    expect(validatePolicy(base).ok).toBe(true);
+  });
+  it("accepts an empty respawn block (all fields optional; manual default)", () => {
+    expect(validatePolicy({ ...base, respawn: {} }).ok).toBe(true);
+  });
+  it('accepts respawn.mode "manual" and "auto"', () => {
+    expect(validatePolicy({ ...base, respawn: { mode: "manual" } }).ok).toBe(true);
+    expect(validatePolicy({ ...base, respawn: { mode: "auto" } }).ok).toBe(true);
+  });
+  it("accepts max_attempts 0 (unlimited) and positive integers", () => {
+    expect(validatePolicy({ ...base, respawn: { mode: "auto", max_attempts: 0 } }).ok).toBe(true);
+    expect(validatePolicy({ ...base, respawn: { max_attempts: 5 } }).ok).toBe(true);
+  });
+  it("rejects a non-object respawn block", () => {
+    const v = validatePolicy({ ...base, respawn: "auto" } as unknown as PolicyObject);
+    expect(v).toMatchObject({ ok: false, error: "respawn must be an object" });
+  });
+  it("rejects an unknown respawn key", () => {
+    const v = validatePolicy({ ...base, respawn: { mode: "auto", retries: 3 } } as unknown as PolicyObject);
+    expect(v).toMatchObject({ ok: false, error: "unknown respawn key 'retries'" });
+  });
+  it("rejects a bad mode", () => {
+    const v = validatePolicy({ ...base, respawn: { mode: "always" } } as unknown as PolicyObject);
+    expect(v).toMatchObject({ ok: false, error: 'respawn.mode must be "manual" or "auto"' });
+  });
+  it("rejects negative and non-integer max_attempts", () => {
+    for (const bad of [-1, 1.5, "2"]) {
+      const v = validatePolicy({ ...base, respawn: { max_attempts: bad } } as unknown as PolicyObject);
+      expect(v).toMatchObject({
+        ok: false,
+        error: "respawn.max_attempts must be a non-negative integer (0 = unlimited)",
+      });
+    }
+  });
+});
+
 describe("starter template", () => {
   it("ships bash_composition per_segment and validates", () => {
     const here = fileURLToPath(import.meta.url);

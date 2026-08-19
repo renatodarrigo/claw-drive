@@ -71,6 +71,18 @@ export interface PolicyObject {
     max_generations?: number;
     mode?: "manual" | "auto";
   };
+  /**
+   * Optional crash auto-respawn config. Absent ⇒ manual (recover on command
+   * only — no behaviour change). mode "auto": when Session B dies
+   * unexpectedly, the runner itself runs the recover choreography (successor
+   * from the crash handover) inside the crash teardown. max_attempts:
+   * consecutive auto-respawns without a completed turn before auto gives up
+   * (absent ⇒ 2; 0 ⇒ unlimited).
+   */
+  respawn?: {
+    mode?: "manual" | "auto";
+    max_attempts?: number;
+  };
 }
 
 export type Policy = "bypass" | PolicyObject;
@@ -399,6 +411,7 @@ export function validatePolicy(p: unknown): { ok: true } | { ok: false; error: s
     "budget",
     "bash_composition",
     "rotation",
+    "respawn",
   ]);
   for (const key of Object.keys(obj)) {
     if (key.startsWith("_")) continue; // metadata comment; ignored by validator
@@ -546,6 +559,28 @@ export function validatePolicy(p: unknown): { ok: true } | { ok: false; error: s
     }
     if (r.mode !== undefined && r.mode !== "manual" && r.mode !== "auto") {
       return { ok: false, error: 'rotation.mode must be "manual" or "auto"' };
+    }
+  }
+  // respawn (crash auto-respawn): optional block; every field optional — an
+  // empty object is valid and means manual (the default).
+  if (obj.respawn !== undefined) {
+    if (typeof obj.respawn !== "object" || obj.respawn === null || Array.isArray(obj.respawn)) {
+      return { ok: false, error: "respawn must be an object" };
+    }
+    const r = obj.respawn as Record<string, unknown>;
+    for (const key of Object.keys(r)) {
+      if (key !== "mode" && key !== "max_attempts") {
+        return { ok: false, error: `unknown respawn key '${key}'` };
+      }
+    }
+    if (r.mode !== undefined && r.mode !== "manual" && r.mode !== "auto") {
+      return { ok: false, error: 'respawn.mode must be "manual" or "auto"' };
+    }
+    if (
+      r.max_attempts !== undefined &&
+      (typeof r.max_attempts !== "number" || !Number.isInteger(r.max_attempts) || r.max_attempts < 0)
+    ) {
+      return { ok: false, error: "respawn.max_attempts must be a non-negative integer (0 = unlimited)" };
     }
   }
   return { ok: true };
