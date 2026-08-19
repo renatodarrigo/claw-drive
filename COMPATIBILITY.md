@@ -304,6 +304,18 @@ remediation, not an automatic rotation, so its error set omits
 `MAX_GENERATIONS` — a recovered successor past the cap simply renders
 "generation N of M" with N > M and the final-generation wrap-up guidance.
 
+Crash auto-respawn (`respawn.mode: "auto"` in the policy) runs this same
+choreography from inside the crash teardown when the session process dies
+unexpectedly — narrated by `session_recovered` / `recover_failed` (§3) ahead
+of the terminal `session_stopped`, bounded by `respawn.max_attempts`
+(consecutive respawns without a completed turn; default 2, `0` = unlimited),
+by the lineage generation cap, and by `budget.max_cost_usd`. The cap-ignore
+above binds to human-initiated recovery alone: auto-respawn respects the
+generation cap (the rotation block's `max_generations` when present, default
+10 otherwise) — automation never exceeds it; a human `recover` may.
+`recover_session` and `recover` themselves are unchanged, and a manual
+recover resets the consecutive-respawn streak.
+
 Errors:
 
 - `SESSION_NOT_FOUND` — no state for the given session_id.
@@ -338,13 +350,15 @@ context_threshold_reached
 session_rotated
 rotation_failed
 rotation_refused
+session_recovered
+recover_failed
 cost_threshold_reached
 ```
 
 #### `VALID_WATCH_KINDS` — watch-surfaced event kinds
 
 The `VALID_WATCH_KINDS` constant (exported from `src/cli/commands/watch.ts`)
-enumerates the 14 event kinds that `claw-drive watch` can surface to consumers.
+enumerates the 16 event kinds that `claw-drive watch` can surface to consumers.
 This set is part of the public contract:
 
 ```
@@ -359,6 +373,8 @@ context_threshold_reached
 session_rotated
 rotation_failed
 rotation_refused
+session_recovered
+recover_failed
 tool_call_result
 idle
 cost_threshold_reached
@@ -375,6 +391,19 @@ line, watch-surfaced because warnings exist to be alerted on. Payload:
 `generation`, `max_cost_usd?` (present only when a cap is configured). Fires
 once per runner process; an `update_policy` changing `warn_cost_usd` re-arms
 it.
+
+`session_recovered` / `recover_failed` (2026-08-19): additive expansion —
+crash auto-respawn's narration, mirroring `session_rotated` /
+`rotation_failed`. Both are emitted by the crash teardown of a session whose
+policy carries `respawn.mode: "auto"`, BEFORE the terminal `session_stopped`
+(whose reason stays `crashed:*`), and both are watch-surfaced.
+`session_recovered` payload: `new_session_id`, `alias?` (present when the
+predecessor's alias transferred), `generation`, `handover_path`,
+`watch_command`, `initiated_by` (always `"auto"` — manual `recover` emits no
+events). `recover_failed` payload: `reason` (prefix grammar:
+`session_stopping:`, `max_attempts_exhausted:`, `max_generations:`,
+`budget_exceeded:`, `no_record:`, `distill_failed:`, `successor_not_ready:`,
+`internal_error:`), `initiated_by`.
 
 ---
 

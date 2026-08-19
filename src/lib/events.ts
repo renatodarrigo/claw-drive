@@ -19,6 +19,8 @@ export type EventKind =
   | "session_rotated"
   | "rotation_failed"
   | "rotation_refused"
+  | "session_recovered"
+  | "recover_failed"
   | "cost_threshold_reached";
 
 export type ResolvedBy = "policy" | "user_mcp" | "user_mcp_auto" | "user_cli" | "timeout";
@@ -96,6 +98,18 @@ export type Event =
        * threshold-crossing dispatch ("auto"). Optional: events predate it. */
       initiated_by?: "manual" | "auto";
     }
+  | {
+      seq: number;
+      at: string;
+      kind: "session_recovered";
+      new_session_id: string;
+      alias?: string;
+      generation: number;
+      handover_path: string;
+      watch_command: string;
+      initiated_by: "auto";
+    }
+  | { seq: number; at: string; kind: "recover_failed"; reason: string; initiated_by: "auto" }
   | { seq: number; at: string; kind: "rotation_failed"; reason: string; initiated_by?: "manual" | "auto" }
   | { seq: number; at: string; kind: "rotation_refused"; reason: string; detail?: string; initiated_by?: "manual" | "auto" }
   | {

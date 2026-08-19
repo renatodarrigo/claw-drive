@@ -57,6 +57,8 @@ export const VALID_WATCH_KINDS: ReadonlySet<string> = new Set([
   "session_rotated",
   "rotation_failed",
   "rotation_refused",
+  "session_recovered",
+  "recover_failed",
   "cost_threshold_reached",
   "tool_call_result",
   "idle",
