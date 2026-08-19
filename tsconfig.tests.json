@@ -6,6 +6,6 @@
     "declaration": false,
     "sourceMap": false
   },
-  "include": ["tests/**/*"],
+  "include": ["tests/**/*", "vitest.config.ts"],
   "exclude": []
 }
