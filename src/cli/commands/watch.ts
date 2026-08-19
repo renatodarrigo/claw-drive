@@ -67,13 +67,16 @@ export const VALID_WATCH_KINDS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * The `--decision-only` preset: the eleven kinds that genuinely require human
+ * The `--decision-only` preset: the twelve kinds that genuinely require human
  * attention. Drops `turn_completed` (progress) and `tool_output_provided`
  * (confirmation that human-supplied output was relayed). Includes the three
  * rotation kinds that need a human decision (`context_threshold_reached`,
  * `rotation_failed`, `rotation_refused`) but NOT `session_rotated` — that one
  * is informational: in v1 the driver initiated the rotation and already holds
- * the result.
+ * the result. Likewise includes `recover_failed` (the lineage ended without a
+ * successor — a human must decide whether to `recover` by hand) but NOT
+ * `session_recovered` — informational like `session_rotated`: the successor
+ * is already recorded, and a `--follow-lineage` watcher hops to it.
  */
 export const DECISION_ONLY_KINDS: ReadonlySet<string> = new Set([
   "tool_decision_required",
@@ -84,6 +87,7 @@ export const DECISION_ONLY_KINDS: ReadonlySet<string> = new Set([
   "context_threshold_reached",
   "rotation_failed",
   "rotation_refused",
+  "recover_failed",
   "cost_threshold_reached",
   "tool_call_result",
   "idle",
