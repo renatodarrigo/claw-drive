@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **Crash auto-respawn.** A policy `respawn` block (`{ "mode": "auto", "max_attempts": 2 }`) lets the runner itself run the recover choreography when the session process dies unexpectedly: the crash teardown spawns a successor from the freshly distilled crash handover, transfers the alias, stamps the lineage, and narrates the outcome with two new watch-surfaced events — `session_recovered` (mirroring `session_rotated`) and `recover_failed` (reason-prefixed like `rotation_failed`). The successor pointer lands before the terminal `session_stopped`, so `watch --follow-lineage` hops across a crash instead of ending at it. Automation is triple-bounded: `max_attempts` caps consecutive respawns without a completed turn (default 2, `0` = unlimited; a completed turn resets the streak, and manual `recover` resets the chain), the lineage generation cap binds (default 10 without a rotation block — only human-initiated `recover` may exceed it), and a lineage already over `max_cost_usd` is never respawned. Manual `recover` is unchanged.
+
 ## [1.7.3] — 2026-08-18
 
 ### Fixed

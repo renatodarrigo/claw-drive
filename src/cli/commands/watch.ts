@@ -30,6 +30,8 @@ export function shouldEmit(ev: Event): boolean {
     case "session_rotated":
     case "rotation_failed":
     case "rotation_refused":
+    case "session_recovered":
+    case "recover_failed":
     case "cost_threshold_reached":
       return true;
     case "tool_call_result":

@@ -111,6 +111,28 @@ describe("startLineageTailer — natural-end walking", () => {
     expect(lastA).toBeLessThan(firstB); // strictly sequential, no interleaving
   });
 
+  it("hops a crash auto-respawn: rotated_to recorded before the crashed member's session_stopped", async () => {
+    await makeSession(
+      A,
+      { status: "stopped", runner_pid: null, rotated_to: B, generation: 1, exit_reason: "crashed:137" },
+      [
+        ...turnEvents(),
+        { seq: 4, at: "t", kind: "session_recovered", new_session_id: B, generation: 2, handover_path: "h", watch_command: "w", initiated_by: "auto" },
+        { seq: 5, at: "t", kind: "session_stopped", reason: "crashed:137", exit_code: 137 },
+      ]
+    );
+    await makeSession(B, { status: "stopped", runner_pid: null, generation: 2 }, stoppedEvents());
+    const { lines, errors, handle } = collectLineage(A);
+    await handle.done;
+    expect(errors).toEqual([]);
+    const recovered = lines.find((l) => l.kind === "session_recovered");
+    expect(recovered).toMatchObject({ session_id: A, new_session_id: B, initiated_by: "auto" });
+    const lastA = lines.map((l) => l.session_id).lastIndexOf(A);
+    const firstB = lines.map((l) => l.session_id).indexOf(B);
+    expect(firstB).toBeGreaterThanOrEqual(0); // the lineage did NOT end at the crash
+    expect(lastA).toBeLessThan(firstB); // strictly sequential, no interleaving
+  });
+
   it("exits at a clean stop with no successor, every line tagged with the sole member", async () => {
     await makeSession(A, { status: "stopped", runner_pid: null, generation: 1 }, stoppedEvents());
     const { lines, errors, handle } = collectLineage(A);

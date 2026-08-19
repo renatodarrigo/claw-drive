@@ -22,10 +22,11 @@ import { startSocketServer } from "./socket-server.js";
 import { buildClaudeArgs } from "./runner-args.js";
 import { scheduleDecisionTimeout } from "./decision-timeout.js";
 import { createBudgetTracker, budgetExceededReason, warnCostOf, maxCostOf, crossedCostWarning, type BudgetTracker } from "./budget.js";
-import { rotationConfigOf, isOverThreshold, checkRotateGate, effectiveMaxGenerations, INTERRUPT_GRACE_MS, shouldAttemptAutoRotation, autoOutcomeLatches } from "./context-tracker.js";
+import { rotationConfigOf, isOverThreshold, checkRotateGate, effectiveMaxGenerations, INTERRUPT_GRACE_MS, shouldAttemptAutoRotation, autoOutcomeLatches, respawnConfigOf, checkRespawnGate } from "./context-tracker.js";
 import { buildHandoverInstruction, extractHandover, composeSuccessorBrief } from "../lib/handover.js";
 import { buildCrashDigest, buildDistillerPrompt, runDistiller } from "../lib/distill.js";
 import { newSessionId, readSessionMcpServers, scaffoldSessionDir, spawnRunnerDetached, waitForReady } from "../lib/spawn-session.js";
+import { recoverSession } from "../lib/recover.js";
 import type { ControlRequest, ControlResponse } from "../lib/socket-protocol.js";
 import { buildDecisionContext } from "../lib/decision-context.js";
 import { installRunnerLogCapture } from "../lib/runner-log.js";
@@ -422,6 +423,14 @@ export async function afterEventBookkeeping(ctx: RunnerContext, ev: Event): Prom
   // dogfood's post-interrupt abort WAS a turn_failed, seconds before B died).
   ctx.lastInterruptAt = null;
   ctx.completedTurns += 1;
+  if (ctx.state.respawn_streak !== undefined) {
+    // Crash auto-respawn proof of life: a completed turn resets the
+    // consecutive-respawn streak. Persisted at once so state.json stays
+    // truthful for external readers; the crash path itself reads the
+    // in-memory copy.
+    delete ctx.state.respawn_streak;
+    await writeState(statePath(ctx.sessionId), ctx.state);
+  }
   if (ctx.lastContextTokens !== null) {
     // cost_usd is stamped at the reading site (runStdoutLoop) and at
     // scaffold birth — nothing cost-shaped left to do at the turn boundary.
@@ -1518,9 +1527,11 @@ export function observeBExit(ctx: RunnerContext): void {
 
 /**
  * Context rotation: the UNEXPECTED B-death path — best-effort crash
- * distillation, then terminal state + session_stopped. Exported so the crash
- * choreography is unit-testable without spawning a real runner; runRunner's
- * b.on("exit") handler is the only production caller.
+ * distillation (the crash handover serves rotation-configured AND
+ * respawn-configured sessions), then crash auto-respawn (maybeAutoRespawn),
+ * then terminal state + session_stopped. Exported so the crash choreography
+ * is unit-testable without spawning a real runner; runRunner's b.on("exit")
+ * handler is the only production caller.
  */
 export async function handleUnexpectedBExit(
   ctx: RunnerContext,
@@ -1550,7 +1561,7 @@ export async function handleUnexpectedBExit(
     await Promise.race([ctx.rotationSettled, sleepTimeout(ROTATION_SETTLE_HOLD_MS)]);
   }
   let handover_path: string | undefined;
-  if (rotationConfigOf(sess.policy)) {
+  if (rotationConfigOf(sess.policy) || respawnConfigOf(sess.policy)) {
     try {
       const { events } = await readEventsSince(eventsPath(ctx.sessionId), 0);
       const brief =
@@ -1573,6 +1584,7 @@ export async function handleUnexpectedBExit(
   sess.last_event_at = new Date().toISOString();
   sess.exit_reason = exitReason;
   await writeState(statePath(ctx.sessionId), sess);
+  await maybeAutoRespawn(ctx);
   ctx.seq += 1;
   await appendEvent(eventsPath(ctx.sessionId), {
     seq: ctx.seq,
@@ -1582,6 +1594,89 @@ export async function handleUnexpectedBExit(
     exit_code: code,
     ...(handover_path ? { handover_path } : {}),
   } as Event);
+}
+
+/**
+ * Crash auto-respawn: run the recover choreography from inside the crash
+ * teardown when the policy opts in (respawn.mode "auto"). Runs between the
+ * terminal state write and the session_stopped emit so the successor's
+ * rotated_to pointer and the session_recovered narration land BEFORE the
+ * terminal event — the rotate choreography's ordering, which is what lets a
+ * --follow-lineage watcher hop to the successor instead of ending at the
+ * crash. recoverSession composes unmodified at this seam: the state on disk
+ * already says "stopped" (SESSION_LIVE passes), the crash handover was just
+ * written (no second distill; a flaked distill gets one bounded retry via
+ * recover's fallback), and the corpse fails the alias liveness check so the
+ * alias transfers. Narration uses raw appendEvent like the terminal emit —
+ * emitEvent would writeState this function's stale in-memory state and
+ * clobber recoverSession's rotated_to write. Never throws: the teardown
+ * must always reach its session_stopped. Exported for unit tests;
+ * handleUnexpectedBExit is the only production caller.
+ */
+export async function maybeAutoRespawn(ctx: RunnerContext): Promise<void> {
+  const sess = ctx.state;
+  const emitFailed = async (reason: string): Promise<void> => {
+    ctx.seq += 1;
+    await appendEvent(eventsPath(ctx.sessionId), {
+      seq: ctx.seq,
+      at: new Date().toISOString(),
+      kind: "recover_failed",
+      reason,
+      initiated_by: "auto",
+    } as Event);
+  };
+  try {
+    const blocker = checkRespawnGate({
+      respawnCfg: respawnConfigOf(sess.policy),
+      rotationCfg: rotationConfigOf(sess.policy),
+      rotatedTo: sess.rotated_to,
+      stopping: ctx.stopping,
+      respawnStreak: sess.respawn_streak ?? 0,
+      generation: sess.generation ?? 1,
+      lineageCostUsd: sess.cost_usd ?? sess.cost_usd_base,
+      maxCostUsd: sess.policy !== "bypass" ? sess.policy.budget?.max_cost_usd : undefined,
+    });
+    if (blocker) {
+      if (blocker.kind === "narrated") await emitFailed(blocker.reason);
+      return;
+    }
+    const r = await recoverSession({
+      sessionId: ctx.sessionId,
+      respawnStreak: (sess.respawn_streak ?? 0) + 1,
+    });
+    if (!r.ok) {
+      const prefix = r.error === "RECOVER_FAILED" ? "successor_not_ready" : r.error.toLowerCase();
+      await emitFailed(`${prefix}: ${r.message}`);
+      return;
+    }
+    const res = r.result;
+    if (!res.new_session_id || res.generation === undefined || !res.watch_command) {
+      // Defensive: recoverSession without noStart always returns these on ok.
+      await emitFailed("internal_error: recover returned ok without a successor record");
+      return;
+    }
+    // recoverSession persisted rotated_to on its own fresh read of state.json;
+    // mirror it so this function's in-memory copy stays truthful.
+    sess.rotated_to = res.new_session_id;
+    ctx.seq += 1;
+    await appendEvent(eventsPath(ctx.sessionId), {
+      seq: ctx.seq,
+      at: new Date().toISOString(),
+      kind: "session_recovered",
+      new_session_id: res.new_session_id,
+      ...(res.alias ? { alias: res.alias } : {}),
+      generation: res.generation,
+      handover_path: res.handover_path,
+      watch_command: res.watch_command,
+      initiated_by: "auto",
+    } as Event);
+  } catch (err) {
+    try {
+      await emitFailed(`internal_error: ${err instanceof Error ? err.message : String(err)}`);
+    } catch {
+      /* best-effort — never block the teardown's terminal record */
+    }
+  }
 }
 
 /**
