@@ -85,7 +85,7 @@ describe("recoverSession successor scaffolding (stub runner bin)", () => {
     );
     const r = await recoverSession({ sessionId: id });
     expect(r.ok).toBe(true);
-    const newId = (r as { result: { new_session_id: string } }).result.new_session_id;
+    const newId = newSessionIdOf(r);
     const mcp = JSON.parse(
       await fs.readFile(path.join(sessionDir(newId), "mcp.json"), "utf-8")
     ) as { mcpServers: Record<string, unknown> };
@@ -100,7 +100,7 @@ describe("recoverSession successor scaffolding (stub runner bin)", () => {
     await fs.writeFile(crashHandoverPath(id), "## Current objective\nresume");
     const r = await recoverSession({ sessionId: id });
     expect(r.ok).toBe(true);
-    const newId = (r as { result: { new_session_id: string } }).result.new_session_id;
+    const newId = newSessionIdOf(r);
     const succ = await readState(statePath(newId));
     expect(succ?.cost_usd_base).toBeCloseTo(3.0, 10);
   });
@@ -111,7 +111,7 @@ describe("recoverSession successor scaffolding (stub runner bin)", () => {
     await fs.writeFile(crashHandoverPath(id), "## Current objective\nresume");
     const r = await recoverSession({ sessionId: id });
     expect(r.ok).toBe(true);
-    const newId = (r as { result: { new_session_id: string } }).result.new_session_id;
+    const newId = newSessionIdOf(r);
     const succ = await readState(statePath(newId));
     expect(succ?.cost_usd_base).toBeUndefined();
   });
@@ -122,7 +122,7 @@ describe("recoverSession successor scaffolding (stub runner bin)", () => {
     await fs.writeFile(crashHandoverPath(id), "## Current objective\nresume");
     const r = await recoverSession({ sessionId: id });
     expect(r.ok).toBe(true);
-    const newId = (r as { result: { new_session_id: string } }).result.new_session_id;
+    const newId = newSessionIdOf(r);
     const succ = await readState(statePath(newId));
     expect(succ?.cost_usd_base).toBeCloseTo(3.0, 10);
     expect(succ?.cost_usd).toBeCloseTo(3.0, 10);
