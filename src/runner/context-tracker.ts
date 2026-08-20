@@ -162,6 +162,17 @@ export function respawnConfigOf(policy: Policy): RespawnConfig | null {
   return policy.respawn ?? null;
 }
 
+export interface CheckpointConfig {
+  interval_seconds: number;
+  model?: string;
+}
+
+/** The policy's checkpoint block, or null ("bypass" and absent read null). */
+export function checkpointConfigOf(policy: Policy): CheckpointConfig | null {
+  if (policy === "bypass") return null;
+  return policy.checkpoint ?? null;
+}
+
 /** Effective consecutive-respawn budget with the default applied; 0 = unlimited. */
 export function effectiveMaxAttempts(cfg: RespawnConfig): number {
   return cfg.max_attempts ?? DEFAULT_RESPAWN_MAX_ATTEMPTS;
