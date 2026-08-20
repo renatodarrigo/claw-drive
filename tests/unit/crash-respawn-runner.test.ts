@@ -379,6 +379,9 @@ describe("respawn_streak clear on proof of life (afterEventBookkeeping)", () => 
     expect(ctx.state.respawn_streak).toBeUndefined();
     expect((await readState(statePath(SID)))?.respawn_streak).toBeUndefined();
     const before = await fs.stat(statePath(SID));
+    // A same-millisecond rewrite would be invisible to mtimeMs; give the
+    // clock one tick so a rewrite MUST move it.
+    await new Promise((r) => setTimeout(r, 10));
     await afterEventBookkeeping(ctx, {
       seq: 3,
       at: new Date().toISOString(),
@@ -387,6 +390,9 @@ describe("respawn_streak clear on proof of life (afterEventBookkeeping)", () => 
       stop_reason: "end_turn",
     } as Event);
     expect(ctx.state.respawn_streak).toBeUndefined();
-    void before;
+    // The streak was already absent, so the second pass had nothing to
+    // persist — state.json must not be rewritten.
+    const after = await fs.stat(statePath(SID));
+    expect(after.mtimeMs).toBe(before.mtimeMs);
   });
 });
