@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- **Past-cap generation refusals word the cap honestly.** A lineage manually recovered past its generation cap used to narrate "generation 11 is the last permitted (max_generations 10)" — false — when the cap gate next fired. Both gate copies (rotate's `rotation_refused` and crash auto-respawn's `recover_failed`) now say "generation 11 is at or past the cap (max_generations 10)".
+
 ## [1.8.1] — 2026-08-19
 
 ### Changed
