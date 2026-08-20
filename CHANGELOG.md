@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- **The FINAL GENERATION NOTICE reads honestly at and past the cap, for both lineage kinds.** The successor-brief notice said "no rotation is permitted after this one" — understated for a past-cap lineage ("generation 11 of 10": the refusal is already in force, not upcoming) and rotation-flavored for respawn-only auto lineages, which are bound by auto-respawn. It now reads "this lineage is at or past its generation cap — no automatic successor (rotation or auto-respawn) will follow; only a manual recover may extend the lineage."
+
 ## [1.8.2] — 2026-08-20
 
 ### Changed
