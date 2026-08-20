@@ -345,6 +345,23 @@ describe("crash auto-respawn choreography (handleUnexpectedBExit)", () => {
     expect(fail?.reason).toMatch(/^no_record: /);
     expect(kindsOf(events)[kindsOf(events).length - 1]).toBe("session_stopped");
   });
+
+  it("maps a dead successor spawn to recover_failed(successor_not_ready:)", async () => {
+    // /bin/false never touches the ready marker, so recoverSession's
+    // waitForReady burns its full 5s budget — this cell's ~5s runtime is by
+    // design (vitest testTimeout is 30s). afterEach restores CLAW_DRIVE_BIN.
+    process.env.CLAW_DRIVE_BIN = "/bin/false";
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake, AUTO);
+    await fs.writeFile(crashHandoverPath(SID), "## Current objective\nresume");
+    await handleUnexpectedBExit(ctx, 137, null);
+    const { events } = await readEventsSince(eventsPath(SID), 0);
+    const fail = events.find(
+      (e): e is Extract<Event, { kind: "recover_failed" }> => e.kind === "recover_failed"
+    );
+    expect(fail?.reason).toMatch(/^successor_not_ready: /);
+    expect((await readState(statePath(SID)))?.rotated_to).toBeUndefined();
+  });
 });
 
 describe("respawn_streak clear on proof of life (afterEventBookkeeping)", () => {
