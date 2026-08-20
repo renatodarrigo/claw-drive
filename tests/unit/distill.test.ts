@@ -57,6 +57,24 @@ describe("buildDistillerPrompt", () => {
     expect(p).toContain("## Verify on arrival");
     expect(p).toContain("crashed");
   });
+
+  it("default (crash) mode is byte-identical to the historical prompt framing", () => {
+    const p = buildDistillerPrompt({ digest: "D", originalBrief: "B" });
+    expect(p.startsWith("You are reconstructing a handover for a Claude Code session that crashed mid-task.")).toBe(true);
+    expect(p).toContain("=== EVENT DIGEST (chronological; the session crashed after the last line) ===");
+    expect(p).toBe(buildDistillerPrompt({ digest: "D", originalBrief: "B", mode: "crash" }));
+  });
+
+  it("checkpoint mode frames a live snapshot and never claims a crash", () => {
+    const p = buildDistillerPrompt({ digest: "D", originalBrief: "B", mode: "checkpoint" });
+    expect(p).toContain("still running");
+    expect(p).toContain("work may have continued after the last line");
+    expect(p).not.toContain("crashed");
+    // shared skeleton is unchanged
+    expect(p).toContain("<handover>");
+    expect(p).toContain("## Verify on arrival");
+    expect(p).toContain("=== ORIGINAL MISSION ===");
+  });
 });
 
 // Shared by "runDistiller stream-error hardening" and "runDistiller JSON

@@ -94,8 +94,23 @@ export function buildCrashDigest(events: Event[], maxChars = 50_000): string {
   return lines.reverse().join("\n");
 }
 
-export function buildDistillerPrompt(input: { digest: string; originalBrief: string }): string {
-  return `You are reconstructing a handover for a Claude Code session that crashed mid-task. Below are (1) the task's original mission brief and (2) a chronological digest of the session's event log up to the moment it died. From ONLY this record, write the best possible handover for a successor session that will continue the task.
+export function buildDistillerPrompt(input: {
+  digest: string;
+  originalBrief: string;
+  /** "crash" (default): the session died after the digest's last line.
+   * "checkpoint": periodic snapshot of a LIVE session — the framing must not
+   * lie to the successor about staleness. Only the framing sentences differ;
+   * the section skeleton and markers are shared. */
+  mode?: "crash" | "checkpoint";
+}): string {
+  const checkpoint = input.mode === "checkpoint";
+  const opening = checkpoint
+    ? "You are writing a periodic checkpoint handover for a Claude Code session that is still running. Below are (1) the task's original mission brief and (2) a chronological digest of the session's event log as of this snapshot. The session has NOT ended: work may have continued after the last line, and this document will only be read if the session later dies without a fresher record — so where the record ends mid-action, say so; the successor will verify. From ONLY this record, write the best possible handover for a successor session that would continue the task."
+    : "You are reconstructing a handover for a Claude Code session that crashed mid-task. Below are (1) the task's original mission brief and (2) a chronological digest of the session's event log up to the moment it died. From ONLY this record, write the best possible handover for a successor session that will continue the task.";
+  const digestHeader = checkpoint
+    ? "=== EVENT DIGEST (chronological; snapshot of a live session — work may have continued after the last line) ==="
+    : "=== EVENT DIGEST (chronological; the session crashed after the last line) ===";
+  return `${opening}
 
 Respond with ONLY the handover document, wrapped exactly in <handover> and </handover> markers. Do not restate the original mission (it is delivered to the successor verbatim separately). Be complete but compact: target under ~2,500 tokens. Where the record is ambiguous, say so explicitly rather than guessing — the successor will verify.
 
@@ -113,7 +128,7 @@ Sections, in order (use these exact markdown headings):
 ${input.originalBrief}
 === END ORIGINAL MISSION ===
 
-=== EVENT DIGEST (chronological; the session crashed after the last line) ===
+${digestHeader}
 ${input.digest}
 === END EVENT DIGEST ===`;
 }
