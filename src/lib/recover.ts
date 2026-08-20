@@ -63,6 +63,15 @@ export async function recoverSession(input: RecoverInput): Promise<RecoverOutcom
   if (!state) {
     return { ok: false, error: "SESSION_NOT_FOUND", message: `no state for ${input.sessionId}` };
   }
+  // Check-then-act: the liveness/rotated_to reads here and the successor
+  // spawn below are not atomic, and recoverSession takes no lock. A manual
+  // recover driven by STATE-POLLING can therefore race an in-flight crash
+  // auto-respawn — the poller observes the session dead before the auto
+  // path's rotated_to lands, and both spawn a successor. Event-driven flows
+  // are structurally safe: the auto path runs inside the crash choreography
+  // and persists rotated_to BEFORE the terminal session_stopped is emitted,
+  // so a recover reacting to events always finds the successor already
+  // recorded (ALREADY_RECOVERED).
   const live =
     ACTIVE.has(state.status) && state.runner_pid !== null && isPidAlive(state.runner_pid);
   if (live) {
