@@ -16,7 +16,7 @@ import { readEventsSince, type Event } from "../../src/lib/events.js";
 import { eventsPath, statePath, crashHandoverPath } from "../../src/lib/paths.js";
 import type { Policy } from "../../src/lib/policy.js";
 
-// Crash auto-respawn (respawn.mode "auto"): handleUnexpectedBExit now runs
+// Crash auto-respawn (respawn.mode "auto"): handleUnexpectedBExit runs
 // maybeAutoRespawn between the crash's terminal state write and its
 // session_stopped emit, so a configured session spawns its own successor
 // from inside the crash teardown — mirroring the rotate choreography's
@@ -345,6 +345,23 @@ describe("crash auto-respawn choreography (handleUnexpectedBExit)", () => {
     expect(fail?.reason).toMatch(/^no_record: /);
     expect(kindsOf(events)[kindsOf(events).length - 1]).toBe("session_stopped");
   });
+
+  it("maps a dead successor spawn to recover_failed(successor_not_ready:)", async () => {
+    // /bin/false never touches the ready marker, so recoverSession's
+    // waitForReady burns its full 5s budget — this cell's ~5s runtime is by
+    // design (vitest testTimeout is 30s). afterEach restores CLAW_DRIVE_BIN.
+    process.env.CLAW_DRIVE_BIN = "/bin/false";
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake, AUTO);
+    await fs.writeFile(crashHandoverPath(SID), "## Current objective\nresume");
+    await handleUnexpectedBExit(ctx, 137, null);
+    const { events } = await readEventsSince(eventsPath(SID), 0);
+    const fail = events.find(
+      (e): e is Extract<Event, { kind: "recover_failed" }> => e.kind === "recover_failed"
+    );
+    expect(fail?.reason).toMatch(/^successor_not_ready: /);
+    expect((await readState(statePath(SID)))?.rotated_to).toBeUndefined();
+  });
 });
 
 describe("respawn_streak clear on proof of life (afterEventBookkeeping)", () => {
@@ -362,6 +379,9 @@ describe("respawn_streak clear on proof of life (afterEventBookkeeping)", () => 
     expect(ctx.state.respawn_streak).toBeUndefined();
     expect((await readState(statePath(SID)))?.respawn_streak).toBeUndefined();
     const before = await fs.stat(statePath(SID));
+    // A same-millisecond rewrite would be invisible to mtimeMs; give the
+    // clock one tick so a rewrite MUST move it.
+    await new Promise((r) => setTimeout(r, 10));
     await afterEventBookkeeping(ctx, {
       seq: 3,
       at: new Date().toISOString(),
@@ -370,6 +390,9 @@ describe("respawn_streak clear on proof of life (afterEventBookkeeping)", () => 
       stop_reason: "end_turn",
     } as Event);
     expect(ctx.state.respawn_streak).toBeUndefined();
-    void before;
+    // The streak was already absent, so the second pass had nothing to
+    // persist — state.json must not be rewritten.
+    const after = await fs.stat(statePath(SID));
+    expect(after.mtimeMs).toBe(before.mtimeMs);
   });
 });

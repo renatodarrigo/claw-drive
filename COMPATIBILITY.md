@@ -418,7 +418,7 @@ events). `recover_failed` payload: `reason` (prefix grammar:
 | `show <session>` | _(none)_ |
 | `report <session>` | `--json`, `--idle-after SECONDS`, `--help` / `-h` |
 | `tail <session>` | `--since N`, `--follow` / `-f` |
-| `watch <session>` | `--since N`, `--replay`, `--only KIND[,KIND]...`, `--decision-only`, `--no-token-filter`, `--idle-after SECONDS` |
+| `watch <session\|--all>` | `--since N`, `--replay`, `--only KIND[,KIND]...`, `--decision-only`, `--no-token-filter`, `--idle-after SECONDS`, `--follow-lineage`, `--no-suspected-needs-input` |
 | `pending [<session>]` | _(none)_ |
 | `approve <call_id>` | `--reason R`, `--remember`, `--remember-as JSON`, `--preview`, `--json` |
 | `reject <call_id>` | `--reason R`, `--remember`, `--remember-as JSON`, `--preview`, `--json` |

@@ -167,7 +167,7 @@ describe("DECISION_ONLY_KINDS preset", () => {
 });
 
 describe("VALID_WATCH_KINDS", () => {
-  it("contains all 13 kinds shouldEmit can pass", () => {
+  it("contains all 15 kinds shouldEmit can pass", () => {
     expect(VALID_WATCH_KINDS.has("tool_decision_required")).toBe(true);
     expect(VALID_WATCH_KINDS.has("tool_decision_resolved")).toBe(true);
     expect(VALID_WATCH_KINDS.has("tool_output_provided")).toBe(true);
@@ -180,6 +180,8 @@ describe("VALID_WATCH_KINDS", () => {
     expect(VALID_WATCH_KINDS.has("session_rotated")).toBe(true);
     expect(VALID_WATCH_KINDS.has("rotation_failed")).toBe(true);
     expect(VALID_WATCH_KINDS.has("rotation_refused")).toBe(true);
+    expect(VALID_WATCH_KINDS.has("session_recovered")).toBe(true);
+    expect(VALID_WATCH_KINDS.has("recover_failed")).toBe(true);
     expect(VALID_WATCH_KINDS.has("tool_call_result")).toBe(true);
   });
 

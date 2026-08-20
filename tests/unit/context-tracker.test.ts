@@ -85,6 +85,9 @@ describe("checkRotateGate", () => {
   });
   it("blocks at the generation cap (default 10) but not under it, and never when 0", () => {
     expect(checkRotateGate({ ...base, generation: 10 })?.code).toBe("MAX_GENERATIONS");
+    expect(checkRotateGate({ ...base, generation: 10 })?.message).toMatch(
+      /is at or past the cap \(max_generations 10\)/
+    );
     expect(checkRotateGate({ ...base, generation: 9 })).toBeNull();
     expect(
       checkRotateGate({ ...base, generation: 500, cfg: { ...CFG, max_generations: 0 } })
@@ -207,6 +210,7 @@ describe("checkRespawnGate", () => {
   it("narrates max_generations at the cap — default 10 without a rotation block", () => {
     const b = checkRespawnGate({ ...proceed, generation: 10 });
     expect((b as { reason: string }).reason).toMatch(/^max_generations: /);
+    expect((b as { reason: string }).reason).toMatch(/is at or past the cap \(max_generations 10\)/);
   });
   it("rotation block's cap applies when present; 0 is unlimited", () => {
     expect(

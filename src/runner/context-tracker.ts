@@ -105,7 +105,7 @@ export function checkRotateGate(input: RotateGateInput): RotateBlocker | null {
     return {
       code: "MAX_GENERATIONS",
       message:
-        `generation ${input.generation} is the last permitted (max_generations ${maxG}). ` +
+        `generation ${input.generation} is at or past the cap (max_generations ${maxG}). ` +
         `Raise the cap via update_policy (0 = unlimited), or stop and re-brief a fresh lineage from the terminal handover.`,
     };
   }
@@ -231,7 +231,7 @@ export function checkRespawnGate(input: RespawnGateInput): RespawnBlocker | null
     return {
       kind: "narrated",
       reason:
-        `max_generations: generation ${input.generation} is the last permitted (max_generations ${maxG}); ` +
+        `max_generations: generation ${input.generation} is at or past the cap (max_generations ${maxG}); ` +
         `successor not started — recover manually to exceed the cap`,
     };
   }
