@@ -1129,7 +1129,7 @@ describe("CD-3 — interpreter one-liner escapes (defer in both templates)", () 
   }
 
   // Regression: the node -e auto-approve hole is closed. eval/print forms
-  // (-e, --eval, -p, --print, and combined -pe) must no longer auto-approve.
+  // (-e, --eval, -p, --print, and combined -pe) must not auto-approve.
   const nodeEvalForms: string[] = [
     'node -e "x"',
     'node --eval "x"',
@@ -1139,7 +1139,7 @@ describe("CD-3 — interpreter one-liner escapes (defer in both templates)", () 
   ];
   for (const [tplName, policy] of templates) {
     for (const command of nodeEvalForms) {
-      it(`${tplName}: "${command}" no longer auto-approves`, () => {
+      it(`${tplName}: "${command}" does not auto-approve`, () => {
         const r = matchPolicy(policy, { tool: "Bash", args: { command } });
         expect(r.decision, `cmd: ${command}`).not.toBe("approve_silent");
       });

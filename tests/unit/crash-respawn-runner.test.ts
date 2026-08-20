@@ -16,7 +16,7 @@ import { readEventsSince, type Event } from "../../src/lib/events.js";
 import { eventsPath, statePath, crashHandoverPath } from "../../src/lib/paths.js";
 import type { Policy } from "../../src/lib/policy.js";
 
-// Crash auto-respawn (respawn.mode "auto"): handleUnexpectedBExit now runs
+// Crash auto-respawn (respawn.mode "auto"): handleUnexpectedBExit runs
 // maybeAutoRespawn between the crash's terminal state write and its
 // session_stopped emit, so a configured session spawns its own successor
 // from inside the crash teardown — mirroring the rotate choreography's

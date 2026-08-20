@@ -273,7 +273,7 @@ describe("cost stamping at the source (runStdoutLoop)", () => {
     expect((await readState(statePath(SID)))?.cost_usd).toBeCloseTo(0.75, 10);
   });
 
-  it("afterEventBookkeeping no longer stamps cost (single stamping site)", async () => {
+  it("afterEventBookkeeping does not stamp cost (single stamping site)", async () => {
     const fake = makeFakeB();
     const ctx = await makeCtx(fake, { cost_usd_base: 2.0 });
     ctx.lastCostUsd = 0.5;
