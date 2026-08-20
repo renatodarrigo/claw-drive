@@ -355,12 +355,14 @@ rotation_refused
 session_recovered
 recover_failed
 cost_threshold_reached
+checkpoint_written
+checkpoint_failed
 ```
 
 #### `VALID_WATCH_KINDS` — watch-surfaced event kinds
 
 The `VALID_WATCH_KINDS` constant (exported from `src/cli/commands/watch.ts`)
-enumerates the 16 event kinds that `claw-drive watch` can surface to consumers.
+enumerates the 18 event kinds that `claw-drive watch` can surface to consumers.
 This set is part of the public contract:
 
 ```
@@ -380,6 +382,8 @@ recover_failed
 tool_call_result
 idle
 cost_threshold_reached
+checkpoint_written
+checkpoint_failed
 ```
 
 `idle` is a synthetic event (negative `seq`) emitted by `watch` when no

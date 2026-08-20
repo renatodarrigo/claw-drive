@@ -42,6 +42,11 @@ describe("watch filter predicate", () => {
       expect(shouldEmit(ev({ kind } as any))).toBe(false);
     }
   });
+
+  it("passes checkpoint outcomes (informational recovery-freshness signal)", () => {
+    expect(shouldEmit({ seq: 1, at: "t", kind: "checkpoint_written", handover_path: "/p" } as unknown as Event)).toBe(true);
+    expect(shouldEmit({ seq: 2, at: "t", kind: "checkpoint_failed", reason: "r" } as unknown as Event)).toBe(true);
+  });
 });
 
 describe("catchUpPending", () => {
@@ -164,10 +169,15 @@ describe("DECISION_ONLY_KINDS preset", () => {
   it("has exactly 12 entries", () => {
     expect(DECISION_ONLY_KINDS.size).toBe(12);
   });
+
+  it("excludes checkpoint kinds — not action-forcing (the next interval self-retries)", () => {
+    expect(DECISION_ONLY_KINDS.has("checkpoint_written")).toBe(false);
+    expect(DECISION_ONLY_KINDS.has("checkpoint_failed")).toBe(false);
+  });
 });
 
 describe("VALID_WATCH_KINDS", () => {
-  it("contains all 15 kinds shouldEmit can pass", () => {
+  it("contains all 17 kinds shouldEmit can pass", () => {
     expect(VALID_WATCH_KINDS.has("tool_decision_required")).toBe(true);
     expect(VALID_WATCH_KINDS.has("tool_decision_resolved")).toBe(true);
     expect(VALID_WATCH_KINDS.has("tool_output_provided")).toBe(true);
@@ -183,6 +193,8 @@ describe("VALID_WATCH_KINDS", () => {
     expect(VALID_WATCH_KINDS.has("session_recovered")).toBe(true);
     expect(VALID_WATCH_KINDS.has("recover_failed")).toBe(true);
     expect(VALID_WATCH_KINDS.has("tool_call_result")).toBe(true);
+    expect(VALID_WATCH_KINDS.has("checkpoint_written")).toBe(true);
+    expect(VALID_WATCH_KINDS.has("checkpoint_failed")).toBe(true);
   });
 
   it("does not contain non-actionable kinds", () => {
@@ -194,8 +206,8 @@ describe("VALID_WATCH_KINDS", () => {
     expect(VALID_WATCH_KINDS.has("tool_call_started")).toBe(false);
   });
 
-  it("has exactly 16 entries", () => {
-    expect(VALID_WATCH_KINDS.size).toBe(16);
+  it("has exactly 18 entries", () => {
+    expect(VALID_WATCH_KINDS.size).toBe(18);
   });
 
   it("DECISION_ONLY_KINDS is a subset of VALID_WATCH_KINDS", () => {
