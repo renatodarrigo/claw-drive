@@ -70,11 +70,18 @@ describe("composeSuccessorBrief", () => {
     expect(b).toContain("only if the handover leaves you blocked");
   });
   it("adds the final-generation notice ONLY at N = M", () => {
-    expect(composeSuccessorBrief({ ...base, generation: 10 })).toContain("FINAL GENERATION");
+    const atCap = composeSuccessorBrief({ ...base, generation: 10 });
+    expect(atCap).toContain("FINAL GENERATION");
+    expect(atCap).toContain(
+      "at or past its generation cap — no automatic successor (rotation or auto-respawn) will follow; only a manual recover may extend the lineage"
+    );
+    expect(atCap).not.toContain("no rotation is permitted after this one");
     expect(composeSuccessorBrief(base)).not.toContain("FINAL GENERATION");
   });
   it("keeps the final-generation notice on an overshoot (N > M, reachable via recover)", () => {
-    expect(composeSuccessorBrief({ ...base, generation: 12 })).toContain("FINAL GENERATION");
+    const over = composeSuccessorBrief({ ...base, generation: 12 });
+    expect(over).toContain("FINAL GENERATION");
+    expect(over).toContain("at or past its generation cap");
   });
   it("renders an uncapped lineage without a cap number or notice", () => {
     const b = composeSuccessorBrief({ ...base, maxGenerations: 0, generation: 7 });

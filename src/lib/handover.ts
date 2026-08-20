@@ -99,8 +99,10 @@ export function composeSuccessorBrief(input: SuccessorBriefInput): string {
       : `generation ${input.generation} (no generation cap)`;
   const finalNotice =
     input.maxGenerations > 0 && input.generation >= input.maxGenerations
-      ? `\nFINAL GENERATION NOTICE: no rotation is permitted after this one. ` +
-        `Prioritize reaching a clean stopping point; do not open new work fronts.\n`
+      ? `\nFINAL GENERATION NOTICE: this lineage is at or past its generation cap — ` +
+        `no automatic successor (rotation or auto-respawn) will follow; only a manual ` +
+        `recover may extend the lineage. Prioritize reaching a clean stopping point; ` +
+        `do not open new work fronts.\n`
       : "";
   return `[claw-drive rotation] You are ${genPhrase}, continuing an in-progress task. Your predecessor session (${input.predecessorId}) reached its context threshold and wrote the handover below. The ORIGINAL MISSION is reproduced verbatim first — it is the authoritative task spec; the handover describes progress against it. Read the handover, run its "Verify on arrival" commands BEFORE trusting its workspace claims, then continue from "Next steps".
 ${finalNotice}
