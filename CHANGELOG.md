@@ -6,6 +6,10 @@
 
 - **Past-cap generation refusals word the cap honestly.** A lineage manually recovered past its generation cap used to narrate "generation 11 is the last permitted (max_generations 10)" — false — when the cap gate next fired. Both gate copies (rotate's `rotation_refused` and crash auto-respawn's `recover_failed`) now say "generation 11 is at or past the cap (max_generations 10)".
 
+### Fixed
+
+- **Respawn-only lineages' successor briefs claimed "(no generation cap)".** With `respawn.mode "auto"` and no rotation block, crash auto-respawn enforces the default generation cap of 10, but successor briefs still said "(no generation cap)" and the final generation was never briefed as final. `recover` (manual and auto) now briefs the enforced cap — "generation N of 10", with the FINAL GENERATION NOTICE at or past it; a manual recover past the cap briefs "generation 11 of 10", honest because auto-respawn will not continue that lineage. Manual-mode and respawn-less policies keep the uncapped brief, which is true for them.
+
 ## [1.8.1] — 2026-08-19
 
 ### Changed

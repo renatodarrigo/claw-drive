@@ -147,6 +147,65 @@ describe("recoverSession successor scaffolding (stub runner bin)", () => {
     const succ = await readState(statePath(newSessionIdOf(r)));
     expect(succ?.respawn_streak).toBeUndefined();
   });
+
+  function briefOf(succ: unknown): string {
+    const b = (succ as { scenario_brief?: string } | null)?.scenario_brief;
+    if (typeof b !== "string") throw new TypeError("successor carries no scenario_brief");
+    return b;
+  }
+
+  it("briefs the enforced default cap for a respawn-only auto lineage", async () => {
+    const id = "sess_20200101T000000_resp01";
+    await deadSession(id, { policy: { respawn: { mode: "auto" } } });
+    await fs.writeFile(crashHandoverPath(id), "## Current objective\nresume");
+    const r = await recoverSession({ sessionId: id });
+    expect(r.ok).toBe(true);
+    const brief = briefOf(await readState(statePath(newSessionIdOf(r))));
+    expect(brief).toContain("generation 2 of 10");
+    expect(brief).not.toContain("no generation cap");
+  });
+
+  it("briefs a past-cap manual recover honestly: generation 11 of 10 plus the final notice", async () => {
+    const id = "sess_20200101T000000_resp02";
+    await deadSession(id, { policy: { respawn: { mode: "auto" } }, generation: 10 });
+    await fs.writeFile(crashHandoverPath(id), "## Current objective\nresume");
+    const r = await recoverSession({ sessionId: id });
+    expect(r.ok).toBe(true);
+    const brief = briefOf(await readState(statePath(newSessionIdOf(r))));
+    expect(brief).toContain("generation 11 of 10");
+    expect(brief).toContain("FINAL GENERATION NOTICE");
+  });
+
+  it("a rotation block's cap wins over the respawn default in the brief", async () => {
+    const id = "sess_20200101T000000_resp03";
+    await deadSession(id, {
+      policy: {
+        rotation: { threshold_tokens: 100_000, max_generations: 3 },
+        respawn: { mode: "auto" },
+      },
+    });
+    await fs.writeFile(crashHandoverPath(id), "## Current objective\nresume");
+    const r = await recoverSession({ sessionId: id });
+    expect(r.ok).toBe(true);
+    expect(briefOf(await readState(statePath(newSessionIdOf(r))))).toContain("generation 2 of 3");
+  });
+
+  it("keeps the uncapped brief for manual-mode, empty, and absent respawn blocks", async () => {
+    const cases: Array<[string, unknown]> = [
+      ["sess_20200101T000000_resp04", "bypass"],
+      ["sess_20200101T000000_resp05", { respawn: { mode: "manual" } }],
+      ["sess_20200101T000000_resp06", { respawn: {} }],
+    ];
+    for (const [id, policy] of cases) {
+      await deadSession(id, { policy });
+      await fs.writeFile(crashHandoverPath(id), "## Current objective\nresume");
+      const r = await recoverSession({ sessionId: id });
+      expect(r.ok).toBe(true);
+      expect(briefOf(await readState(statePath(newSessionIdOf(r))))).toContain(
+        "generation 2 (no generation cap)"
+      );
+    }
+  });
 });
 
 describe("recoverSession error paths (no claude spawned)", () => {

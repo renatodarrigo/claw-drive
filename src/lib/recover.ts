@@ -25,7 +25,12 @@ import {
   waitForReady,
 } from "./spawn-session.js";
 import { findLiveAliasHolder } from "./alias.js";
-import { rotationConfigOf, effectiveMaxGenerations } from "../runner/context-tracker.js";
+import {
+  rotationConfigOf,
+  effectiveMaxGenerations,
+  respawnConfigOf,
+  DEFAULT_MAX_GENERATIONS,
+} from "../runner/context-tracker.js";
 
 export interface RecoverInput {
   sessionId: string;
@@ -115,7 +120,19 @@ export async function recoverSession(input: RecoverInput): Promise<RecoverOutcom
 
   const generation = (state.generation ?? 1) + 1;
   const cfg = rotationConfigOf(state.policy);
-  const maxG = cfg ? effectiveMaxGenerations(cfg) : 0;
+  // Brief the cap the runner actually enforces. With a rotation block, its
+  // effective max_generations; without one, crash auto-respawn still bounds
+  // the lineage at DEFAULT_MAX_GENERATIONS — but only under respawn mode
+  // "auto" (checkRespawnGate treats anything else as NOT_CONFIGURED), so
+  // manual-mode and respawn-less lineages keep the truthful "(no generation
+  // cap)" brief. Manual recover may exceed the cap; a past-cap successor is
+  // briefed "generation 11 of 10" plus the final-generation notice — honest,
+  // since auto-respawn will not continue that lineage.
+  const maxG = cfg
+    ? effectiveMaxGenerations(cfg)
+    : respawnConfigOf(state.policy)?.mode === "auto"
+      ? DEFAULT_MAX_GENERATIONS
+      : 0;
   let alias: string | undefined;
   if (state.alias && (await findLiveAliasHolder(state.alias)) === null) {
     alias = state.alias; // dead holder does not block; a live squatter does
