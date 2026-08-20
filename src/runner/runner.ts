@@ -1568,15 +1568,15 @@ export async function handleUnexpectedBExit(
         sess.original_brief ??
         (sess as unknown as { scenario_brief?: string }).scenario_brief ??
         "";
-      const text = await runDistiller({
+      const distilled = await runDistiller({
         model: sess.model,
         prompt: buildDistillerPrompt({ digest: buildCrashDigest(events), originalBrief: brief }),
         // Neutral cwd: the (crashing) session's own dir always exists and
         // holds no CLAUDE.md / .claude/ of its own (see runDistiller's doc comment).
         cwd: sessionDir(ctx.sessionId),
       });
-      if (text) {
-        await fs.writeFile(crashHandoverPath(ctx.sessionId), text);
+      if (distilled) {
+        await fs.writeFile(crashHandoverPath(ctx.sessionId), distilled.text);
         handover_path = crashHandoverPath(ctx.sessionId);
       }
     } catch { /* best-effort — never block teardown on distillation */ }

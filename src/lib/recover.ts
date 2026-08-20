@@ -110,13 +110,14 @@ export async function recoverSession(input: RecoverInput): Promise<RecoverOutcom
       state.original_brief ??
       (state as unknown as { scenario_brief?: string }).scenario_brief ??
       "";
-    handover = await runDistiller({
+    const out = await runDistiller({
       model: input.model ?? state.model,
       prompt: buildDistillerPrompt({ digest: buildCrashDigest(events), originalBrief: brief }),
       // Neutral cwd: the dead session's own dir always exists and holds no
       // CLAUDE.md / .claude/ of its own (see runDistiller's doc comment).
       cwd: sessionDir(input.sessionId),
     });
+    handover = out?.text ?? null;
     if (!handover) {
       return { ok: false, error: "DISTILL_FAILED", message: "distiller produced no extractable <handover>" };
     }

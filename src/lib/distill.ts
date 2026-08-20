@@ -23,6 +23,34 @@ import { extractHandover } from "./handover.js";
 
 const head = (s: string, n: number): string => (s.length <= n ? s : s.slice(0, n) + "…");
 
+/** A successful distillation: the extracted handover body plus the one-shot
+ * call's own CLI-reported cost (null when the envelope carried none). */
+export interface DistillResult {
+  text: string;
+  costUsd: number | null;
+}
+
+/**
+ * Parse `claude -p --output-format json` stdout. Returns null on non-JSON
+ * stdout (with json output requested, anything else means the call is
+ * broken — no plain-text fallback), on a non-object envelope, or when the
+ * envelope's result carries no <handover> block.
+ */
+export function parseDistillerEnvelope(raw: string): DistillResult | null {
+  let envelope: unknown;
+  try {
+    envelope = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (typeof envelope !== "object" || envelope === null) return null;
+  const env = envelope as Record<string, unknown>;
+  const text = extractHandover(typeof env.result === "string" ? env.result : "");
+  if (!text) return null;
+  const cost = env.total_cost_usd;
+  return { text, costUsd: typeof cost === "number" && Number.isFinite(cost) ? cost : null };
+}
+
 /**
  * Tail-biased digest: walk events newest→oldest accumulating rendered lines
  * until maxChars, then emit oldest→newest. B's thinking is scrubbed from the
@@ -91,8 +119,9 @@ ${input.digest}
 }
 
 /**
- * One-shot distiller. Plain-text -p output (no stream-json), prompt on stdin.
- * Returns the extracted <handover> body, or null on any failure/timeout.
+ * One-shot distiller. Returns the extracted <handover> body plus the call's
+ * reported cost, or null on any failure/timeout. Runs `claude -p
+ * --output-format json` (prompt on stdin), not stream-json.
  */
 export function runDistiller(opts: {
   model: string | null;
@@ -107,10 +136,10 @@ export function runDistiller(opts: {
    * Absent: inherits the caller's own cwd.
    */
   cwd?: string;
-}): Promise<string | null> {
+}): Promise<DistillResult | null> {
   return new Promise((resolve) => {
     // needs no tools; disabling them removes the ungated surface and their schema cost
-    const args = ["-p", "--no-session-persistence", "--setting-sources", "", "--tools", ""];
+    const args = ["-p", "--no-session-persistence", "--output-format", "json", "--setting-sources", "", "--tools", ""];
     if (opts.model) args.push("--model", opts.model);
     let child;
     try {
@@ -121,7 +150,7 @@ export function runDistiller(opts: {
     }
     let out = "";
     let settled = false;
-    const finish = (v: string | null) => {
+    const finish = (v: DistillResult | null) => {
       if (settled) return;
       settled = true;
       clearTimeout(killer);
@@ -135,7 +164,7 @@ export function runDistiller(opts: {
     child.stdout!.on("error", () => finish(null));
     child.stdin!.on("error", () => finish(null));
     child.on("error", () => finish(null));
-    child.on("close", () => finish(extractHandover(out)));
+    child.on("close", () => finish(parseDistillerEnvelope(out)));
     child.stdin!.write(opts.prompt);
     child.stdin!.end();
   });

@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { buildCrashDigest, buildDistillerPrompt, runDistiller } from "../../src/lib/distill.js";
+import { buildCrashDigest, buildDistillerPrompt, runDistiller, parseDistillerEnvelope } from "../../src/lib/distill.js";
 import type { Event } from "../../src/lib/events.js";
 
 const ev = (partial: Record<string, unknown>, seq: number): Event =>
@@ -59,29 +59,31 @@ describe("buildDistillerPrompt", () => {
   });
 });
 
-describe("runDistiller stream-error hardening", () => {
-  let savedPath: string | undefined;
-  let tmpDir: string | undefined;
+// Shared by "runDistiller stream-error hardening" and "runDistiller JSON
+// envelope" below: both spawn a fake `claude` binary via installClaudeStub.
+let savedPath: string | undefined;
+let tmpDir: string | undefined;
 
-  afterEach(async () => {
-    if (savedPath !== undefined) process.env.PATH = savedPath;
-    savedPath = undefined;
-    if (tmpDir) {
-      await fs.rm(tmpDir, { recursive: true, force: true });
-      tmpDir = undefined;
-    }
-  });
-
-  /** Prepend a fake executable `claude` (the given shell script) onto PATH for this test. */
-  async function installClaudeStub(script: string): Promise<void> {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "cd11-distill-stub-"));
-    const stubPath = path.join(tmpDir, "claude");
-    await fs.writeFile(stubPath, script, { mode: 0o755 });
-    await fs.chmod(stubPath, 0o755);
-    savedPath = process.env.PATH;
-    process.env.PATH = `${tmpDir}${path.delimiter}${savedPath ?? ""}`;
+afterEach(async () => {
+  if (savedPath !== undefined) process.env.PATH = savedPath;
+  savedPath = undefined;
+  if (tmpDir) {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+    tmpDir = undefined;
   }
+});
 
+/** Prepend a fake executable `claude` (the given shell script) onto PATH for this test. */
+async function installClaudeStub(script: string): Promise<void> {
+  tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "cd11-distill-stub-"));
+  const stubPath = path.join(tmpDir, "claude");
+  await fs.writeFile(stubPath, script, { mode: 0o755 });
+  await fs.chmod(stubPath, 0o755);
+  savedPath = process.env.PATH;
+  process.env.PATH = `${tmpDir}${path.delimiter}${savedPath ?? ""}`;
+}
+
+describe("runDistiller stream-error hardening", () => {
   it("resolves null (not an uncaught EPIPE) when the child exits without reading stdin", async () => {
     // Pre-fix, writing a large prompt to a stdin whose reader already exited
     // (old CLI rejecting --bare, auth failure, wrapper shim, ...) threw an
@@ -95,5 +97,42 @@ describe("runDistiller stream-error hardening", () => {
     await installClaudeStub("#!/bin/sh\nsleep 5\n");
     const result = await runDistiller({ model: null, prompt: "hi", timeoutMs: 100 });
     expect(result).toBeNull();
+  });
+});
+
+describe("parseDistillerEnvelope", () => {
+  const envelope = (result: string, cost?: number) =>
+    JSON.stringify({ type: "result", subtype: "success", is_error: false, result, ...(cost !== undefined ? { total_cost_usd: cost } : {}) });
+
+  it("extracts handover text and cost from a well-formed envelope", () => {
+    const out = parseDistillerEnvelope(envelope("pre <handover>THE BODY</handover> post", 0.42));
+    expect(out).toEqual({ text: "THE BODY", costUsd: 0.42 });
+  });
+
+  it("returns costUsd null when the envelope carries no finite total_cost_usd", () => {
+    expect(parseDistillerEnvelope(envelope("<handover>H</handover>"))?.costUsd).toBeNull();
+    expect(parseDistillerEnvelope(JSON.stringify({ result: "<handover>H</handover>", total_cost_usd: "NaNish" }))?.costUsd).toBeNull();
+  });
+
+  it("returns null on non-JSON stdout (with --output-format json that means the call is broken)", () => {
+    expect(parseDistillerEnvelope("<handover>plain text, not an envelope</handover>")).toBeNull();
+  });
+
+  it("returns null when the envelope's result has no handover block", () => {
+    expect(parseDistillerEnvelope(envelope("no markers here", 0.1))).toBeNull();
+  });
+
+  it("returns null on a non-object envelope", () => {
+    expect(parseDistillerEnvelope("42")).toBeNull();
+  });
+});
+
+describe("runDistiller JSON envelope", () => {
+  it("resolves {text, costUsd} from a stub emitting a result envelope", async () => {
+    await installClaudeStub(
+      "#!/bin/sh\ncat > /dev/null\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"total_cost_usd\":0.07,\"result\":\"<handover>STUBBED</handover>\"}'\n"
+    );
+    const result = await runDistiller({ model: null, prompt: "hi" });
+    expect(result).toEqual({ text: "STUBBED", costUsd: 0.07 });
   });
 });
