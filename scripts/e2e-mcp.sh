@@ -151,12 +151,20 @@ info "session: $SESS_CTX"
 
 # --- Edit: expect a capped diff + rationale on the decision event ---
 info "sending an Edit turn that should escalate"
-"$BIN" send "$SESS_CTX" "Use the Edit tool to change the word 'hello' to 'goodbye' in readme.txt." >/dev/null
+# The one-sentence preamble makes B emit assistant text before the call —
+# the source the decision's rationale is derived from (absent otherwise).
+"$BIN" send "$SESS_CTX" "First say, in one short sentence, what change you are about to make. Then use the Edit tool to change the word 'hello' to 'goodbye' in readme.txt." >/dev/null
 
 info "waiting for an Edit tool_decision_required (up to 75s)"
 DEADLINE=$(( $(date +%s) + 75 ))
 while [[ $(date +%s) -lt $DEADLINE ]]; do
-  "$BIN" pending "$SESS_CTX" 2>/dev/null | grep -q '"tool":"Edit"' && break
+  PENDING=$("$BIN" pending "$SESS_CTX" 2>/dev/null || true)
+  echo "$PENDING" | grep -q '"tool":"Edit"' && break
+  # B may survey the workspace first (ls, cat, ...) and that call escalates
+  # under this policy too. Approve any pending non-Edit call so the turn can
+  # progress to the Edit instead of stalling on the 60s decision default.
+  SURVEY_ID=$(echo "$PENDING" | grep -v '"tool":"Edit"' | grep -oE '"call_id":"[^"]+"' | head -1 | sed 's/"call_id":"//; s/"//')
+  [[ -n "$SURVEY_ID" ]] && "$BIN" approve "$SURVEY_ID" >/dev/null 2>&1 || true
   sleep 2
 done
 
