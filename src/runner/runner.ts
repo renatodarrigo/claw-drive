@@ -105,11 +105,13 @@ export interface RunnerContext {
   lastContextTokens: number | null;
   /** Cost-cap: latest cumulative USD reading from B's result lines, stamped
    * in runStdoutLoop whenever a result line carries a finite total_cost_usd
-   * (null until then). Write-only — nothing reads it back anywhere. cost_usd
-   * (the lineage total) is stamped at that same site from the reading
-   * directly, not derived from this field. One test sets it directly as
-   * setup, to assert afterEventBookkeeping does not derive cost_usd from
-   * it. */
+   * (null until then). Read back in exactly one place: the crash-teardown
+   * path (handleUnexpectedBExit) adds it to the just-bumped cost_usd_base
+   * when recomputing the lineage total after metering a distill's cost.
+   * Otherwise write-only — cost_usd (the lineage total) is stamped at the
+   * runStdoutLoop site from the reading directly, not derived from this
+   * field. One test sets it directly as setup, to assert
+   * afterEventBookkeeping does not derive cost_usd from it. */
   lastCostUsd: number | null;
   completedTurns: number;
   turnInFlight: boolean;
