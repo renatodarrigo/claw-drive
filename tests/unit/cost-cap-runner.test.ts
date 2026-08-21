@@ -143,6 +143,10 @@ async function makeCtx(fake: FakeB, statePatch?: Partial<SessionState>): Promise
     autoRotateLatched: false,
     costWarned: false,
     rotationPolicyEpoch: 0,
+    checkpointTimer: null,
+    checkpointInFlight: false,
+    lastCheckpointedSeq: 0,
+    checkpointEpoch: 0,
   } satisfies RunnerContext;
 }
 

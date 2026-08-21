@@ -113,6 +113,10 @@ async function makeCtx(fake: FakeB): Promise<RunnerContext> {
     autoRotateLatched: false,
     costWarned: false,
     rotationPolicyEpoch: 0,
+    checkpointTimer: null,
+    checkpointInFlight: false,
+    lastCheckpointedSeq: 0,
+    checkpointEpoch: 0,
   } satisfies RunnerContext;
 }
 

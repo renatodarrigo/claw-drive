@@ -46,6 +46,10 @@ function fakeCtx(overrides: Partial<RunnerContext> & { policy?: SessionState["po
     autoRotateLatched: false,
     costWarned: false,
     rotationPolicyEpoch: 0,
+    checkpointTimer: null,
+    checkpointInFlight: false,
+    lastCheckpointedSeq: 0,
+    checkpointEpoch: 0,
   } satisfies RunnerContext;
   return { ...base, ...overrides };
 }
