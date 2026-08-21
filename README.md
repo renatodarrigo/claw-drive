@@ -446,7 +446,7 @@ Absent `respawn`, or with `mode: "manual"`, nothing changes — recovery stays o
 
 ### Periodic checkpoints
 
-An optional `checkpoint` block makes the runner periodically re-distill the crash handover from a live snapshot of the session's event log, so recovery material is pre-positioned before any disaster — including the one the crash teardown can't help with: the runner process itself dying.
+An optional `checkpoint` block makes the runner periodically re-distill the crash handover from a live snapshot of the session's event log, so recovery material is pre-positioned before any disaster — including the one the crash teardown can't help with: the runner process itself dying. The starter template ships the block disabled as `_checkpoint_example` in `templates/claw-drive-policy.json` — rename the key to `checkpoint` to enable it.
 
 ```json
 {
