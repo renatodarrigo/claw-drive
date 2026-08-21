@@ -219,6 +219,10 @@ async function emitEvent(
  */
 export function teardownSession(ctx: RunnerContext, reason: string): void {
   ctx.stopping = true;
+  if (ctx.checkpointTimer) {
+    clearInterval(ctx.checkpointTimer);
+    ctx.checkpointTimer = null;
+  }
   if (ctx.tearingDown) return;
   ctx.tearingDown = true;
   if (ctx.crashTeardownEngaged) {
@@ -562,6 +566,30 @@ export async function performCheckpoint(ctx: RunnerContext): Promise<void> {
   } finally {
     ctx.checkpointInFlight = false;
   }
+}
+
+/**
+ * (Re)arm the periodic-checkpoint timer from the CURRENT policy: always
+ * clears any existing interval, then sets a fresh one when a checkpoint
+ * block is present. First fire at t=interval — never t=0 (a birth
+ * checkpoint would distill an empty session; the quiet guard would skip it
+ * anyway). Unref'd: the timer must never hold the runner process open past
+ * B's lifecycle. The injectable `run` exists for tests.
+ */
+export function armCheckpointTimer(
+  ctx: RunnerContext,
+  run: (ctx: RunnerContext) => Promise<void> = performCheckpoint
+): void {
+  if (ctx.checkpointTimer) {
+    clearInterval(ctx.checkpointTimer);
+    ctx.checkpointTimer = null;
+  }
+  const cfg = checkpointConfigOf(ctx.state.policy);
+  if (!cfg) return;
+  ctx.checkpointTimer = setInterval(() => {
+    void run(ctx);
+  }, cfg.interval_seconds * 1000);
+  ctx.checkpointTimer.unref();
 }
 
 /**
@@ -1375,7 +1403,15 @@ export async function handleRequest(
       if (warnCostOf(ctx.state.policy) !== warnCostOf(policy as Policy)) {
         ctx.costWarned = false;
       }
+      // Checkpoint re-arm: only a CHANGED block re-arms/disarms — a
+      // byte-identical update must not reset the cadence mid-interval.
+      const oldCp = checkpointConfigOf(ctx.state.policy);
+      const newCp = checkpointConfigOf(policy as Policy);
+      const checkpointChanged =
+        oldCp?.interval_seconds !== newCp?.interval_seconds || oldCp?.model !== newCp?.model;
+      if (checkpointChanged) ctx.checkpointEpoch += 1;
       ctx.state.policy = policy as Policy;
+      if (checkpointChanged) armCheckpointTimer(ctx);
       await writeState(statePath(ctx.sessionId), ctx.state);
       return { id: req.id, ok: true };
     }
@@ -1647,6 +1683,10 @@ export async function handleUnexpectedBExit(
   // (dogfood 2026-08-04: the hung rotate client).
   observeBExit(ctx);
   ctx.crashTeardownEngaged = true;
+  if (ctx.checkpointTimer) {
+    clearInterval(ctx.checkpointTimer);
+    ctx.checkpointTimer = null;
+  }
   const sess = ctx.state;
   // Capture the truthful reason in a local: concurrent stampers (a signal
   // handler, the budget breaker) must not be able to falsify the terminal
@@ -1889,6 +1929,7 @@ export async function runRunner(sessionId: string): Promise<void> {
     lastCheckpointedSeq: 0,
     checkpointEpoch: 0,
   };
+  armCheckpointTimer(ctx);
 
   // Start the stdout loop; run it in the background. If it fails, emit an
   // error event and let the teardown path in the signal wait handle the rest.

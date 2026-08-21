@@ -2,10 +2,10 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { performCheckpoint, type RunnerContext } from "../../src/runner/runner.js";
+import { performCheckpoint, armCheckpointTimer, handleRequest, type RunnerContext } from "../../src/runner/runner.js";
 import { createBudgetTracker } from "../../src/runner/budget.js";
 import type { SessionState } from "../../src/lib/state.js";
-import { writeState, readState } from "../../src/lib/state.js";
+import { writeState } from "../../src/lib/state.js";
 import { appendEvent, readEventsSince, type Event } from "../../src/lib/events.js";
 import { eventsPath, statePath, sessionDir, crashHandoverPath } from "../../src/lib/paths.js";
 
@@ -14,6 +14,7 @@ const SID = "sess_checkpoint01";
 let root: string;
 let stubDir: string | undefined;
 let prevHome: string | undefined;
+let prevClawHome: string | undefined;
 let prevPath: string | undefined;
 
 // Monomorphic wrapper so ReturnType below infers the concrete spy type
@@ -29,6 +30,8 @@ beforeEach(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), "cd-checkpoint-"));
   prevHome = process.env.HOME;
   process.env.HOME = root;
+  prevClawHome = process.env.CLAW_DRIVE_HOME;
+  process.env.CLAW_DRIVE_HOME = root;
   await fs.mkdir(sessionDir(SID), { recursive: true });
   // The breaker path ends in process.exit; never let it kill the worker.
   exitSpy = spyOnExit();
@@ -39,6 +42,8 @@ afterEach(async () => {
   exitSpy = undefined;
   if (prevPath !== undefined) { process.env.PATH = prevPath; prevPath = undefined; }
   process.env.HOME = prevHome;
+  if (prevClawHome === undefined) delete process.env.CLAW_DRIVE_HOME;
+  else process.env.CLAW_DRIVE_HOME = prevClawHome;
   await fs.rm(root, { recursive: true, force: true });
   stubDir = undefined;
 });
@@ -94,10 +99,12 @@ async function kinds(): Promise<string[]> {
  * checkpoint_written emit runs the REAL budget breaker
  * (enforceBudget -> teardownSession), whose finish() continuation is
  * fire-and-forget by design (same as every other cap-crossing event in the
- * runner — see cost-cap-runner.test.ts's identical settleUntil). Without
- * draining, this test races that continuation: process.exit(0) can land
- * after this test's own afterEach has already restored the real
- * process.exit, turning a passing assertion into an unhandled rejection. */
+ * runner — this drain-until-condition helper has the same shape as
+ * cost-cap-runner.test.ts's settleUntil, which drains a different condition
+ * there). Without draining, this test races that continuation:
+ * process.exit(0) can land after this test's own afterEach has already
+ * restored the real process.exit, turning a passing assertion into an
+ * unhandled rejection. */
 async function settleUntil(cond: () => boolean, timeoutMs = 5000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!cond()) {
@@ -240,5 +247,83 @@ describe("performCheckpoint", () => {
     await expect(fs.readFile(crashHandoverPath(SID), "utf-8")).rejects.toThrow();
     expect((await kinds()).some((k) => k === "checkpoint_written" || k === "checkpoint_failed")).toBe(false);
     expect(ctx.checkpointInFlight).toBe(false); // flag released even on discard
+  });
+});
+
+describe("armCheckpointTimer", () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("no checkpoint block → no timer", () => {
+    const ctx = makeCtx(baseState({ policy: {} }));
+    const run = vi.fn(async () => {});
+    armCheckpointTimer(ctx, run);
+    expect(ctx.checkpointTimer).toBeNull();
+    vi.advanceTimersByTime(3_600_000);
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("fires at t=interval (not t=0) and on every interval after", () => {
+    const ctx = makeCtx(baseState()); // interval_seconds: 60
+    const run = vi.fn(async () => {});
+    armCheckpointTimer(ctx, run);
+    expect(run).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(59_999);
+    expect(run).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(run).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(120_000);
+    expect(run).toHaveBeenCalledTimes(3);
+  });
+
+  it("re-arm replaces the old timer (no double firing) and disarm-by-config stops it", () => {
+    const ctx = makeCtx(baseState());
+    const run = vi.fn(async () => {});
+    armCheckpointTimer(ctx, run);
+    ctx.state.policy = { checkpoint: { interval_seconds: 120 } };
+    armCheckpointTimer(ctx, run); // re-arm under the new interval
+    vi.advanceTimersByTime(60_000);
+    expect(run).not.toHaveBeenCalled(); // old 60s cadence is gone
+    vi.advanceTimersByTime(60_000);
+    expect(run).toHaveBeenCalledTimes(1);
+    ctx.state.policy = {};
+    armCheckpointTimer(ctx, run); // block removed → disarm
+    expect(ctx.checkpointTimer).toBeNull();
+    vi.advanceTimersByTime(600_000);
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it("update_policy: only a CHANGED checkpoint block re-arms the timer, bumps the epoch once, and a byte-identical update leaves both alone", async () => {
+    const state = baseState({ policy: {} });
+    await writeState(statePath(SID), state);
+    const ctx = makeCtx(state);
+    expect(ctx.checkpointTimer).toBeNull();
+    const epoch0 = ctx.checkpointEpoch;
+
+    const added = await handleRequest(ctx, {
+      id: "p1",
+      op: "update_policy",
+      policy: { checkpoint: { interval_seconds: 60 } },
+    });
+    expect(added).toMatchObject({ ok: true });
+    expect(ctx.checkpointTimer).not.toBeNull();
+    expect(ctx.checkpointEpoch).toBe(epoch0 + 1);
+
+    const epochAfterAdd = ctx.checkpointEpoch;
+    const same = await handleRequest(ctx, {
+      id: "p2",
+      op: "update_policy",
+      policy: { checkpoint: { interval_seconds: 60 } },
+    });
+    expect(same).toMatchObject({ ok: true });
+    expect(ctx.checkpointEpoch).toBe(epochAfterAdd); // byte-identical → cadence untouched
+
+    const removed = await handleRequest(ctx, {
+      id: "p3",
+      op: "update_policy",
+      policy: {},
+    });
+    expect(removed).toMatchObject({ ok: true });
+    expect(ctx.checkpointTimer).toBeNull();
   });
 });
