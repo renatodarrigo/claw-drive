@@ -21,7 +21,9 @@ export type EventKind =
   | "rotation_refused"
   | "session_recovered"
   | "recover_failed"
-  | "cost_threshold_reached";
+  | "cost_threshold_reached"
+  | "checkpoint_written"
+  | "checkpoint_failed";
 
 export type ResolvedBy = "policy" | "user_mcp" | "user_mcp_auto" | "user_cli" | "timeout";
 export type Severity = "low" | "medium" | "high";
@@ -123,6 +125,23 @@ export type Event =
       generation: number;
       /** Present only when a cap is configured — the headroom context. */
       max_cost_usd?: number;
+    }
+  | {
+      seq: number;
+      at: string;
+      kind: "checkpoint_written";
+      /** Absolute path of the refreshed crash-handover file. */
+      handover_path: string;
+      /** This distill's own CLI-reported cost; absent when the envelope carried none. */
+      distill_cost_usd?: number;
+      /** Lineage-cumulative total after metering; absent when unknown. */
+      cost_usd?: number;
+    }
+  | {
+      seq: number;
+      at: string;
+      kind: "checkpoint_failed";
+      reason: string;
     };
 
 export async function appendEvent(eventsFile: string, event: Event): Promise<void> {

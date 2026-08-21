@@ -143,6 +143,10 @@ async function makeCtx(fake: FakeB, statePatch?: Partial<SessionState>): Promise
     autoRotateLatched: false,
     costWarned: false,
     rotationPolicyEpoch: 0,
+    checkpointTimer: null,
+    checkpointInFlight: false,
+    lastCheckpointedSeq: 0,
+    checkpointEpoch: 0,
   } satisfies RunnerContext;
 }
 
@@ -280,6 +284,21 @@ describe("cost stamping at the source (runStdoutLoop)", () => {
     await afterEventBookkeeping(ctx, turnCompleted("t1"));
     expect(ctx.state.cost_usd).toBeUndefined(); // in-memory: no unpersisted set either
     expect((await readState(statePath(SID)))?.cost_usd).toBeUndefined();
+  });
+
+  it("a stream result line recomputes from the metered base — distill cost survives", async () => {
+    // state.cost_usd_base = 1.2, as if a distill was metered mid-lineage
+    // (crash-teardown or recover-fallback bumping the base) before this
+    // process's stream produced its first priced result line.
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake, { cost_usd_base: 1.2 });
+    ctx.budget = createBudgetTracker(undefined);
+    const loop = runStdoutLoop(ctx);
+    fake.stdout.write(resultLine(0.5));
+    fake.stdout.end();
+    await loop;
+    expect(ctx.state.cost_usd).toBeCloseTo(1.7);
+    expect(ctx.budget?.counters.costUsd).toBeCloseTo(1.7);
   });
 });
 

@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **Opt-in periodic checkpoints.** A new `checkpoint` policy block (`interval_seconds` ≥ 60, optional `model`) makes the runner re-distill the crash handover from a live snapshot on a wall-clock cadence, so recovery material is pre-positioned before any disaster — including a dead runner process, which writes no crash-time handover at all. Quiet intervals, in-flight overlaps, and over-cap lineages skip silently; outcomes are narrated by two new event kinds, `checkpoint_written` (with the distill's cost) and `checkpoint_failed`, both watchable and neither in `--decision-only`. At crash time the teardown still re-distills; since it writes only on success, the last checkpoint is the built-in fallback.
+
+### Changed
+
+- **`cost_usd` now meters handover distillations.** The lineage total previously counted only Session B's own stream; every one-shot distillation — periodic checkpoint, crash teardown, and `recover`'s fallback — now adds its CLI-reported cost the moment it completes. Budget caps therefore bound distillation overhead too and may trip slightly earlier than under v1.8.x accounting.
+
 ## [1.8.3] — 2026-08-20
 
 ### Changed

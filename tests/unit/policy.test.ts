@@ -14,6 +14,7 @@ import {
   type PolicyObject,
   type Rule,
 } from "../../src/lib/policy.js";
+import { checkpointConfigOf } from "../../src/runner/context-tracker.js";
 import * as fsSync from "node:fs";
 import * as nodePath from "node:path";
 import { fileURLToPath } from "node:url";
@@ -1885,4 +1886,47 @@ describe("redirect and path forms a shell accepts that the reject rules missed",
       });
     }
   }
+});
+
+describe("checkpoint block validation", () => {
+  it("accepts a minimal block", () => {
+    expect(validatePolicy({ checkpoint: { interval_seconds: 60 } })).toEqual({ ok: true });
+  });
+  it("accepts interval plus model", () => {
+    expect(validatePolicy({ checkpoint: { interval_seconds: 1800, model: "haiku" } })).toEqual({ ok: true });
+  });
+  it("ignores underscore-prefixed inner keys (metadata convention)", () => {
+    expect(validatePolicy({ checkpoint: { interval_seconds: 300, _comment: "x" } })).toEqual({ ok: true });
+  });
+  it("rejects a block missing interval_seconds", () => {
+    const v = validatePolicy({ checkpoint: {} });
+    expect(v.ok).toBe(false);
+    if (!v.ok) expect(v.error).toContain("interval_seconds");
+  });
+  it("rejects an interval below the 60-second floor", () => {
+    expect(validatePolicy({ checkpoint: { interval_seconds: 59 } }).ok).toBe(false);
+  });
+  it("rejects a non-numeric interval", () => {
+    expect(validatePolicy({ checkpoint: { interval_seconds: "600" } }).ok).toBe(false);
+  });
+  it("rejects an empty model", () => {
+    expect(validatePolicy({ checkpoint: { interval_seconds: 600, model: "" } }).ok).toBe(false);
+  });
+  it("rejects unknown inner keys", () => {
+    const v = validatePolicy({ checkpoint: { interval_seconds: 600, mode: "auto" } });
+    expect(v.ok).toBe(false);
+    if (!v.ok) expect(v.error).toContain("unknown checkpoint key");
+  });
+  it("rejects a non-object block", () => {
+    expect(validatePolicy({ checkpoint: 600 }).ok).toBe(false);
+    expect(validatePolicy({ checkpoint: [600] }).ok).toBe(false);
+  });
+});
+
+describe("checkpointConfigOf", () => {
+  it("reads the block; bypass and absent read null", () => {
+    expect(checkpointConfigOf("bypass")).toBeNull();
+    expect(checkpointConfigOf({})).toBeNull();
+    expect(checkpointConfigOf({ checkpoint: { interval_seconds: 600 } })).toEqual({ interval_seconds: 600 });
+  });
 });

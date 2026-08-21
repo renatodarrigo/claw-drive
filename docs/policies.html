@@ -199,7 +199,7 @@ claw-drive policy lint --max-severity warn ./my-policy.json   # exit 1 on any wa
       <li><code>max_consecutive_errors</code> — consecutive errored tool calls; a clean turn resets the count to zero.</li>
     </ul>
     <p>When a cap is exceeded the runner stops the session and records <code>exit_reason: "budget_exceeded:&lt;cap&gt;"</code> — e.g. <code>budget_exceeded:max_tool_calls</code> — surfaced like any other stop through a <code>session_stopped</code> event. Caps are independent: set only the ones you want, each a positive number; an absent cap is unlimited.</p>
-    <p><code>max_cost_usd</code> is the spend cap: it stops the session once the lineage's cumulative estimated spend in USD exceeds it. The number is the claude CLI's own cost accounting — every model, subagent, and cache tier the session used, priced by the CLI's built-in per-model rates — so it tracks what the run actually costs, and it is exactly as current as your installed CLI. Unlike the other caps it does not reset on rotation: successors started by <code>rotate</code> or <code>recover</code> inherit the predecessor's total, so the cap bounds the whole mission. One-shot handover distillations run outside the session's own accounting and are not counted. On subscription auth the figure is the API-equivalent estimate. A stream that reports no cost can never trip the cap, and every session's running total is visible in <code>claw-drive status</code> whether or not a cap is set.</p>
+    <p><code>max_cost_usd</code> is the spend cap: it stops the session once the lineage's cumulative estimated spend in USD exceeds it. The number is the claude CLI's own cost accounting — every model, subagent, and cache tier the session used, priced by the CLI's built-in per-model rates — so it tracks what the run actually costs, and it is exactly as current as your installed CLI. Unlike the other caps it does not reset on rotation: successors started by <code>rotate</code> or <code>recover</code> inherit the predecessor's total, so the cap bounds the whole mission. One-shot handover distillations — the crash teardown's, <code>recover</code>'s fallback, and every periodic checkpoint — are metered into the lineage total: each adds its own CLI-reported cost the moment it completes, so the cap bounds distillation overhead too, and a checkpoint that crosses the cap is the lineage's last (later intervals are skipped). On subscription auth the figure is the API-equivalent estimate. A stream that reports no cost can never trip the cap, and every session's running total is visible in <code>claw-drive status</code> whether or not a cap is set.</p>
     <p><code>warn_cost_usd</code> is the cap's early-warning line, not a cap: crossing it emits a <code>cost_threshold_reached</code> event — carrying the reading, the line, and the cap when one is set — and stops nothing. It fires once per runner process, so each successor in a lineage announces the inherited spend once in its own stream; changing the value via <code>update_policy</code> re-arms it. It must sit strictly below <code>max_cost_usd</code> when both are present (a warning at or above the cap could never fire before it), and it works alone for monitoring-only setups. Like the cap, rotation cannot reset it: the reading is the lineage's cumulative total.</p>
 
     <h2 id="rotation">Context rotation (<code>rotation</code>)</h2>
@@ -247,6 +247,27 @@ claw-drive policy lint --max-severity warn ./my-policy.json   # exit 1 on any wa
     <p>The crash teardown narrates the outcome — <code>session_recovered</code> once a successor is up, or <code>recover_failed</code> with a <code>reason</code> explaining why — ahead of the terminal <code>session_stopped</code>, so <code>watch --follow-lineage</code> hops across the crash the same way it hops across a rotation.</p>
 
     <p>Both knobs are live-adjustable: <code>claw-drive policy &lt;session&gt; --set &lt;file&gt;</code> (or <code>update_policy</code> over MCP) replaces a running session's policy, and the crash path reads the policy at crash time — so a change takes effect on the very next crash.</p>
+
+    <h2 id="checkpoint">Periodic checkpoints (<code>checkpoint</code>)</h2>
+    <p>An optional <code>checkpoint</code> block makes the runner periodically re-distill the crash handover from a live snapshot of the session's event log, so recovery material is pre-positioned before any disaster — including the one the crash teardown cannot help with: the runner process itself dying. <strong>Off by default:</strong> a policy without the block gets no timer, no distills, and no checkpoint events — nothing about the session behaves differently.</p>
+
+    <pre><code class="language-json">{
+  "checkpoint": {
+    "interval_seconds": 1800,
+    "model": "haiku"
+  }
+}</code></pre>
+
+    <ul>
+      <li><code>interval_seconds</code> — required, minimum <code>60</code>. The wall-clock cadence. The first checkpoint runs one interval after session start, and each one snapshots the event log at that moment — mid-turn is fine; the digest is built for it.</li>
+      <li><code>model</code> — optional; absent ⇒ the session's own model, exactly like crash distillation. Point it at a cheaper model to keep the recurring cost small.</li>
+    </ul>
+
+    <p>Three situations skip an interval silently: a distill still in flight from the previous interval, a quiet interval (nothing digest-renderable happened since the last checkpoint — idle sessions spend nothing), and a lineage already over <a href="#budget"><code>budget.max_cost_usd</code></a>. Each completed checkpoint is metered into <code>cost_usd</code> and narrated by a <code>checkpoint_written</code> event carrying the file path and the distill's own cost; a failed distill narrates <code>checkpoint_failed</code>, leaves the previous checkpoint untouched, and the next interval simply retries.</p>
+
+    <p>At crash time nothing changes: the teardown still distills the freshest possible handover, and because it only overwrites on success, a failed crash distill falls back to the last checkpoint — <code>recover</code> consumes whichever is on disk.</p>
+
+    <p>The starter template ships the block disabled as <code>_checkpoint_example</code> — rename the key to <code>checkpoint</code> to turn the feature on.</p>
   </main>
   <aside class="donate">
     <p>If claw-drive is useful to you, help me buy my first house.</p>

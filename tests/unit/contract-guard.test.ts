@@ -50,7 +50,7 @@ describe("CD-13 contract guard — MCP tools (src/mcp/tool-defs.ts)", () => {
 });
 
 describe("CD-13 contract guard — event kinds (src/lib/events.ts)", () => {
-  // The 21 frozen event kinds written to events.jsonl (COMPATIBILITY.md §3).
+  // The 23 frozen event kinds written to events.jsonl (COMPATIBILITY.md §3).
   const EXPECTED_EVENT_KINDS = new Set([
     "session_started",
     "session_stopped",
@@ -73,6 +73,8 @@ describe("CD-13 contract guard — event kinds (src/lib/events.ts)", () => {
     "session_recovered",
     "recover_failed",
     "cost_threshold_reached",
+    "checkpoint_written",
+    "checkpoint_failed",
   ]);
 
   it("the EventKind union pins exactly the frozen kinds", () => {
@@ -89,7 +91,7 @@ describe("CD-13 contract guard — event kinds (src/lib/events.ts)", () => {
 });
 
 describe("CD-13 contract guard — watch-surfaced kinds (VALID_WATCH_KINDS)", () => {
-  // The 16 watch-surfaced kinds (COMPATIBILITY.md §3). Runtime-exported Set.
+  // The 18 watch-surfaced kinds (COMPATIBILITY.md §3). Runtime-exported Set.
   const EXPECTED_WATCH_KINDS = new Set([
     "tool_decision_required",
     "tool_decision_resolved",
@@ -105,6 +107,8 @@ describe("CD-13 contract guard — watch-surfaced kinds (VALID_WATCH_KINDS)", ()
     "session_recovered",
     "recover_failed",
     "cost_threshold_reached",
+    "checkpoint_written",
+    "checkpoint_failed",
     "tool_call_result",
     "idle",
   ]);

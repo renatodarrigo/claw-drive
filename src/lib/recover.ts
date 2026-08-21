@@ -110,15 +110,24 @@ export async function recoverSession(input: RecoverInput): Promise<RecoverOutcom
       state.original_brief ??
       (state as unknown as { scenario_brief?: string }).scenario_brief ??
       "";
-    handover = await runDistiller({
+    const out = await runDistiller({
       model: input.model ?? state.model,
       prompt: buildDistillerPrompt({ digest: buildCrashDigest(events), originalBrief: brief }),
       // Neutral cwd: the dead session's own dir always exists and holds no
       // CLAUDE.md / .claude/ of its own (see runDistiller's doc comment).
       cwd: sessionDir(input.sessionId),
     });
+    handover = out?.text ?? null;
     if (!handover) {
       return { ok: false, error: "DISTILL_FAILED", message: "distiller produced no extractable <handover>" };
+    }
+    if (out && typeof out.costUsd === "number") {
+      // Metered distillation: charge the DEAD session's lineage total so any
+      // successor — this call's scaffold or a later recover after --no-start —
+      // inherits it via the existing inheritedCost selection below.
+      state.cost_usd_base = (state.cost_usd_base ?? 0) + out.costUsd;
+      state.cost_usd = state.cost_usd !== undefined ? state.cost_usd + out.costUsd : state.cost_usd_base;
+      await writeState(statePath(input.sessionId), state);
     }
     await fs.writeFile(chPath, handover);
     distilled = true;

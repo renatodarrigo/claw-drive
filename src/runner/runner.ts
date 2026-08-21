@@ -22,7 +22,7 @@ import { startSocketServer } from "./socket-server.js";
 import { buildClaudeArgs } from "./runner-args.js";
 import { scheduleDecisionTimeout } from "./decision-timeout.js";
 import { createBudgetTracker, budgetExceededReason, warnCostOf, maxCostOf, crossedCostWarning, type BudgetTracker } from "./budget.js";
-import { rotationConfigOf, isOverThreshold, checkRotateGate, effectiveMaxGenerations, INTERRUPT_GRACE_MS, shouldAttemptAutoRotation, autoOutcomeLatches, respawnConfigOf, checkRespawnGate } from "./context-tracker.js";
+import { rotationConfigOf, isOverThreshold, checkRotateGate, effectiveMaxGenerations, INTERRUPT_GRACE_MS, shouldAttemptAutoRotation, autoOutcomeLatches, respawnConfigOf, checkRespawnGate, checkpointConfigOf } from "./context-tracker.js";
 import { buildHandoverInstruction, extractHandover, composeSuccessorBrief } from "../lib/handover.js";
 import { buildCrashDigest, buildDistillerPrompt, runDistiller } from "../lib/distill.js";
 import { newSessionId, readSessionMcpServers, scaffoldSessionDir, spawnRunnerDetached, waitForReady } from "../lib/spawn-session.js";
@@ -105,11 +105,13 @@ export interface RunnerContext {
   lastContextTokens: number | null;
   /** Cost-cap: latest cumulative USD reading from B's result lines, stamped
    * in runStdoutLoop whenever a result line carries a finite total_cost_usd
-   * (null until then). Write-only — nothing reads it back anywhere. cost_usd
-   * (the lineage total) is stamped at that same site from the reading
-   * directly, not derived from this field. One test sets it directly as
-   * setup, to assert afterEventBookkeeping does not derive cost_usd from
-   * it. */
+   * (null until then). Read back in exactly one place: the crash-teardown
+   * path (handleUnexpectedBExit) adds it to the just-bumped cost_usd_base
+   * when recomputing the lineage total after metering a distill's cost.
+   * Otherwise write-only — cost_usd (the lineage total) is stamped at the
+   * runStdoutLoop site from the reading directly, not derived from this
+   * field. One test sets it directly as setup, to assert
+   * afterEventBookkeeping does not derive cost_usd from it. */
   lastCostUsd: number | null;
   completedTurns: number;
   turnInFlight: boolean;
@@ -160,6 +162,20 @@ export interface RunnerContext {
    * under the current rotation config; a stale attempt settles without
    * latching and the next boundary retries under the new config. */
   rotationPolicyEpoch: number;
+  /** Periodic checkpoints. checkpointTimer: the recurring interval handle
+   * (null when the policy has no checkpoint block); unref'd so it never
+   * holds the runner open. checkpointInFlight: one distill at a time —
+   * an interval shorter than a slow distill skips, never overlaps.
+   * lastCheckpointedSeq: highest seq covered by the last SUCCESSFUL
+   * checkpoint; the quiet guard requires a newer digest-renderable event.
+   * checkpointEpoch: bumped by every update_policy that CHANGES the
+   * checkpoint block and by disarm — a distill that settles under a stale
+   * epoch discards its result (the file now belongs to the new config or
+   * to the crash path). */
+  checkpointTimer: NodeJS.Timeout | null;
+  checkpointInFlight: boolean;
+  lastCheckpointedSeq: number;
+  checkpointEpoch: number;
 }
 
 // Placeholder type; populated in Task 13 when the approval flow lands.
@@ -203,6 +219,10 @@ async function emitEvent(
  */
 export function teardownSession(ctx: RunnerContext, reason: string): void {
   ctx.stopping = true;
+  if (ctx.checkpointTimer) {
+    clearInterval(ctx.checkpointTimer);
+    ctx.checkpointTimer = null;
+  }
   if (ctx.tearingDown) return;
   ctx.tearingDown = true;
   if (ctx.crashTeardownEngaged) {
@@ -459,6 +479,117 @@ export async function afterEventBookkeeping(ctx: RunnerContext, ev: Event): Prom
     } as Omit<Event, "seq" | "at">);
     maybeAutoRotate(ctx);
   }
+}
+
+/** The event kinds buildCrashDigest renders — the quiet guard's definition
+ * of "something new to say". Mirrors the switch in src/lib/distill.ts. */
+const DIGESTIBLE_KINDS: ReadonlySet<string> = new Set([
+  "turn_started",
+  "assistant_text",
+  "tool_call_requested",
+  "tool_call_result",
+  "turn_completed",
+  "turn_failed",
+]);
+
+/**
+ * One periodic checkpoint: re-distill the crash handover from a live
+ * snapshot of events.jsonl so recovery material is pre-positioned before
+ * any disaster (a dead runner writes no crash-time handover at all).
+ * Three SILENT gates — in-flight, quiet (no new digest-renderable event
+ * since the last successful checkpoint), and budget (strict-exceed over
+ * max_cost_usd, budget.ts parity) — then snapshot, distill (checkpoint-mode
+ * prompt; policy model override), write-on-success, meter, narrate. A
+ * settle under a stale epoch or after bExited/teardown discards the result:
+ * the file then belongs to the crash path or the new config. Never throws.
+ */
+export async function performCheckpoint(ctx: RunnerContext): Promise<void> {
+  if (ctx.checkpointInFlight || ctx.stopping || ctx.tearingDown || ctx.bExited) return;
+  const cfg = checkpointConfigOf(ctx.state.policy);
+  if (!cfg) return;
+  const maxCost = maxCostOf(ctx.state.policy);
+  if (maxCost !== undefined && (ctx.state.cost_usd ?? 0) > maxCost) return;
+  ctx.checkpointInFlight = true;
+  const epoch = ctx.checkpointEpoch;
+  try {
+    const { events } = await readEventsSince(eventsPath(ctx.sessionId), 0);
+    if (!events.some((e) => DIGESTIBLE_KINDS.has(e.kind) && e.seq > ctx.lastCheckpointedSeq)) return;
+    const snapshotSeq = events.length > 0 ? events[events.length - 1].seq : 0;
+    // Anti-telescoping brief selection — same rule as the crash teardown and
+    // recover's fallback: a successor's scenario_brief is already composed.
+    const brief =
+      ctx.state.original_brief ??
+      (ctx.state as unknown as { scenario_brief?: string }).scenario_brief ??
+      "";
+    const out = await runDistiller({
+      model: cfg.model ?? ctx.state.model,
+      prompt: buildDistillerPrompt({
+        digest: buildCrashDigest(events),
+        originalBrief: brief,
+        mode: "checkpoint",
+      }),
+      // Neutral cwd, same choice as the crash teardown's distill call.
+      cwd: sessionDir(ctx.sessionId),
+    });
+    if (ctx.bExited || ctx.tearingDown || ctx.stopping || epoch !== ctx.checkpointEpoch) return;
+    if (!out) {
+      await emitEvent(ctx, {
+        kind: "checkpoint_failed",
+        reason: "distiller produced no extractable <handover>",
+      } as Omit<Event, "seq" | "at">);
+      return;
+    }
+    await fs.writeFile(crashHandoverPath(ctx.sessionId), out.text);
+    ctx.lastCheckpointedSeq = snapshotSeq;
+    if (typeof out.costUsd === "number") {
+      // Metered distillation: base survives the stream recompute; the tracker
+      // must see the new total NOW so the checkpoint_written emit below is
+      // enforced against it (a cap-crossing checkpoint is recorded, then the
+      // breaker acts — same ordering as a cap-crossing turn).
+      ctx.state.cost_usd_base = (ctx.state.cost_usd_base ?? 0) + out.costUsd;
+      const lineageTotal = ctx.state.cost_usd_base + (ctx.lastCostUsd ?? 0);
+      ctx.state.cost_usd = lineageTotal;
+      ctx.budget?.recordCost(lineageTotal);
+    }
+    await emitEvent(ctx, {
+      kind: "checkpoint_written",
+      handover_path: crashHandoverPath(ctx.sessionId),
+      ...(typeof out.costUsd === "number" ? { distill_cost_usd: out.costUsd } : {}),
+      ...(ctx.state.cost_usd !== undefined ? { cost_usd: ctx.state.cost_usd } : {}),
+    } as Omit<Event, "seq" | "at">);
+    // Warn latch AFTER the attribution event, and only if the breaker did not
+    // already engage on it (a trailing warning after the terminal record
+    // would violate terminal-last ordering).
+    if (!ctx.budgetBreached) await maybeWarnCost(ctx, undefined);
+  } catch {
+    /* best-effort — a checkpoint must never take down the runner */
+  } finally {
+    ctx.checkpointInFlight = false;
+  }
+}
+
+/**
+ * (Re)arm the periodic-checkpoint timer from the CURRENT policy: always
+ * clears any existing interval, then sets a fresh one when a checkpoint
+ * block is present. First fire at t=interval — never t=0 (a birth
+ * checkpoint would distill an empty session; the quiet guard would skip it
+ * anyway). Unref'd: the timer must never hold the runner process open past
+ * B's lifecycle. The injectable `run` exists for tests.
+ */
+export function armCheckpointTimer(
+  ctx: RunnerContext,
+  run: (ctx: RunnerContext) => Promise<void> = performCheckpoint
+): void {
+  if (ctx.checkpointTimer) {
+    clearInterval(ctx.checkpointTimer);
+    ctx.checkpointTimer = null;
+  }
+  const cfg = checkpointConfigOf(ctx.state.policy);
+  if (!cfg) return;
+  ctx.checkpointTimer = setInterval(() => {
+    void run(ctx);
+  }, cfg.interval_seconds * 1000);
+  ctx.checkpointTimer.unref();
 }
 
 /**
@@ -1272,7 +1403,15 @@ export async function handleRequest(
       if (warnCostOf(ctx.state.policy) !== warnCostOf(policy as Policy)) {
         ctx.costWarned = false;
       }
+      // Checkpoint re-arm: only a CHANGED block re-arms/disarms — a
+      // byte-identical update must not reset the cadence mid-interval.
+      const oldCp = checkpointConfigOf(ctx.state.policy);
+      const newCp = checkpointConfigOf(policy as Policy);
+      const checkpointChanged =
+        oldCp?.interval_seconds !== newCp?.interval_seconds || oldCp?.model !== newCp?.model;
+      if (checkpointChanged) ctx.checkpointEpoch += 1;
       ctx.state.policy = policy as Policy;
+      if (checkpointChanged) armCheckpointTimer(ctx);
       await writeState(statePath(ctx.sessionId), ctx.state);
       return { id: req.id, ok: true };
     }
@@ -1544,6 +1683,10 @@ export async function handleUnexpectedBExit(
   // (dogfood 2026-08-04: the hung rotate client).
   observeBExit(ctx);
   ctx.crashTeardownEngaged = true;
+  if (ctx.checkpointTimer) {
+    clearInterval(ctx.checkpointTimer);
+    ctx.checkpointTimer = null;
+  }
   const sess = ctx.state;
   // Capture the truthful reason in a local: concurrent stampers (a signal
   // handler, the budget breaker) must not be able to falsify the terminal
@@ -1568,16 +1711,24 @@ export async function handleUnexpectedBExit(
         sess.original_brief ??
         (sess as unknown as { scenario_brief?: string }).scenario_brief ??
         "";
-      const text = await runDistiller({
+      const distilled = await runDistiller({
         model: sess.model,
         prompt: buildDistillerPrompt({ digest: buildCrashDigest(events), originalBrief: brief }),
         // Neutral cwd: the (crashing) session's own dir always exists and
         // holds no CLAUDE.md / .claude/ of its own (see runDistiller's doc comment).
         cwd: sessionDir(ctx.sessionId),
       });
-      if (text) {
-        await fs.writeFile(crashHandoverPath(ctx.sessionId), text);
+      if (distilled) {
+        await fs.writeFile(crashHandoverPath(ctx.sessionId), distilled.text);
         handover_path = crashHandoverPath(ctx.sessionId);
+        if (typeof distilled.costUsd === "number") {
+          // Metered distillation: the base is the accumulator that survives
+          // the stream recompute (runStdoutLoop), and the recomputed lineage
+          // total is what maybeAutoRespawn's budget gate and the successor's
+          // inheritedCost read below.
+          sess.cost_usd_base = (sess.cost_usd_base ?? 0) + distilled.costUsd;
+          sess.cost_usd = sess.cost_usd_base + (ctx.lastCostUsd ?? 0);
+        }
       }
     } catch { /* best-effort — never block teardown on distillation */ }
   }
@@ -1773,7 +1924,12 @@ export async function runRunner(sessionId: string): Promise<void> {
     autoRotateLatched: false,
     costWarned: false,
     rotationPolicyEpoch: 0,
+    checkpointTimer: null,
+    checkpointInFlight: false,
+    lastCheckpointedSeq: 0,
+    checkpointEpoch: 0,
   };
+  armCheckpointTimer(ctx);
 
   // Start the stdout loop; run it in the background. If it fails, emit an
   // error event and let the teardown path in the signal wait handle the rest.

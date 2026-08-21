@@ -83,6 +83,20 @@ export interface PolicyObject {
     mode?: "manual" | "auto";
     max_attempts?: number;
   };
+  /**
+   * Optional periodic-checkpoint config. Absent ⇒ off entirely (no timer, no
+   * events — no behaviour change). interval_seconds: wall-clock cadence at
+   * which the runner re-distills the crash handover from a live snapshot of
+   * events.jsonl (validator floor 60). model: distiller model for
+   * checkpoints; absent ⇒ the session's own model (same as crash
+   * distillation). Checkpoint distills are metered into cost_usd and are
+   * budget-gated (strict-exceed) against budget.max_cost_usd; quiet and
+   * in-flight intervals are skipped silently.
+   */
+  checkpoint?: {
+    interval_seconds: number;
+    model?: string;
+  };
 }
 
 export type Policy = "bypass" | PolicyObject;
@@ -412,6 +426,7 @@ export function validatePolicy(p: unknown): { ok: true } | { ok: false; error: s
     "bash_composition",
     "rotation",
     "respawn",
+    "checkpoint",
   ]);
   for (const key of Object.keys(obj)) {
     if (key.startsWith("_")) continue; // metadata comment; ignored by validator
@@ -581,6 +596,28 @@ export function validatePolicy(p: unknown): { ok: true } | { ok: false; error: s
       (typeof r.max_attempts !== "number" || !Number.isInteger(r.max_attempts) || r.max_attempts < 0)
     ) {
       return { ok: false, error: "respawn.max_attempts must be a non-negative integer (0 = unlimited)" };
+    }
+  }
+  // checkpoint (periodic checkpoints): optional block; interval_seconds is
+  // required when the block is present (floor 60 — sub-minute refresh of a
+  // token-spending distill is never intentional); model optional non-empty.
+  if (obj.checkpoint !== undefined) {
+    if (typeof obj.checkpoint !== "object" || obj.checkpoint === null || Array.isArray(obj.checkpoint)) {
+      return { ok: false, error: "checkpoint must be an object" };
+    }
+    const c = obj.checkpoint as Record<string, unknown>;
+    for (const key of Object.keys(c)) {
+      if (key.startsWith("_")) continue;
+      if (key !== "interval_seconds" && key !== "model") {
+        return { ok: false, error: `unknown checkpoint key '${key}'` };
+      }
+    }
+    const iv = c.interval_seconds;
+    if (typeof iv !== "number" || !Number.isFinite(iv) || iv < 60) {
+      return { ok: false, error: "checkpoint.interval_seconds must be a number >= 60" };
+    }
+    if (c.model !== undefined && (typeof c.model !== "string" || c.model.length === 0)) {
+      return { ok: false, error: "checkpoint.model must be a non-empty string" };
     }
   }
   return { ok: true };

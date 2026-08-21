@@ -115,6 +115,10 @@ async function makeCtx(fake: FakeB, policy: Policy): Promise<RunnerContext> {
     autoRotateLatched: false,
     costWarned: false,
     rotationPolicyEpoch: 0,
+    checkpointTimer: null,
+    checkpointInFlight: false,
+    lastCheckpointedSeq: 0,
+    checkpointEpoch: 0,
   } satisfies RunnerContext;
 }
 
@@ -221,9 +225,11 @@ describe("crash auto-respawn choreography (handleUnexpectedBExit)", () => {
   it("widened distill condition: a respawn-only policy still writes crash-handover.md", async () => {
     // Distiller stub that actually produces a handover for this test.
     const stub = path.join(stubDir, "claude");
-    await fs.writeFile(stub, '#!/bin/sh\nprintf "<handover>## Current objective\\nok</handover>\\n"\n', {
-      mode: 0o755,
-    });
+    await fs.writeFile(
+      stub,
+      '#!/bin/sh\ncat > /dev/null\nprintf \'{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.01,"result":"<handover>## Current objective ok</handover>"}\'\n',
+      { mode: 0o755 }
+    );
     await fs.chmod(stub, 0o755);
     const fake = makeFakeB();
     const ctx = await makeCtx(fake, AUTO);

@@ -34,6 +34,9 @@ export function shouldEmit(ev: Event): boolean {
     case "recover_failed":
     case "cost_threshold_reached":
       return true;
+    case "checkpoint_written":
+    case "checkpoint_failed":
+      return true;
     case "tool_call_result":
       return (ev as any).is_error === true;
     default:
@@ -62,6 +65,8 @@ export const VALID_WATCH_KINDS: ReadonlySet<string> = new Set([
   "session_recovered",
   "recover_failed",
   "cost_threshold_reached",
+  "checkpoint_written",
+  "checkpoint_failed",
   "tool_call_result",
   "idle",
 ]);
@@ -77,6 +82,8 @@ export const VALID_WATCH_KINDS: ReadonlySet<string> = new Set([
  * successor — a human must decide whether to `recover` by hand) but NOT
  * `session_recovered` — informational like `session_rotated`: the successor
  * is already recorded, and a `--follow-lineage` watcher hops to it.
+ * Checkpoint outcomes ("checkpoint_written", "checkpoint_failed") are
+ * deliberately absent — informational, and the next interval self-retries.
  */
 export const DECISION_ONLY_KINDS: ReadonlySet<string> = new Set([
   "tool_decision_required",

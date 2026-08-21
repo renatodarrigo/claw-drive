@@ -67,5 +67,11 @@
     "threshold_tokens": 120000,
     "max_generations": 10,
     "mode": "manual"
+  },
+
+  "_checkpoint_example": {
+    "_comment": "periodic checkpoints. RENAME this key to \"checkpoint\" to enable — OFF by default. interval_seconds: wall-clock cadence (min 60) at which the runner re-distills the crash handover from a live snapshot, pre-positioning recovery material (a dead runner writes no crash-time handover at all). model: optional cheaper distiller model for the recurring cost. Distills are metered into cost_usd; intervals over budget.max_cost_usd, quiet intervals, and in-flight overlaps are skipped silently.",
+    "interval_seconds": 1800,
+    "model": "haiku"
   }
 }
