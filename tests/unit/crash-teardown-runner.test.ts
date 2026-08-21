@@ -10,8 +10,9 @@ import {
   type RunnerContext,
 } from "../../src/runner/runner.js";
 import type { SessionState } from "../../src/lib/state.js";
+import { readState } from "../../src/lib/state.js";
 import { readEventsSince } from "../../src/lib/events.js";
-import { eventsPath } from "../../src/lib/paths.js";
+import { eventsPath, statePath, crashHandoverPath } from "../../src/lib/paths.js";
 import { newSessionIdOf } from "../helpers/control-response.js";
 
 // Dogfood 2026-08-04, gen-2 `crashed:0`: B died 42s into the rotate's handover
@@ -590,5 +591,43 @@ describe("handleUnexpectedBExit — crash during rotate (dogfood gen-2)", () => 
     expect(events.filter((e) => e.kind === "turn_started")).toHaveLength(1);
     // the dropped waiter is gone
     expect(ctx.turnWaiters.size).toBe(0);
+  });
+
+  it("meters the crash distill into the lineage total before the terminal state write", async () => {
+    // Envelope-emitting stub (the shared beforeEach default is silent exit-0):
+    // this test's own arrangement drives the distill-success path.
+    const stub = path.join(stubDir, "claude");
+    await fs.writeFile(
+      stub,
+      '#!/bin/sh\ncat > /dev/null\nprintf \'{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.25,"result":"<handover>## Current objective ok</handover>"}\'\n',
+      { mode: 0o755 }
+    );
+    await fs.chmod(stub, 0o755);
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake);
+    ctx.state.cost_usd_base = 1.0; // inherited from the predecessor
+    ctx.lastCostUsd = 0.5; // as if B's last result line reported 0.5 cumulative
+    await handleUnexpectedBExit(ctx, 1, null);
+    const final = await readState(statePath(SID));
+    expect(final?.cost_usd_base).toBeCloseTo(1.25); // 1.0 inherited + 0.25 distill
+    expect(final?.cost_usd).toBeCloseTo(1.75); // base' + lastCostUsd 0.5
+  });
+
+  it("a failed crash distill leaves a pre-seeded crash-handover.md byte-identical", async () => {
+    // Garbage (non-JSON) stdout: with --output-format json, anything
+    // unparseable means the call is broken — parseDistillerEnvelope returns
+    // null, so the crash path's `if (distilled)` write is never taken.
+    const stub = path.join(stubDir, "claude");
+    await fs.writeFile(stub, "#!/bin/sh\ncat > /dev/null\nprintf 'not valid json at all'\n", {
+      mode: 0o755,
+    });
+    await fs.chmod(stub, 0o755);
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake); // creates the session dir
+    const preExisting = "## Current objective\npre-existing checkpoint content";
+    await fs.writeFile(crashHandoverPath(SID), preExisting);
+    await handleUnexpectedBExit(ctx, 1, null);
+    const after = await fs.readFile(crashHandoverPath(SID), "utf-8");
+    expect(after).toBe(preExisting);
   });
 });

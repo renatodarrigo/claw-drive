@@ -121,6 +121,14 @@ export async function recoverSession(input: RecoverInput): Promise<RecoverOutcom
     if (!handover) {
       return { ok: false, error: "DISTILL_FAILED", message: "distiller produced no extractable <handover>" };
     }
+    if (out && typeof out.costUsd === "number") {
+      // Metered distillation: charge the DEAD session's lineage total so any
+      // successor — this call's scaffold or a later recover after --no-start —
+      // inherits it via the existing inheritedCost selection below.
+      state.cost_usd_base = (state.cost_usd_base ?? 0) + out.costUsd;
+      state.cost_usd = state.cost_usd !== undefined ? state.cost_usd + out.costUsd : state.cost_usd_base;
+      await writeState(statePath(input.sessionId), state);
+    }
     await fs.writeFile(chPath, handover);
     distilled = true;
   }

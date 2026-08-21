@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { recoverSession } from "../../src/lib/recover.js";
 import { cmdRecover } from "../../src/cli/commands/recover.js";
-import { sessionDir, statePath, crashHandoverPath } from "../../src/lib/paths.js";
+import { sessionDir, statePath, crashHandoverPath, eventsPath } from "../../src/lib/paths.js";
 import { readState } from "../../src/lib/state.js";
 import { newSessionIdOf } from "../helpers/control-response.js";
 
@@ -205,6 +205,110 @@ describe("recoverSession successor scaffolding (stub runner bin)", () => {
         "generation 2 (no generation cap)"
       );
     }
+  });
+});
+
+describe("recoverSession fallback distillation (metering)", () => {
+  // No existing describe block in this file actually drives the distill
+  // branch (the successor-scaffolding tests above all pre-seed
+  // crash-handover.md, which skips distill; the error-paths block below is
+  // titled "no claude spawned" and returns before ever reaching it) — this
+  // block installs the claude stub and successor-runner stub itself.
+  let stubDir: string;
+  let prevPath: string | undefined;
+  let prevBin: string | undefined;
+
+  beforeEach(async () => {
+    prevPath = process.env.PATH;
+    prevBin = process.env.CLAW_DRIVE_BIN;
+    stubDir = await fs.mkdtemp(path.join(os.tmpdir(), "cd11-recover-distill-stub-"));
+    const claudeStub = path.join(stubDir, "claude");
+    await fs.writeFile(
+      claudeStub,
+      '#!/bin/sh\ncat > /dev/null\nprintf \'{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.3,"result":"<handover>## Current objective ok</handover>"}\'\n',
+      { mode: 0o755 }
+    );
+    await fs.chmod(claudeStub, 0o755);
+    process.env.PATH = `${stubDir}${path.delimiter}${process.env.PATH}`;
+    const runnerStub = path.join(stubDir, "fake-runner");
+    await fs.writeFile(runnerStub, '#!/bin/sh\ntouch "$CLAW_DRIVE_HOME/sessions/$2/ready"\n', {
+      mode: 0o755,
+    });
+    await fs.chmod(runnerStub, 0o755);
+    process.env.CLAW_DRIVE_BIN = runnerStub;
+  });
+
+  afterEach(async () => {
+    if (prevPath === undefined) delete process.env.PATH;
+    else process.env.PATH = prevPath;
+    if (prevBin === undefined) delete process.env.CLAW_DRIVE_BIN;
+    else process.env.CLAW_DRIVE_BIN = prevBin;
+    await fs.rm(stubDir, { recursive: true, force: true });
+  });
+
+  /** Give the dead session a non-empty events.jsonl so recoverSession's
+   * NO_RECORD guard (events.length === 0) does not short-circuit before
+   * ever reaching the distiller. */
+  async function seedEvents(id: string): Promise<void> {
+    await fs.appendFile(
+      eventsPath(id),
+      JSON.stringify({
+        seq: 1,
+        at: new Date().toISOString(),
+        kind: "turn_started",
+        turn_id: "turn_1",
+        message: "do the thing",
+      }) + "\n"
+    );
+  }
+
+  it("meters the fallback distill into the DEAD session's persisted state", async () => {
+    // existing fallback-distill arrangement (no crash-handover file on disk),
+    // dead state seeded with cost_usd: 2.0, cost_usd_base: 1.5, plus noStart: true
+    const id = "sess_20200101T000000_meter01";
+    await deadSession(id, { cost_usd: 2.0, cost_usd_base: 1.5 });
+    await seedEvents(id);
+    const out = await recoverSession({ sessionId: id, noStart: true });
+    expect(out.ok).toBe(true);
+    const dead = await readState(statePath(id));
+    expect(dead?.cost_usd_base).toBeCloseTo(1.8); // 1.5 + 0.3
+    expect(dead?.cost_usd).toBeCloseTo(2.3); // 2.0 + 0.3
+  });
+
+  it("a later recover of a --no-start-distilled session inherits the metered total", async () => {
+    // continue from the state above: crash-handover.md now exists, so this
+    // recover consumes it without re-distilling, and the successor's
+    // cost_usd_base equals the dead session's metered cost_usd (2.3).
+    const id = "sess_20200101T000000_meter02";
+    await deadSession(id, { cost_usd: 2.0, cost_usd_base: 1.5 });
+    await seedEvents(id);
+    const first = await recoverSession({ sessionId: id, noStart: true });
+    expect(first.ok).toBe(true);
+    const second = await recoverSession({ sessionId: id });
+    expect(second.ok).toBe(true);
+    const newId = newSessionIdOf(second);
+    const succ = await readState(statePath(newId));
+    expect(succ?.cost_usd_base).toBeCloseTo(2.3);
+  });
+
+  it("distill cost absent (envelope without total_cost_usd) leaves cost fields untouched", async () => {
+    // stub emits an envelope with no total_cost_usd; dead state has no cost
+    // fields; after recover, readState shows cost_usd/cost_usd_base still undefined.
+    const id = "sess_20200101T000000_meter03";
+    await deadSession(id);
+    await seedEvents(id);
+    const claudeStub = path.join(stubDir, "claude");
+    await fs.writeFile(
+      claudeStub,
+      '#!/bin/sh\ncat > /dev/null\nprintf \'{"type":"result","subtype":"success","is_error":false,"result":"<handover>## Current objective ok</handover>"}\'\n',
+      { mode: 0o755 }
+    );
+    await fs.chmod(claudeStub, 0o755);
+    const out = await recoverSession({ sessionId: id, noStart: true });
+    expect(out.ok).toBe(true);
+    const dead = await readState(statePath(id));
+    expect(dead?.cost_usd).toBeUndefined();
+    expect(dead?.cost_usd_base).toBeUndefined();
   });
 });
 

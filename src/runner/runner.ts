@@ -1578,6 +1578,14 @@ export async function handleUnexpectedBExit(
       if (distilled) {
         await fs.writeFile(crashHandoverPath(ctx.sessionId), distilled.text);
         handover_path = crashHandoverPath(ctx.sessionId);
+        if (typeof distilled.costUsd === "number") {
+          // Metered distillation: the base is the accumulator that survives
+          // the stream recompute (runStdoutLoop), and the recomputed lineage
+          // total is what maybeAutoRespawn's budget gate and the successor's
+          // inheritedCost read below.
+          sess.cost_usd_base = (sess.cost_usd_base ?? 0) + distilled.costUsd;
+          sess.cost_usd = sess.cost_usd_base + (ctx.lastCostUsd ?? 0);
+        }
       }
     } catch { /* best-effort — never block teardown on distillation */ }
   }
