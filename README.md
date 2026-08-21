@@ -252,7 +252,7 @@ An optional `budget` block caps a single driven run, so a session that loops, we
 
 When a cap is exceeded the runner stops the session and records `exit_reason: "budget_exceeded:<cap>"` (e.g. `budget_exceeded:max_tool_calls`), surfaced like any other stop through a `session_stopped` event. Caps are independent — set only the ones you want, each a positive number; an absent cap is unlimited.
 
-`max_cost_usd` is the spend cap: it stops the session once the lineage's cumulative estimated spend in USD exceeds it. The number is the claude CLI's own cost accounting — every model, subagent, and cache tier the session used, priced by the CLI's built-in per-model rates — so it tracks what the run actually costs, and it is exactly as current as your installed CLI. Unlike the other caps it does not reset on rotation: successors started by `rotate` or `recover` inherit the predecessor's total, so the cap bounds the whole mission. One-shot handover distillations run outside the session's own accounting and are not counted. On subscription auth the figure is the API-equivalent estimate. A stream that reports no cost can never trip the cap, and every session's running total is visible in `claw-drive status` whether or not a cap is set.
+`max_cost_usd` is the spend cap: it stops the session once the lineage's cumulative estimated spend in USD exceeds it. The number is the claude CLI's own cost accounting — every model, subagent, and cache tier the session used, priced by the CLI's built-in per-model rates — so it tracks what the run actually costs, and it is exactly as current as your installed CLI. Unlike the other caps it does not reset on rotation: successors started by `rotate` or `recover` inherit the predecessor's total, so the cap bounds the whole mission. One-shot handover distillations — the crash teardown's, `recover`'s fallback, and every periodic checkpoint — are metered into the lineage total: each adds its own CLI-reported cost the moment it completes, so the cap bounds distillation overhead too, and a checkpoint that crosses the cap is the lineage's last (later intervals are skipped). On subscription auth the figure is the API-equivalent estimate. A stream that reports no cost can never trip the cap, and every session's running total is visible in `claw-drive status` whether or not a cap is set.
 
 `warn_cost_usd` is the cap's early-warning line, not a cap: crossing it emits a `cost_threshold_reached` event — carrying the reading, the line, and the cap when one is set — and stops nothing. It fires once per runner process, so each successor in a lineage announces the inherited spend once in its own stream; changing the value via `update_policy` re-arms it. It must sit strictly below `max_cost_usd` when both are present (a warning at or above the cap could never fire before it), and it works alone for monitoring-only setups. Like the cap, rotation cannot reset it: the reading is the lineage's cumulative total.
 
@@ -443,6 +443,28 @@ A sibling `respawn` block covers the other failure mode — a session that dies 
 Two further bounds apply automatically: the lineage generation cap (the `rotation` block's `max_generations` when present, `10` otherwise — only a human-initiated `recover` may exceed it), and a lineage already over `budget.max_cost_usd`, which gets no further respawn.
 
 Absent `respawn`, or with `mode: "manual"`, nothing changes — recovery stays on-command.
+
+### Periodic checkpoints
+
+An optional `checkpoint` block makes the runner periodically re-distill the crash handover from a live snapshot of the session's event log, so recovery material is pre-positioned before any disaster — including the one the crash teardown can't help with: the runner process itself dying.
+
+```json
+{
+  "checkpoint": {
+    "interval_seconds": 1800,
+    "model": "haiku"
+  }
+}
+```
+
+- **`interval_seconds`** (required, minimum `60`) — the wall-clock cadence. The first checkpoint runs one interval after session start, and each one snapshots the event log at that moment; mid-turn is fine, the digest is built for it.
+- **`model`** (optional; absent ⇒ the session's own model, exactly like crash distillation) — point it at a cheaper model to keep the recurring cost small.
+
+Three situations skip an interval silently: a distill still in flight from the previous interval, a quiet interval (nothing digest-renderable happened since the last checkpoint — idle sessions spend nothing), and a lineage already over `budget.max_cost_usd`. Each completed checkpoint is metered into `cost_usd` and narrated by a `checkpoint_written` event carrying the file path and the distill's own cost; a failed distill narrates `checkpoint_failed`, leaves the previous checkpoint untouched, and the next interval simply retries.
+
+At crash time nothing changes: the teardown still distills the freshest possible handover, and because it only overwrites on success, a failed crash distill falls back to the last checkpoint — `recover` consumes whichever is on disk.
+
+Absent `checkpoint`, nothing changes — no timer, no distills, no checkpoint events.
 
 ### The driving flow
 
