@@ -24,7 +24,7 @@ import { scheduleDecisionTimeout } from "./decision-timeout.js";
 import { createBudgetTracker, budgetExceededReason, warnCostOf, maxCostOf, crossedCostWarning, type BudgetTracker } from "./budget.js";
 import { rotationConfigOf, isOverThreshold, checkRotateGate, effectiveMaxGenerations, INTERRUPT_GRACE_MS, shouldAttemptAutoRotation, autoOutcomeLatches, respawnConfigOf, checkRespawnGate, checkpointConfigOf } from "./context-tracker.js";
 import { buildHandoverInstruction, extractHandover, composeSuccessorBrief } from "../lib/handover.js";
-import { buildCrashDigest, buildDistillerPrompt, runDistiller } from "../lib/distill.js";
+import { buildCrashDigest, buildDistillerPrompt, runDistiller, DIGESTIBLE_KINDS } from "../lib/distill.js";
 import { newSessionId, readSessionMcpServers, scaffoldSessionDir, spawnRunnerDetached, waitForReady } from "../lib/spawn-session.js";
 import { recoverSession } from "../lib/recover.js";
 import type { ControlRequest, ControlResponse } from "../lib/socket-protocol.js";
@@ -480,17 +480,6 @@ export async function afterEventBookkeeping(ctx: RunnerContext, ev: Event): Prom
     maybeAutoRotate(ctx);
   }
 }
-
-/** The event kinds buildCrashDigest renders — the quiet guard's definition
- * of "something new to say". Mirrors the switch in src/lib/distill.ts. */
-const DIGESTIBLE_KINDS: ReadonlySet<string> = new Set([
-  "turn_started",
-  "assistant_text",
-  "tool_call_requested",
-  "tool_call_result",
-  "turn_completed",
-  "turn_failed",
-]);
 
 /**
  * One periodic checkpoint: re-distill the crash handover from a live
