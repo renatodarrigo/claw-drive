@@ -134,6 +134,33 @@ describe("performCheckpoint", () => {
     expect(written.cost_usd).toBeCloseTo(1.2);
   });
 
+  it("passes checkpoint.model to the distiller argv", async () => {
+    const argsFile = path.join(root, "distill-argv.txt");
+    await installClaudeStub(`#!/bin/sh\nprintf '%s ' "$@" > "${argsFile}"\ncat > /dev/null\nprintf '{"type":"result","result":"<handover>MODELED</handover>"}'\n`);
+    const state = baseState({ policy: { checkpoint: { interval_seconds: 60, model: "haiku" } } });
+    await writeState(statePath(SID), state);
+    await seedTurnEvents();
+    const ctx = makeCtx(state);
+    ctx.seq = 3;
+    await performCheckpoint(ctx);
+    expect(await fs.readFile(argsFile, "utf-8")).toContain("--model haiku");
+  });
+
+  it("emits checkpoint_written without distill_cost_usd when the envelope reports no cost", async () => {
+    await installClaudeStub("#!/bin/sh\ncat > /dev/null\nprintf '{\"type\":\"result\",\"result\":\"<handover>NO COST</handover>\"}'\n");
+    const state = baseState();
+    await writeState(statePath(SID), state);
+    await seedTurnEvents();
+    const ctx = makeCtx(state);
+    ctx.seq = 3;
+    await performCheckpoint(ctx);
+    const { events } = await readEventsSince(eventsPath(SID), 3);
+    const written = events.find((e) => e.kind === "checkpoint_written");
+    expect(written).toBeDefined();
+    expect(written).not.toHaveProperty("distill_cost_usd");
+    expect(ctx.state.cost_usd_base).toBeUndefined(); // nothing metered
+  });
+
   it("quiet guard: lifecycle-only traffic since the last checkpoint is a silent skip", async () => {
     await installClaudeStub(GOOD_STUB);
     const state = baseState();
@@ -231,6 +258,9 @@ describe("performCheckpoint", () => {
       await performCheckpoint(ctx); // must not throw
       expect(spy).toHaveBeenCalledWith("checkpoint failed:", expect.anything());
       expect(ctx.checkpointInFlight).toBe(false); // finally still releases the flag
+      const ks = await kinds();
+      expect(ks).not.toContain("checkpoint_written"); // deliberately log-only —
+      expect(ks).not.toContain("checkpoint_failed"); // no emit from inside the catch
     } finally {
       spy.mockRestore();
     }
@@ -268,6 +298,22 @@ describe("performCheckpoint", () => {
     expect((await kinds()).some((k) => k === "checkpoint_written" || k === "checkpoint_failed")).toBe(false);
     expect(ctx.checkpointInFlight).toBe(false); // flag released even on discard
   });
+
+  it("stale settle: an epoch bump mid-distill (checkpoint policy changed) discards the result", async () => {
+    await installClaudeStub("#!/bin/sh\ncat > /dev/null\nsleep 0.3\nprintf '{\"type\":\"result\",\"result\":\"<handover>STALE</handover>\",\"total_cost_usd\":0.2}'\n");
+    const state = baseState();
+    await writeState(statePath(SID), state);
+    await seedTurnEvents();
+    const ctx = makeCtx(state);
+    ctx.seq = 3;
+    const p = performCheckpoint(ctx);
+    setTimeout(() => { ctx.checkpointEpoch += 1; }, 50);
+    await p;
+    await expect(fs.readFile(crashHandoverPath(SID), "utf-8")).rejects.toThrow();
+    expect((await kinds()).some((k) => k === "checkpoint_written" || k === "checkpoint_failed")).toBe(false);
+    expect(ctx.lastCheckpointedSeq).toBe(0); // a discarded settle does not advance the mark
+    expect(ctx.checkpointInFlight).toBe(false);
+  });
 });
 
 describe("armCheckpointTimer", () => {
@@ -281,6 +327,16 @@ describe("armCheckpointTimer", () => {
     expect(ctx.checkpointTimer).toBeNull();
     vi.advanceTimersByTime(3_600_000);
     expect(run).not.toHaveBeenCalled();
+  });
+
+  it("the recurring timer is unref'd so it cannot hold the process open (real timers — fake ones don't model hasRef)", () => {
+    vi.useRealTimers();
+    const ctx = makeCtx(baseState());
+    const run = vi.fn(async () => {});
+    armCheckpointTimer(ctx, run);
+    expect(ctx.checkpointTimer).not.toBeNull();
+    expect(ctx.checkpointTimer!.hasRef()).toBe(false);
+    clearInterval(ctx.checkpointTimer!);
   });
 
   it("fires at t=interval (not t=0) and on every interval after", () => {

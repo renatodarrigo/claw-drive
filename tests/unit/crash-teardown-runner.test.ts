@@ -617,6 +617,25 @@ describe("handleUnexpectedBExit — crash during rotate (dogfood gen-2)", () => 
     expect(final?.cost_usd).toBeCloseTo(1.75); // base' + lastCostUsd 0.5
   });
 
+  it("an envelope without total_cost_usd leaves the cost fields untouched", async () => {
+    const stub = path.join(stubDir, "claude");
+    await fs.writeFile(
+      stub,
+      '#!/bin/sh\ncat > /dev/null\nprintf \'{"type":"result","subtype":"success","is_error":false,"result":"<handover>## Current objective ok</handover>"}\'\n',
+      { mode: 0o755 }
+    );
+    await fs.chmod(stub, 0o755);
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake);
+    ctx.state.cost_usd_base = 1.0; // inherited from the predecessor
+    ctx.lastCostUsd = 0.5;
+    await handleUnexpectedBExit(ctx, 1, null);
+    const final = await readState(statePath(SID));
+    expect(final?.cost_usd_base).toBeCloseTo(1.0); // no distill cost to add
+    expect(final?.cost_usd).toBeUndefined(); // the recompute is cost-gated; nothing else writes it
+    expect(await fs.readFile(crashHandoverPath(SID), "utf-8")).toContain("Current objective ok");
+  });
+
   it("a failed crash distill leaves a pre-seeded crash-handover.md byte-identical", async () => {
     // Garbage (non-JSON) stdout: with --output-format json, anything
     // unparseable means the call is broken — parseDistillerEnvelope returns
