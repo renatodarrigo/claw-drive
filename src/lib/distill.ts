@@ -51,6 +51,18 @@ export function parseDistillerEnvelope(raw: string): DistillResult | null {
   return { text, costUsd: typeof cost === "number" && Number.isFinite(cost) ? cost : null };
 }
 
+/** The event kinds buildCrashDigest renders — every kind with a non-null
+ * branch in its switch. The runner's checkpoint quiet guard consumes
+ * membership as "this event would add digest material". */
+export const DIGESTIBLE_KINDS: ReadonlySet<string> = new Set([
+  "turn_started",
+  "assistant_text",
+  "tool_call_requested",
+  "tool_call_result",
+  "turn_completed",
+  "turn_failed",
+]);
+
 /**
  * Tail-biased digest: walk events newest→oldest accumulating rendered lines
  * until maxChars, then emit oldest→newest. B's thinking is scrubbed from the

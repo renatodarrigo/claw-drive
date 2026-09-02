@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { buildCrashDigest, buildDistillerPrompt, runDistiller, parseDistillerEnvelope } from "../../src/lib/distill.js";
+import { buildCrashDigest, buildDistillerPrompt, runDistiller, parseDistillerEnvelope, DIGESTIBLE_KINDS } from "../../src/lib/distill.js";
 import type { Event } from "../../src/lib/events.js";
 
 const ev = (partial: Record<string, unknown>, seq: number): Event =>
@@ -45,6 +45,22 @@ describe("buildCrashDigest", () => {
     expect(d).toContain("line-500");
     expect(d).not.toContain("line-1 ");
     expect(d.indexOf("line-499")).toBeLessThan(d.indexOf("line-500"));
+  });
+});
+
+describe("DIGESTIBLE_KINDS mirrors the buildCrashDigest switch", () => {
+  it("a kind renders a digest line iff it is in the set, across the full EventKind union", async () => {
+    const src = await fs.readFile(new URL("../../src/lib/events.ts", import.meta.url), "utf-8");
+    const kinds = [...src.matchAll(/^\s*\|\s*"([a-z_]+)"/gm)].map((m) => m[1]);
+    // 23 = the frozen EventKind union (COMPATIBILITY §3, pinned exactly by
+    // contract-guard.test.ts). Moves in lockstep with events.ts so a source
+    // reformat cannot silently shrink the iterated universe while a real
+    // set/switch drift hides behind it.
+    expect(kinds.length).toBe(23);
+    for (const kind of kinds) {
+      const rendered = buildCrashDigest([ev({ kind }, 1)]) !== "";
+      expect(rendered, `kind ${kind}`).toBe(DIGESTIBLE_KINDS.has(kind));
+    }
   });
 });
 

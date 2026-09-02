@@ -252,7 +252,7 @@ An optional `budget` block caps a single driven run, so a session that loops, we
 
 When a cap is exceeded the runner stops the session and records `exit_reason: "budget_exceeded:<cap>"` (e.g. `budget_exceeded:max_tool_calls`), surfaced like any other stop through a `session_stopped` event. Caps are independent — set only the ones you want, each a positive number; an absent cap is unlimited.
 
-`max_cost_usd` is the spend cap: it stops the session once the lineage's cumulative estimated spend in USD exceeds it. The number is the claude CLI's own cost accounting — every model, subagent, and cache tier the session used, priced by the CLI's built-in per-model rates — so it tracks what the run actually costs, and it is exactly as current as your installed CLI. Unlike the other caps it does not reset on rotation: successors started by `rotate` or `recover` inherit the predecessor's total, so the cap bounds the whole mission. One-shot handover distillations — the crash teardown's, `recover`'s fallback, and every periodic checkpoint — are metered into the lineage total: each adds its own CLI-reported cost the moment it completes, so the cap bounds distillation overhead too, and a checkpoint that crosses the cap is the lineage's last (later intervals are skipped). On subscription auth the figure is the API-equivalent estimate. A stream that reports no cost can never trip the cap, and every session's running total is visible in `claw-drive status` whether or not a cap is set.
+`max_cost_usd` is the spend cap: it stops the session once the lineage's cumulative estimated spend in USD exceeds it. The number is the claude CLI's own cost accounting — every model, subagent, and cache tier the session used, priced by the CLI's built-in per-model rates — so it tracks what the run actually costs, and it is exactly as current as your installed CLI. Unlike the other caps it does not reset on rotation: successors started by `rotate` or `recover` inherit the predecessor's total, so the cap bounds the whole mission. One-shot handover distillations — the crash teardown's, `recover`'s fallback, and every periodic checkpoint — are metered into the lineage total: each adds its own CLI-reported cost the moment it completes, so the cap bounds distillation overhead too, and a checkpoint that crosses the cap is the lineage's last (later intervals are skipped). A checkpoint distill that settles only after its result is unusable — the session exited, a stop or teardown began, or the checkpoint block changed mid-flight — is discarded with its already-incurred cost unmetered, the same fail-open bias as a costless stream. On subscription auth the figure is the API-equivalent estimate. A stream that reports no cost can never trip the cap, and every session's running total is visible in `claw-drive status` whether or not a cap is set.
 
 `warn_cost_usd` is the cap's early-warning line, not a cap: crossing it emits a `cost_threshold_reached` event — carrying the reading, the line, and the cap when one is set — and stops nothing. It fires once per runner process, so each successor in a lineage announces the inherited spend once in its own stream; changing the value via `update_policy` re-arms it. It must sit strictly below `max_cost_usd` when both are present (a warning at or above the cap could never fire before it), and it works alone for monitoring-only setups. Like the cap, rotation cannot reset it: the reading is the lineage's cumulative total.
 
@@ -327,7 +327,7 @@ B's echo fires the hook → policy defers → monitor alerts A → human answers
 | `show <session>` | State + last 20 events |
 | `report <session> [--json] [--idle-after SECONDS]` | Human-readable session report rendered from `events.jsonl`: a summary header (id, alias, cwd, model, started/ended, duration, exit reason, turn/tool-call/decision counts) followed by a chronological transcript — user turns, assistant text, one consolidated line per tool call (policy resolution and how any pause was resolved), sentinel outcomes, idle gaps (`--idle-after`, default `600`), and session lifecycle markers. `--json` emits the summary object only (header fields + per-category counts); works for live and dead sessions; strictly read-only. |
 | `tail <session> [--since N] [--follow]` | Stream events |
-| `pending [<session>]` | List awaiting-approval calls. An escalated decision carries a capped `rationale` and (for Edit/Write) a `diff`. |
+| `pending [<session>]` | List awaiting-approval calls. An escalated decision carries a capped `rationale` (when available) and (for Edit/Write) a `diff`. |
 | `approve <call_id> [--reason R] [--remember]` | Approve a paused call. `--remember` derives a rule and appends to `auto_approve`. |
 | `reject <call_id> [--reason R] [--remember]` | Reject a paused call. `--remember` appends to `auto_reject`. |
 | `defer <call_id> [--reason R] [--remember]` | Defer a paused call to the human. `--remember` appends to `auto_defer`. |
@@ -348,10 +348,10 @@ B's echo fires the hook → policy defers → monitor alerts A → human answers
 
 When a tool call escalates, the decision you resolve is enriched at the source so you can see *why* — `pending`, `status`, and the MCP `poll_session`/`poll_turn` responses all carry the same fields on the `tool_decision_required`:
 
-- **`rationale`** — the same turn's preceding assistant text (why B wants the call), head-truncated to ~1000 chars.
+- **`rationale`** — the same turn's preceding assistant text (why B wants the call), head-truncated to ~1000 chars; absent when no assistant text preceded the call.
 - **`diff`** — for `Edit`/`Write` only, a unified diff (Edit: `old_string`→`new_string`; Write: against the existing file, or the new content as added lines), capped at ~4 KiB.
 
-Both caps apply **uniformly** on every path — human, `--json`, and MCP — so polling a busy session can't blow the token budget. Non-file tools (Bash, etc.) carry `rationale` only, no `diff`. The complete, uncapped context is always available via `claw-drive tail` / `claw-drive show`. The rationale is the raw assistant snippet (not an LLM summary), and diffs are plain text (not syntax-highlighted).
+Both caps apply **uniformly** on every path — human, `--json`, and MCP — so polling a busy session can't blow the token budget. Non-file tools (Bash, etc.) carry `rationale` (when available) only, no `diff`. The complete, uncapped context is always available via `claw-drive tail` / `claw-drive show`. The rationale is the raw assistant snippet (not an LLM summary), and diffs are plain text (not syntax-highlighted).
 
 ## Troubleshooting
 
@@ -457,7 +457,7 @@ An optional `checkpoint` block makes the runner periodically re-distill the cras
 }
 ```
 
-- **`interval_seconds`** (required, minimum `60`) — the wall-clock cadence. The first checkpoint runs one interval after session start, and each one snapshots the event log at that moment; mid-turn is fine, the digest is built for it.
+- **`interval_seconds`** (required, minimum `60`, maximum `2147483`) — the wall-clock cadence. The first checkpoint runs one interval after session start, and each one snapshots the event log at that moment; mid-turn is fine, the digest is built for it. The maximum is the Node timer limit (about 24.9 days).
 - **`model`** (optional; absent ⇒ the session's own model, exactly like crash distillation) — point it at a cheaper model to keep the recurring cost small.
 
 Three situations skip an interval silently: a distill still in flight from the previous interval, a quiet interval (nothing digest-renderable happened since the last checkpoint — idle sessions spend nothing), and a lineage already over `budget.max_cost_usd`. Each completed checkpoint is metered into `cost_usd` and narrated by a `checkpoint_written` event carrying the file path and the distill's own cost; a failed distill narrates `checkpoint_failed`, leaves the previous checkpoint untouched, and the next interval simply retries.

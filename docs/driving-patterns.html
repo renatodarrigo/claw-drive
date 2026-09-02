@@ -79,8 +79,8 @@ await Monitor(watch_command);
     <h3 id="decision-context">What rides with a decision: rationale + diff</h3>
     <p>A <code>tool_decision_required</code> event is more than a tool name and its args. When the runner raises the decision it attaches two context fields, so whoever resolves the gate can judge it in place rather than blind:</p>
     <ul>
-      <li><strong><code>rationale</code></strong> — Session B's own words: the assistant text from the same turn that immediately preceded the call. Head-truncated to 1000 characters with a marker.</li>
-      <li><strong><code>diff</code></strong> — for <code>Edit</code> and <code>Write</code> only, a unified diff of the change B wants to make (<code>Edit</code> diffs <code>old_string</code>→<code>new_string</code>; <code>Write</code> diffs against the file already on disk). Head-truncated to 4&nbsp;KiB. Non-file tools carry the rationale alone.</li>
+      <li><strong><code>rationale</code></strong> — Session B's own words: the assistant text from the same turn that immediately preceded the call. Head-truncated to 1000 characters with a marker; absent when no assistant text preceded the call.</li>
+      <li><strong><code>diff</code></strong> — for <code>Edit</code> and <code>Write</code> only, a unified diff of the change B wants to make (<code>Edit</code> diffs <code>old_string</code>→<code>new_string</code>; <code>Write</code> diffs against the file already on disk). Head-truncated to 4&nbsp;KiB. Non-file tools carry the rationale alone, when available.</li>
     </ul>
     <p>Both are computed once, at the runner, the moment the decision is raised — so they read identically wherever they surface: as fields on every awaiting-approval entry that <code>claw-drive pending</code> prints, rendered inline by <code>claw-drive status</code>, and on the <code>tool_decision_required</code> events returned by the MCP <code>poll_turn</code> / <code>poll_session</code> tools. The uniform caps keep a chatty turn or a huge file from flooding the fleet view — the full, uncapped context stays available via <code>claw-drive tail</code> / <code>show</code>.</p>
 
