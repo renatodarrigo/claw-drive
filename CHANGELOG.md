@@ -7,6 +7,7 @@
 - **`checkpoint.interval_seconds` gains a `2147483` ceiling.** Intervals above it used to pass validation, overflow Node's timer maximum (2,147,483,647 ms) at arm time, and silently clamp the recurring checkpoint to a 1ms cadence; the validator now rejects them at policy load. `2147483` seconds is about 24.9 days — the longest interval Node can honestly time.
 - **Swallowed checkpoint errors now reach `runner.log`.** The checkpoint's best-effort catch used to discard the error entirely, so an fs-write or emit failure during a checkpoint left no trace; the error is now logged via `console.error` before being swallowed.
 - **Decision-context prose no longer implies `rationale` is always present.** The `poll_turn`/`poll_session` tool descriptions and the README/reference/driving-patterns decision-context prose now match `events.ts` (optional by contract): `rationale` derives from B's preceding assistant text and is absent when B goes straight to the call.
+- **The stale-settle cost gap is now documented.** A checkpoint distill that settles only after its result is unusable (the session exited, a stop or teardown began, or the checkpoint block changed mid-flight) is discarded with its already-incurred cost unmetered — design-accepted fail-open, previously stated nowhere in the budget docs.
 
 ## [1.9.0] — 2026-08-21
 
