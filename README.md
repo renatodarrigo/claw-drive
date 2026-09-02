@@ -457,7 +457,7 @@ An optional `checkpoint` block makes the runner periodically re-distill the cras
 }
 ```
 
-- **`interval_seconds`** (required, minimum `60`) — the wall-clock cadence. The first checkpoint runs one interval after session start, and each one snapshots the event log at that moment; mid-turn is fine, the digest is built for it.
+- **`interval_seconds`** (required, minimum `60`, maximum `2147483`) — the wall-clock cadence. The first checkpoint runs one interval after session start, and each one snapshots the event log at that moment; mid-turn is fine, the digest is built for it. The maximum is the Node timer limit (about 24.9 days).
 - **`model`** (optional; absent ⇒ the session's own model, exactly like crash distillation) — point it at a cheaper model to keep the recurring cost small.
 
 Three situations skip an interval silently: a distill still in flight from the previous interval, a quiet interval (nothing digest-renderable happened since the last checkpoint — idle sessions spend nothing), and a lineage already over `budget.max_cost_usd`. Each completed checkpoint is metered into `cost_usd` and narrated by a `checkpoint_written` event carrying the file path and the distill's own cost; a failed distill narrates `checkpoint_failed`, leaves the previous checkpoint untouched, and the next interval simply retries.

@@ -1906,6 +1906,14 @@ describe("checkpoint block validation", () => {
   it("rejects an interval below the 60-second floor", () => {
     expect(validatePolicy({ checkpoint: { interval_seconds: 59 } }).ok).toBe(false);
   });
+  it("accepts an interval at the 2147483-second ceiling", () => {
+    expect(validatePolicy({ checkpoint: { interval_seconds: 2_147_483 } })).toEqual({ ok: true });
+  });
+  it("rejects an interval above the 2147483-second ceiling", () => {
+    const v = validatePolicy({ checkpoint: { interval_seconds: 2_147_484 } });
+    expect(v.ok).toBe(false);
+    if (!v.ok) expect(v.error).toContain("2147483");
+  });
   it("rejects a non-numeric interval", () => {
     expect(validatePolicy({ checkpoint: { interval_seconds: "600" } }).ok).toBe(false);
   });

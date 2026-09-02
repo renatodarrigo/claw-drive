@@ -259,7 +259,7 @@ claw-drive policy lint --max-severity warn ./my-policy.json   # exit 1 on any wa
 }</code></pre>
 
     <ul>
-      <li><code>interval_seconds</code> — required, minimum <code>60</code>. The wall-clock cadence. The first checkpoint runs one interval after session start, and each one snapshots the event log at that moment — mid-turn is fine; the digest is built for it.</li>
+      <li><code>interval_seconds</code> — required, minimum <code>60</code>, maximum <code>2147483</code>. The wall-clock cadence. The first checkpoint runs one interval after session start, and each one snapshots the event log at that moment — mid-turn is fine; the digest is built for it. The maximum is the Node timer limit (about 24.9 days).</li>
       <li><code>model</code> — optional; absent ⇒ the session's own model, exactly like crash distillation. Point it at a cheaper model to keep the recurring cost small.</li>
     </ul>
 

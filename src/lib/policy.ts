@@ -87,8 +87,8 @@ export interface PolicyObject {
    * Optional periodic-checkpoint config. Absent ⇒ off entirely (no timer, no
    * events — no behaviour change). interval_seconds: wall-clock cadence at
    * which the runner re-distills the crash handover from a live snapshot of
-   * events.jsonl (validator floor 60). model: distiller model for
-   * checkpoints; absent ⇒ the session's own model (same as crash
+   * events.jsonl (validator floor 60, ceiling 2_147_483). model: distiller
+   * model for checkpoints; absent ⇒ the session's own model (same as crash
    * distillation). Checkpoint distills are metered into cost_usd and are
    * budget-gated (strict-exceed) against budget.max_cost_usd; quiet and
    * in-flight intervals are skipped silently.
@@ -600,7 +600,10 @@ export function validatePolicy(p: unknown): { ok: true } | { ok: false; error: s
   }
   // checkpoint (periodic checkpoints): optional block; interval_seconds is
   // required when the block is present (floor 60 — sub-minute refresh of a
-  // token-spending distill is never intentional); model optional non-empty.
+  // token-spending distill is never intentional; ceiling 2_147_483 — past it
+  // interval_seconds * 1000 exceeds Node timer TIMEOUT_MAX 2,147,483,647 ms
+  // and the recurring timer would silently clamp to 1ms); model optional
+  // non-empty.
   if (obj.checkpoint !== undefined) {
     if (typeof obj.checkpoint !== "object" || obj.checkpoint === null || Array.isArray(obj.checkpoint)) {
       return { ok: false, error: "checkpoint must be an object" };
@@ -615,6 +618,9 @@ export function validatePolicy(p: unknown): { ok: true } | { ok: false; error: s
     const iv = c.interval_seconds;
     if (typeof iv !== "number" || !Number.isFinite(iv) || iv < 60) {
       return { ok: false, error: "checkpoint.interval_seconds must be a number >= 60" };
+    }
+    if (iv > 2_147_483) {
+      return { ok: false, error: "checkpoint.interval_seconds must be a number <= 2147483" };
     }
     if (c.model !== undefined && (typeof c.model !== "string" || c.model.length === 0)) {
       return { ok: false, error: "checkpoint.model must be a non-empty string" };

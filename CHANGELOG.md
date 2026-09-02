@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **`checkpoint.interval_seconds` gains a `2147483` ceiling.** Intervals above it used to pass validation, overflow Node's timer maximum (2,147,483,647 ms) at arm time, and silently clamp the recurring checkpoint to a 1ms cadence; the validator now rejects them at policy load. `2147483` seconds is about 24.9 days — the longest interval Node can honestly time.
+
 ## [1.9.0] — 2026-08-21
 
 ### Added
