@@ -327,7 +327,7 @@ B's echo fires the hook → policy defers → monitor alerts A → human answers
 | `show <session>` | State + last 20 events |
 | `report <session> [--json] [--idle-after SECONDS]` | Human-readable session report rendered from `events.jsonl`: a summary header (id, alias, cwd, model, started/ended, duration, exit reason, turn/tool-call/decision counts) followed by a chronological transcript — user turns, assistant text, one consolidated line per tool call (policy resolution and how any pause was resolved), sentinel outcomes, idle gaps (`--idle-after`, default `600`), and session lifecycle markers. `--json` emits the summary object only (header fields + per-category counts); works for live and dead sessions; strictly read-only. |
 | `tail <session> [--since N] [--follow]` | Stream events |
-| `pending [<session>]` | List awaiting-approval calls. An escalated decision carries a capped `rationale` and (for Edit/Write) a `diff`. |
+| `pending [<session>]` | List awaiting-approval calls. An escalated decision carries a capped `rationale` (when available) and (for Edit/Write) a `diff`. |
 | `approve <call_id> [--reason R] [--remember]` | Approve a paused call. `--remember` derives a rule and appends to `auto_approve`. |
 | `reject <call_id> [--reason R] [--remember]` | Reject a paused call. `--remember` appends to `auto_reject`. |
 | `defer <call_id> [--reason R] [--remember]` | Defer a paused call to the human. `--remember` appends to `auto_defer`. |
@@ -348,10 +348,10 @@ B's echo fires the hook → policy defers → monitor alerts A → human answers
 
 When a tool call escalates, the decision you resolve is enriched at the source so you can see *why* — `pending`, `status`, and the MCP `poll_session`/`poll_turn` responses all carry the same fields on the `tool_decision_required`:
 
-- **`rationale`** — the same turn's preceding assistant text (why B wants the call), head-truncated to ~1000 chars.
+- **`rationale`** — the same turn's preceding assistant text (why B wants the call), head-truncated to ~1000 chars; absent when no assistant text preceded the call.
 - **`diff`** — for `Edit`/`Write` only, a unified diff (Edit: `old_string`→`new_string`; Write: against the existing file, or the new content as added lines), capped at ~4 KiB.
 
-Both caps apply **uniformly** on every path — human, `--json`, and MCP — so polling a busy session can't blow the token budget. Non-file tools (Bash, etc.) carry `rationale` only, no `diff`. The complete, uncapped context is always available via `claw-drive tail` / `claw-drive show`. The rationale is the raw assistant snippet (not an LLM summary), and diffs are plain text (not syntax-highlighted).
+Both caps apply **uniformly** on every path — human, `--json`, and MCP — so polling a busy session can't blow the token budget. Non-file tools (Bash, etc.) carry `rationale` (when available) only, no `diff`. The complete, uncapped context is always available via `claw-drive tail` / `claw-drive show`. The rationale is the raw assistant snippet (not an LLM summary), and diffs are plain text (not syntax-highlighted).
 
 ## Troubleshooting
 
