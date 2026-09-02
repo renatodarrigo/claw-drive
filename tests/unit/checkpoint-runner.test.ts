@@ -216,6 +216,26 @@ describe("performCheckpoint", () => {
     expect(ctx.lastCheckpointedSeq).toBe(0); // failed run does not advance the mark
   });
 
+  it("failure: an internal throw is swallowed but logged via console.error", async () => {
+    await installClaudeStub(GOOD_STUB);
+    const state = baseState();
+    await writeState(statePath(SID), state);
+    await seedTurnEvents();
+    // A directory at the handover path makes the try's fs.writeFile throw
+    // (EISDIR), driving the best-effort catch.
+    await fs.mkdir(crashHandoverPath(SID), { recursive: true });
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const ctx = makeCtx(state);
+      ctx.seq = 3;
+      await performCheckpoint(ctx); // must not throw
+      expect(spy).toHaveBeenCalledWith("checkpoint failed:", expect.anything());
+      expect(ctx.checkpointInFlight).toBe(false); // finally still releases the flag
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it("in-flight and lifecycle gates: inFlight/stopping/tearingDown/bExited all skip before reading", async () => {
     await installClaudeStub(GOOD_STUB);
     const state = baseState();

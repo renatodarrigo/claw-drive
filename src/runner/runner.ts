@@ -561,8 +561,9 @@ export async function performCheckpoint(ctx: RunnerContext): Promise<void> {
     // already engage on it (a trailing warning after the terminal record
     // would violate terminal-last ordering).
     if (!ctx.budgetBreached) await maybeWarnCost(ctx, undefined);
-  } catch {
+  } catch (err) {
     /* best-effort — a checkpoint must never take down the runner */
+    console.error("checkpoint failed:", err);
   } finally {
     ctx.checkpointInFlight = false;
   }
