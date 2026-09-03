@@ -1,8 +1,9 @@
-import * as fs from "node:fs/promises";
-import { sessionsRoot, statePath, socketPath, isValidSessionId } from "../../lib/paths.js";
-import { readState, isPidAlive } from "../../lib/state.js";
+import { socketPath } from "../../lib/paths.js";
+import { isPidAlive } from "../../lib/state.js";
 import { sendRequest } from "../../runner/socket-server.js";
 import { validateRule, type DecisionAction, type Rule } from "../../lib/policy.js";
+import { parseFleetFlags } from "../../lib/fleet.js";
+import { listSessions, sessionsRootExists } from "../../lib/live-sessions.js";
 
 export type ParsedResolve =
   | { ok: false; error: string }
@@ -17,7 +18,7 @@ export type ParsedResolve =
     };
 
 const usage = (action: string) =>
-  `usage: claw-drive ${action} <call_id> [--reason R] [--remember | --remember-as JSON | --preview] [--json]`;
+  `usage: claw-drive ${action} <call_id> [--reason R] [--remember | --remember-as JSON | --preview] [--json] [--fleet TAG] [--all-fleets]`;
 
 export function parseResolveArgs(action: DecisionAction, argv: string[]): ParsedResolve {
   const callId = argv[0];
@@ -82,22 +83,26 @@ export function renderPreviewHuman(res: {
 }
 
 export async function resolveCmd(action: DecisionAction, argv: string[]): Promise<number> {
-  const parsed = parseResolveArgs(action, argv);
+  // Fleets: the call-id scan walks only the fleet view's live sessions;
+  // --all-fleets widens it. Lifted before the resolve parser sees argv.
+  const fleet = parseFleetFlags(argv);
+  if (!fleet.ok) {
+    console.error(fleet.error);
+    return 2;
+  }
+  const parsed = parseResolveArgs(action, fleet.rest);
   if (!parsed.ok) {
     console.error(parsed.error);
     return 2;
   }
-  let entries: string[];
-  try {
-    entries = await fs.readdir(sessionsRoot());
-  } catch {
+  if (!(await sessionsRootExists())) {
     console.error("no sessions");
     return 1;
   }
-  for (const id of entries) {
-    if (!isValidSessionId(id)) continue;
-    const s = await readState(statePath(id));
-    if (!s || !s.runner_pid || !isPidAlive(s.runner_pid)) continue;
+  const rows = await listSessions(fleet.view);
+  for (const { id, state: s, inView } of rows) {
+    if (!inView) continue;
+    if (!s.runner_pid || !isPidAlive(s.runner_pid)) continue;
     try {
       const resp = await sendRequest(socketPath(id), {
         id: "cli_" + Date.now(),
