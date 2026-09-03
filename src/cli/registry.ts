@@ -62,7 +62,7 @@ export const COMMANDS: readonly CommandEntry[] = [
     handler: cmdSessions },
   { name: "status", group: "observe",
     summary: "Snapshot of one or all sessions: state, turn, pending decisions, recent errors.",
-    usage: "status [<session>] [--json]",
+    usage: "status [<session>] [--json] [--fleet TAG] [--all-fleets]",
     handler: cmdStatus },
   { name: "show", group: "observe",
     summary: "State + pending decisions + recent events for one session.",

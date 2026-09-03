@@ -1,6 +1,7 @@
-import * as fs from "node:fs/promises";
-import { sessionsRoot, statePath, eventsPath, isValidSessionId } from "../../lib/paths.js";
+import { eventsPath, statePath, isValidSessionId } from "../../lib/paths.js";
 import { isValidAlias, resolveSessionRef, aliasWithGeneration } from "../../lib/alias.js";
+import { parseFleetFlags, hiddenFleetsHint, FLEET_FLAGS_SINGLE_FORM_ERROR, type FleetView } from "../../lib/fleet.js";
+import { listSessions } from "../../lib/live-sessions.js";
 import {
   readState,
   isPidAlive,
@@ -47,6 +48,8 @@ export interface SessionSnapshot {
   session_id: string;
   /** CD-10: the session's alias, when set. */
   alias?: string;
+  /** Fleets: the session's fleet tag, when set. */
+  fleet?: string;
   status: SessionStateStatus;
   cwd: string;
   policy_label?: string;
@@ -73,7 +76,7 @@ export interface SessionSnapshot {
 
 export type ParsedStatusArgs =
   | { ok: true; help: true }
-  | { ok: true; help: false; sessionId?: string; json: boolean }
+  | { ok: true; help: false; sessionId?: string; json: boolean; view: FleetView }
   | { ok: false; error: string };
 
 // Shared with the runner-side wrapper system in src/lib/tokens.ts.
@@ -100,12 +103,19 @@ function summarizeArgs(tool: string, args: unknown): string {
   }
 }
 
-export function parseStatusArgs(argv: string[]): ParsedStatusArgs {
+export function parseStatusArgs(
+  argv: string[],
+  env: NodeJS.ProcessEnv = process.env
+): ParsedStatusArgs {
+  // Fleets: lift --fleet / --all-fleets before the status parser sees argv.
+  const fleet = parseFleetFlags(argv, env);
+  if (!fleet.ok) return { ok: false, error: fleet.error };
+  const args = fleet.rest;
   let sessionId: string | undefined;
   let json = false;
 
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
     if (a === "--help" || a === "-h") return { ok: true, help: true };
     if (a === "--json") {
       json = true;
@@ -123,8 +133,11 @@ export function parseStatusArgs(argv: string[]): ParsedStatusArgs {
       sessionId = a;
     }
   }
+  if (sessionId !== undefined && fleet.flagsSeen) {
+    return { ok: false, error: FLEET_FLAGS_SINGLE_FORM_ERROR };
+  }
 
-  return { ok: true, help: false, sessionId, json };
+  return { ok: true, help: false, sessionId, json, view: fleet.view };
 }
 
 function lastAssistantTextForTurn(events: Event[], turnId: string): string | undefined {
@@ -289,6 +302,7 @@ export function buildSessionSnapshot(
   return {
     session_id: state.session_id,
     ...(state.alias ? { alias: state.alias } : {}),
+    ...(state.fleet ? { fleet: state.fleet } : {}),
     status,
     cwd: state.cwd,
     policy_label,
@@ -350,10 +364,17 @@ function fmtCost(s: SessionSnapshot): string {
   return `${sign}$${Math.abs(s.cost_usd).toFixed(2)}`;
 }
 
-export function renderSummaryTable(snaps: SessionSnapshot[], nowMs: number): string {
+export function renderSummaryTable(
+  snaps: SessionSnapshot[],
+  nowMs: number,
+  opts: { fleetColumn?: boolean } = {}
+): string {
   if (snaps.length === 0) return NO_SESSIONS_MSG;
   const rows: string[][] = [];
-  rows.push(["SESSION_ID", "STATUS", "TURNS", "CONTEXT", "COST", "PENDING", "ERRORS", "LAST_ACTIVITY", "CWD"]);
+  rows.push([
+    "SESSION_ID", "STATUS", "TURNS", "CONTEXT", "COST", "PENDING", "ERRORS", "LAST_ACTIVITY", "CWD",
+    ...(opts.fleetColumn ? ["FLEET"] : []),
+  ]);
   for (const s of snaps) {
     const idShort = s.session_id.length > 20 ? s.session_id.slice(0, 19) + "…" : s.session_id;
     // CD-10: append the alias to the id cell when present; un-aliased rows are
@@ -369,6 +390,9 @@ export function renderSummaryTable(snaps: SessionSnapshot[], nowMs: number): str
       String(s.recent_errors.length),
       relativeTime(s.last_activity_at, nowMs),
       compactCwd(s.cwd),
+      // Fleets: the column exists only under --all-fleets, where widened
+      // rows need attribution; '-' marks an untagged session.
+      ...(opts.fleetColumn ? [s.fleet ?? "-"] : []),
     ]);
   }
   return rows.map((r) => r.join("\t")).join("\n");
@@ -471,9 +495,14 @@ export function renderDetailedBlock(s: SessionSnapshot): string {
   return lines.join("\n");
 }
 
-export function renderJson(snap: SessionSnapshot | SessionSnapshot[]): string {
+export function renderJson(snap: SessionSnapshot | SessionSnapshot[], hiddenInOtherFleets = 0): string {
   if (Array.isArray(snap)) {
-    return JSON.stringify({ sessions: snap });
+    // Fleets: present only when the view hid something, so a single-driver
+    // box's output is byte-identical.
+    return JSON.stringify({
+      sessions: snap,
+      ...(hiddenInOtherFleets > 0 ? { hidden_in_other_fleets: hiddenInOtherFleets } : {}),
+    });
   }
   return JSON.stringify(snap);
 }
@@ -499,12 +528,16 @@ function printUsage(): void {
   console.log(`claw-drive status — snapshot of one or all driven sessions
 
 Usage:
-  claw-drive status                Summary table of all sessions
-  claw-drive status <session_id>   Detailed block for one session
+  claw-drive status                Summary table of the fleet view
+  claw-drive status <session_id>   Detailed block for one session (any fleet)
   claw-drive status [<id>] --json  Structured JSON output
 
 Flags:
   --json                           Emit JSON instead of human-readable output
+  --fleet TAG                      Act as this fleet (default: CLAW_DRIVE_FLEET, else the
+                                   driver's Claude Code session id); the view is that fleet
+                                   plus untagged sessions
+  --all-fleets                     Show every fleet on this machine (adds a FLEET column)
   --help, -h                       Print this help and exit
 
 Notes:
@@ -528,29 +561,17 @@ export async function cmdStatus(argv: string[]): Promise<number> {
   }
 
   const nowMs = Date.now();
-  const root = sessionsRoot();
-  let entries: string[];
-  try {
-    entries = await fs.readdir(root);
-  } catch {
-    if (parsed.sessionId) {
-      console.error("session not found");
-      return 1;
-    }
-    if (parsed.json) {
-      console.log(JSON.stringify({ sessions: [] }));
-    } else {
-      console.log(NO_SESSIONS_MSG);
-    }
-    return 0;
-  }
-
-  const ids = entries.filter(isValidSessionId);
+  // Fleets: one enumeration; rows carry inView per the acting fleet. A
+  // missing root simply yields no rows (the outputs below are the same as
+  // an empty root's, so the old readdir special-case is gone).
+  const rows = await listSessions(parsed.view);
+  const ids = rows.map((r) => r.id);
 
   if (parsed.sessionId) {
     // CD-10: resolve an alias to its canonical id (a canonical id passes
     // through). resolveSessionRef only resolves LIVE alias holders, so fall
     // back to the raw arg for canonical ids of stopped sessions still on disk.
+    // An explicit id is explicit intent: it resolves whatever fleet it is in.
     const targetId = (await resolveSessionRef(parsed.sessionId)) ?? parsed.sessionId;
     if (!ids.includes(targetId)) {
       console.error("session not found");
@@ -570,15 +591,21 @@ export async function cmdStatus(argv: string[]): Promise<number> {
   }
 
   const snaps: SessionSnapshot[] = [];
-  for (const id of ids) {
-    const snap = await buildSnapshotForId(id, nowMs);
+  let hidden = 0;
+  for (const row of rows) {
+    if (!row.inView) {
+      hidden++;
+      continue;
+    }
+    const snap = await buildSnapshotForId(row.id, nowMs);
     if (snap !== null) snaps.push(snap);
   }
 
   if (parsed.json) {
-    console.log(renderJson(snaps));
+    console.log(renderJson(snaps, hidden));
   } else {
-    console.log(renderSummaryTable(snaps, nowMs));
+    console.log(renderSummaryTable(snaps, nowMs, { fleetColumn: parsed.view.allFleets }));
+    if (hidden > 0) console.error(hiddenFleetsHint(hidden));
   }
   return 0;
 }
