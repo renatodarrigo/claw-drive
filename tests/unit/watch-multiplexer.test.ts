@@ -109,3 +109,19 @@ describe("startWatchMultiplexer — fleet view membership", () => {
     await mux.done;
   });
 });
+
+describe("startWatchMultiplexer — fleet tag on lines", () => {
+  it("lines from a tagged member carry fleet; an untagged member's lines do not", async () => {
+    await makeSession("sess_own", { fleet: "A", alias: "reviewer" });
+    await makeSession("sess_free");
+    const { lines, mux } = collect({ acting: "A", allFleets: false });
+    await waitUntil(() => seen(lines).has("sess_own") && seen(lines).has("sess_free"));
+    const own = lines.map((l) => JSON.parse(l)).find((p) => p.session_id === "sess_own");
+    const free = lines.map((l) => JSON.parse(l)).find((p) => p.session_id === "sess_free");
+    expect(own.alias).toBe("reviewer");
+    expect(own.fleet).toBe("A");
+    expect(free).not.toHaveProperty("fleet");
+    mux.close();
+    await mux.done;
+  });
+});

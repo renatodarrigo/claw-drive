@@ -365,3 +365,17 @@ describe("startLineageTailer — recover hops (state poll)", () => {
     }
   });
 });
+
+describe("lineage tailer — fleet tag", () => {
+  it("every member line carries fleet when the member's state is tagged", async () => {
+    await makeSession(A, { status: "stopped", runner_pid: null, fleet: "team-a", alias: "reviewer" }, stoppedEvents());
+    const { lines, handle } = collectLineage(A);
+    await handle.done;
+    expect(lines.length).toBeGreaterThan(0);
+    for (const l of lines) {
+      expect(l.session_id).toBe(A);
+      expect(l.alias).toBe("reviewer");
+      expect(l.fleet).toBe("team-a");
+    }
+  });
+});

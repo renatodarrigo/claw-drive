@@ -125,4 +125,19 @@ describe("startSessionTailer — additive session_id tag", () => {
       expect(p.generation).toBe(5);
     }
   });
+
+  it("fleetTag is additive after generation, and absent lines are byte-identical", async () => {
+    await writeEvents(EVENTS);
+    const tagged = collect({ tag: SID, aliasTag: "reviewer", generationTag: 2, fleetTag: "team-a" });
+    await tagged.handle.done;
+    for (const l of tagged.lines) {
+      const keys = Object.keys(JSON.parse(l));
+      expect(keys.slice(0, 4)).toEqual(["session_id", "alias", "generation", "fleet"]);
+      expect(JSON.parse(l).fleet).toBe("team-a");
+    }
+    await writeEvents(EVENTS);
+    const plain = collect({ tag: SID });
+    await plain.handle.done;
+    for (const l of plain.lines) expect(l).not.toContain("fleet");
+  });
 });

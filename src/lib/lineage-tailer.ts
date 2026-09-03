@@ -36,7 +36,7 @@ export interface LineageTailerHandle {
  * continue — until a member stops without one. Members are strictly
  * sequential: a successor's tailer starts only after the predecessor's is
  * closed, so the merged output never interleaves. Every line carries the
- * additive session_id/alias/generation tags (the `watch --all` trio).
+ * additive session_id/alias/generation/fleet tags (the `watch --all` quartet).
  *
  * Two hop triggers per member:
  *  - natural tailer end (session_stopped observed) → re-read state; a set
@@ -126,13 +126,16 @@ export function startLineageTailer(opts: LineageTailerOptions): LineageTailerHan
     // Best-effort tag read (multiplexer addSession precedent).
     let aliasTag: string | undefined;
     let generationTag: number | undefined;
+    let fleetTag: string | undefined;
     try {
       const st = await readState(statePath(id));
       aliasTag = st?.alias;
       generationTag = st?.generation;
+      fleetTag = st?.fleet;
     } catch {
       aliasTag = undefined;
       generationTag = undefined;
+      fleetTag = undefined;
     }
 
     let memberWatchError: string | null = null;
@@ -147,6 +150,7 @@ export function startLineageTailer(opts: LineageTailerOptions): LineageTailerHan
       tag: id,
       aliasTag,
       generationTag,
+      fleetTag,
       onWatchError: (m) => {
         memberWatchError = m;
       },
