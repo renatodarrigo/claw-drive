@@ -525,7 +525,7 @@ async function buildSnapshotForId(id: string, nowMs: number): Promise<SessionSna
 }
 
 function printUsage(): void {
-  console.log(`claw-drive status — snapshot of one or all driven sessions
+  console.log(`claw-drive status — snapshot of one driven session or the fleet view
 
 Usage:
   claw-drive status                Summary table of the fleet view

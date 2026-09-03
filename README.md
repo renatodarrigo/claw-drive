@@ -196,9 +196,9 @@ Several drivers can use claw-drive on one machine at once — two Claude Code se
 
 - **Tagging:** `start --fleet <tag>` / `start_session({ fleet })` sets it explicitly. Otherwise the tag defaults to `CLAW_DRIVE_FLEET`, else to the driver's Claude Code session id (`CLAUDE_CODE_SESSION_ID`, which Claude Code exports to its Bash subprocesses and MCP servers — observed on claude 2.1.258, not a documented guarantee). With none of those the session is untagged. Rotation and recovery successors inherit the tag.
 - **The view:** `status`, `sessions`, `pending`, `watch --all`, `prune`, `send --all`, the approve/reject/defer and provide-output scans, and the MCP `list_sessions` / `resolve_tool_call` scans show the acting fleet's sessions **plus untagged ones**. Other drivers' sessions are hidden; the human tables say how many on stderr, and `status --json` / `list_sessions` report `hidden_in_other_fleets`.
-- **Widening:** `--all-fleets` (CLI) / `all_fleets: true` (MCP) shows every fleet on the machine; the tables gain a FLEET column and machine outputs carry `fleet` on tagged rows. `--fleet <tag>` acts as another fleet — how a fresh driver session picks up a fleet an earlier one started.
+- **Widening:** `--all-fleets` (CLI) / `all_fleets: true` (MCP) shows every fleet on the machine, and the `status` / `sessions` tables gain a FLEET column. `--fleet <tag>` acts as another fleet — how a fresh driver session picks up a fleet an earlier one started. (Machine outputs — `pending` and `watch --all` lines, `status --json`, `list_sessions` rows — carry `fleet` on any tagged session, widened or not.)
 - **Not scoped:** an explicit `sess_…` id or an alias always resolves, whatever fleet holds it. Aliases stay unique across the whole machine.
-- **Broadcast:** `claw-drive send --all "<message>"` sends one user turn to every live session in the view and prints one JSONL line per session (`session_id`, `alias`/`fleet` when set, then `turn_id` or the refusal). Exit 0 when every send succeeded, 1 when any failed, 2 when the view holds no live session.
+- **Broadcast:** `claw-drive send --all "<message>"` sends one user turn to every live session in the view and prints one JSONL line per session (`session_id`, `alias`/`fleet` when set, `ok`, then `turn_id` or the refusal). Exit 0 when every send succeeded, 1 when any failed, 2 when the view holds no live session.
 
 ```bash
 export CLAW_DRIVE_FLEET=review-crew     # every command below acts as this fleet
@@ -223,7 +223,7 @@ Over MCP, pass `name` to `start_session({ cwd, policy, name: "reviewer" })`.
 - **Constraints:** 1–32 chars, starts with a letter, then letters/digits/`_`/`-`; it must not begin with `sess_` (that's the canonical-id shape).
 - **Uniqueness:** an alias is unique among **live** sessions. Starting with an alias another live session already holds fails with an error naming the conflicting `session_id`. Once a holder stops (or is pruned), the alias is free to reuse.
 - **Resolution:** every session argument — `send`, `stop`, `interrupt`, `policy`, `tail`, `show`, `report`, single-session `watch`, single-id `status`, single-target `pending`, and the MCP session tools — accepts either an alias or a canonical id.
-- **Display:** `status`, `sessions`, `pending`, and `watch --all` show the alias alongside the `session_id` when present, and the `fleet` tag when the session has one.
+- **Display:** `status`, `sessions`, `pending`, and `watch --all` show the alias alongside the `session_id` when present; `pending`, `watch --all` and `status --json` also carry the `fleet` tag when the session has one, and the `status` / `sessions` tables gain a FLEET column under `--all-fleets`.
 
 `start` still prints the canonical `session_id`, so scripts that capture it are unaffected. (No post-start rename, no cross-restart registry, no namespacing — an alias lives with its session.)
 

@@ -490,7 +490,7 @@ export function parseWatchArgs(
     return {
       ok: false,
       error:
-        "--all and --follow-lineage are mutually exclusive — --all already tails every live session, successors included",
+        "--all and --follow-lineage are mutually exclusive — --all already tails every live session in the fleet view, successors included",
     };
   }
   if (!all && sessionId === null) {
