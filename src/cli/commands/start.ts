@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { isInsideHome } from "../../lib/paths.js";
 import { validatePolicy, type Policy } from "../../lib/policy.js";
 import { isValidAlias, findLiveAliasHolder } from "../../lib/alias.js";
+import { parseFleetFlags } from "../../lib/fleet.js";
 import {
   newSessionId,
   scaffoldSessionDir,
@@ -11,17 +12,30 @@ import {
 } from "../../lib/spawn-session.js";
 
 export async function cmdStart(argv: string[]): Promise<number> {
+  // Fleets: --fleet TAG stamps the acting fleet (else CLAW_DRIVE_FLEET, else
+  // the driver's Claude Code session id). --all-fleets has no meaning on
+  // start and is refused rather than silently accepted.
+  const fleet = parseFleetFlags(argv);
+  if (!fleet.ok) {
+    console.error(fleet.error);
+    return 2;
+  }
+  if (fleet.view.allFleets) {
+    console.error("--all-fleets is not a start flag");
+    return 2;
+  }
+  const args = fleet.rest;
   let cwd: string | undefined;
   let policyFile: string | undefined;
   let briefFile: string | undefined;
   let wrapper: boolean | undefined;
   let alias: string | undefined;
-  for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === "--cwd") cwd = argv[++i];
-    else if (argv[i] === "--policy") policyFile = argv[++i];
-    else if (argv[i] === "--brief") briefFile = argv[++i];
-    else if (argv[i] === "--no-wrapper") wrapper = false;
-    else if (argv[i] === "--name") alias = argv[++i];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--cwd") cwd = args[++i];
+    else if (args[i] === "--policy") policyFile = args[++i];
+    else if (args[i] === "--brief") briefFile = args[++i];
+    else if (args[i] === "--no-wrapper") wrapper = false;
+    else if (args[i] === "--name") alias = args[++i];
   }
   if (!cwd) {
     console.error("--cwd required");
@@ -86,6 +100,7 @@ export async function cmdStart(argv: string[]): Promise<number> {
     scenarioBrief: brief,
     wrapper,
     alias,
+    fleet: fleet.view.acting,
   });
   spawnRunnerDetached(sessionId);
   if (await waitForReady(sessionId)) {

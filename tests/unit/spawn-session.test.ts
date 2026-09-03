@@ -203,3 +203,14 @@ describe("respawn_streak lineage stamp (crash auto-respawn)", () => {
     expect((await readState(statePath(without)))?.respawn_streak).toBeUndefined();
   });
 });
+
+describe("fleet stamp (fleets)", () => {
+  it("stamps fleet when given and omits the key otherwise", async () => {
+    const a = "sess_20260902T000000_fleet1";
+    await scaffoldSessionDir({ ...baseInput(a), fleet: "team-a" });
+    expect((await readState(statePath(a)))!.fleet).toBe("team-a");
+    const b = "sess_20260902T000000_fleet2";
+    await scaffoldSessionDir(baseInput(b));
+    expect(await readState(statePath(b))).not.toHaveProperty("fleet");
+  });
+});

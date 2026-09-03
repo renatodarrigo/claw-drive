@@ -14,7 +14,10 @@ export const MCP_TOOL_DEFS: McpToolDef[] = [
       "+ notification_contract (describes the session's vocabulary, surface modes, watch flags, and idle default — " +
       "drivers can read it instead of hardcoding to a specific claw-drive version). " +
       "Optional `wrapper: false` opts out of the sentinel-token wrapper (B doesn't receive the system-prompt " +
-      "injection); when set, `notification_contract.wrapper_enabled` is `false`.",
+      "injection); when set, `notification_contract.wrapper_enabled` is `false`." +
+      " Optional `fleet` tags the session for driver scoping (default: this server's CLAW_DRIVE_FLEET, else its " +
+      "CLAUDE_CODE_SESSION_ID; absent both, the session is untagged and visible to every driver); the response " +
+      "carries `fleet` when one was stamped.",
     inputSchema: {
       type: "object",
       properties: {
@@ -33,6 +36,11 @@ export const MCP_TOOL_DEFS: McpToolDef[] = [
           type: "boolean",
           description:
             "Whether to inject the v0.5.6 sentinel-token contract wrapper into B's system prompt via --append-system-prompt. Default true. Pass false to opt out (raw v0.5.5-style behavior; watch's token filter then has nothing to anchor on, so combine with --no-token-filter).",
+        },
+        fleet: {
+          type: "string",
+          description:
+            "Optional fleet tag scoping this session to a driver: 1-64 chars of letters, digits, '_', '.', '-', starting with a letter or digit. Defaults to the server's CLAW_DRIVE_FLEET, else its CLAUDE_CODE_SESSION_ID; absent both, the session is untagged.",
         },
       },
       required: ["cwd"],

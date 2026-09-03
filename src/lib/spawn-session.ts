@@ -52,6 +52,8 @@ export interface ScaffoldInput {
   originalBrief?: string;
   wrapper?: boolean;
   alias?: string;
+  /** Fleets: the acting fleet to stamp; absent → unowned. Successors pass the predecessor's. */
+  fleet?: string;
   mcpServers?: Record<string, unknown>;
   /** Context rotation: lineage stamp for rotation/recover successors. Absent on
    * fresh starts. cost_usd_base: the predecessor's lineage-cumulative spend at
@@ -122,6 +124,7 @@ export async function scaffoldSessionDir(input: ScaffoldInput): Promise<void> {
   }
   if (input.wrapper !== undefined) state.wrapper = input.wrapper;
   if (input.alias !== undefined) state.alias = input.alias;
+  if (input.fleet !== undefined) state.fleet = input.fleet;
   if (input.lineage) {
     state.generation = input.lineage.generation;
     state.root_session_id = input.lineage.root_session_id;

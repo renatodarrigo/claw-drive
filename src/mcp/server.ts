@@ -21,6 +21,12 @@ import { validatePolicy, coercePolicy, type Policy } from "../lib/policy.js";
 import { sendRequest } from "../runner/socket-server.js";
 import { buildNotificationContract } from "../lib/tokens.js";
 import { isValidAlias, findLiveAliasHolder, resolveSessionRef } from "../lib/alias.js";
+import {
+  FLEET_TAG_MCP_MESSAGE,
+  FleetTagError,
+  isValidFleetTag,
+  resolveActingFleet,
+} from "../lib/fleet.js";
 import { MCP_TOOL_DEFS } from "./tool-defs.js";
 import {
   newSessionId,
@@ -52,7 +58,7 @@ async function resolveArgSession(sessionId: unknown): Promise<string | null> {
   return resolveSessionRef(sessionId);
 }
 
-async function handleStartSession(args: Record<string, unknown>) {
+export async function handleStartSession(args: Record<string, unknown>) {
   const cwd = args.cwd;
   if (typeof cwd !== "string") return err("INVALID_CWD", "cwd must be a string");
   try {
@@ -84,6 +90,21 @@ async function handleStartSession(args: Record<string, unknown>) {
     alias = args.name;
   }
 
+  // Fleets: an explicit `fleet` input must be a valid tag; otherwise the
+  // acting fleet resolves from this server process's env (CLAW_DRIVE_FLEET,
+  // else the CLAUDE_CODE_SESSION_ID Claude Code hands its MCP servers) —
+  // fail-open to unowned. Validated BEFORE any dir/state is created.
+  if (args.fleet !== undefined && !isValidFleetTag(args.fleet)) {
+    return err("BAD_REQUEST", FLEET_TAG_MCP_MESSAGE);
+  }
+  let fleet: string | undefined;
+  try {
+    fleet = resolveActingFleet({ flag: args.fleet as string | undefined });
+  } catch (e) {
+    if (e instanceof FleetTagError) return err("BAD_REQUEST", e.message);
+    throw e;
+  }
+
   const sessionId = newSessionId();
   if (!isValidSessionId(sessionId)) {
     return err("SESSION_NOT_FOUND", "generated session_id failed validation");
@@ -98,6 +119,7 @@ async function handleStartSession(args: Record<string, unknown>) {
     scenarioBrief: typeof args.scenario_brief === "string" ? args.scenario_brief : undefined,
     wrapper: typeof args.wrapper === "boolean" ? args.wrapper : undefined,
     alias,
+    fleet,
     mcpServers: (extra.mcpServers as Record<string, unknown>) ?? {},
   });
   spawnRunnerDetached(sessionId);
@@ -122,7 +144,12 @@ async function handleStartSession(args: Record<string, unknown>) {
           }
         : {}),
     });
-    return ok({ session_id: sessionId, watch_command, notification_contract });
+    return ok({
+      session_id: sessionId,
+      watch_command,
+      notification_contract,
+      ...(fleet !== undefined ? { fleet } : {}),
+    });
   }
   await fs.rm(sessionDir(sessionId), { recursive: true, force: true });
   return err("START_FAILED", "runner did not become ready within 5s");

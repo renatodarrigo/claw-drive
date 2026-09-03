@@ -1020,6 +1020,7 @@ export async function performRotation(ctx: RunnerContext, initiatedBy: "manual" 
         originalBrief,
         wrapper: ctx.state.wrapper,
         alias,
+        fleet: ctx.state.fleet,
         mcpServers: await readSessionMcpServers(ctx.sessionId),
         lineage: {
           generation: generation + 1,

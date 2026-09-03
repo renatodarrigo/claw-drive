@@ -176,6 +176,28 @@ async function makeCtx(fake: FakeB, statePatch?: Partial<SessionState>): Promise
   } satisfies RunnerContext;
 }
 
+/** Rotate a predecessor whose state carries `fleet` (or none) and return the successor's state. */
+async function rotateWithFleet(fleet: string | undefined): Promise<SessionState | null> {
+  vi.useRealTimers();
+  const stubRunner = path.join(stubDir, "fake-runner");
+  await fs.writeFile(stubRunner, '#!/bin/sh\ntouch "$CLAW_DRIVE_HOME/sessions/$2/ready"\n', { mode: 0o755 });
+  await fs.chmod(stubRunner, 0o755);
+  process.env.CLAW_DRIVE_BIN = stubRunner;
+  const fake = makeFakeB();
+  const ctx = await makeCtx(fake, {
+    policy: { rotation: { threshold_tokens: 1000, mode: "manual" } },
+    ...(fleet !== undefined ? { fleet } : {}),
+  });
+  const rotP = handleRequest(ctx, { id: "r1", op: "rotate" });
+  await completeHandoverTurn(ctx, "turn_1", true);
+  expect(await rotP).toMatchObject({ ok: true });
+  const successorId = (await readState(statePath(SID)))?.rotated_to as string;
+  const successor = await readState(statePath(successorId));
+  fake.emitter.emit("exit", 0, null);
+  await settleUntil(() => exitCalls.length > 0);
+  return successor;
+}
+
 async function events(): Promise<Event[]> {
   return (await readEventsSince(eventsPath(SID), 0)).events;
 }
@@ -287,6 +309,14 @@ describe("rotation outcomes carry their initiator", () => {
     expect(ctx.deferredCalls.has("toolu_d1")).toBe(true);
     fake.emitter.emit("exit", 0, null);
     await settleUntil(() => exitCalls.length > 0);
+  });
+
+  it("a rotation successor inherits the predecessor's fleet verbatim", async () => {
+    expect((await rotateWithFleet("team-a"))?.fleet).toBe("team-a");
+  });
+
+  it("an untagged predecessor's successor stays untagged", async () => {
+    expect(await rotateWithFleet(undefined)).not.toHaveProperty("fleet");
   });
 });
 
