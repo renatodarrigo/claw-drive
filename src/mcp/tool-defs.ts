@@ -105,16 +105,30 @@ export const MCP_TOOL_DEFS: McpToolDef[] = [
   {
     name: "list_sessions",
     description:
-      "List sessions on disk (live + orphaned). Orphaned = state.json status is running/ready/starting but runner_pid is dead.",
+      "List sessions on disk (live + orphaned) in the caller's fleet view — the acting fleet's sessions plus untagged ones; " +
+      "other drivers' sessions are hidden and counted in `hidden_in_other_fleets` (present only when above zero). " +
+      "Rows carry `fleet` when the session is tagged. Orphaned = state.json status is running/ready/starting but runner_pid is dead.",
     inputSchema: {
       type: "object",
-      properties: { include_orphaned: { type: "boolean" } },
+      properties: {
+        include_orphaned: { type: "boolean" },
+        fleet: {
+          type: "string",
+          description:
+            "Act as this fleet (default: this server's CLAW_DRIVE_FLEET, else its CLAUDE_CODE_SESSION_ID). Mutually exclusive with all_fleets.",
+        },
+        all_fleets: {
+          type: "boolean",
+          description: "Widen the view to every fleet on this machine. Mutually exclusive with fleet.",
+        },
+      },
     },
   },
   {
     name: "resolve_tool_call",
     description:
-      "Approve or reject a paused tool call by call_id. Scans live sessions; first session holding the call_id wins. Set remember_as_policy to append the resolved decision as a new Rule. Set preview_only to return the rule that would be remembered without resolving or mutating. Set remembered_rule to append an explicit (edited) rule instead of the derived one.",
+      "Approve or reject a paused tool call by call_id. Scans live sessions; first session holding the call_id wins. Set remember_as_policy to append the resolved decision as a new Rule. Set preview_only to return the rule that would be remembered without resolving or mutating. Set remembered_rule to append an explicit (edited) rule instead of the derived one." +
+      " Scans the live sessions in the caller's fleet view; pass all_fleets: true (or fleet) to reach a call paused in another driver's session.",
     inputSchema: {
       type: "object",
       properties: {
@@ -124,6 +138,11 @@ export const MCP_TOOL_DEFS: McpToolDef[] = [
         remember_as_policy: { type: "boolean" },
         preview_only: { type: "boolean" },
         remembered_rule: { type: "object" },
+        fleet: {
+          type: "string",
+          description: "Act as this fleet for the scan (default: the server's CLAW_DRIVE_FLEET, else its CLAUDE_CODE_SESSION_ID).",
+        },
+        all_fleets: { type: "boolean", description: "Scan every fleet on this machine. Mutually exclusive with fleet." },
       },
       required: ["call_id", "action", "reason"],
     },

@@ -11,7 +11,6 @@ import {
   isInsideHome,
   isValidSessionId,
   sessionDir,
-  sessionsRoot,
   socketPath,
   statePath,
 } from "../lib/paths.js";
@@ -26,7 +25,9 @@ import {
   FleetTagError,
   isValidFleetTag,
   resolveActingFleet,
+  type FleetView,
 } from "../lib/fleet.js";
+import { listSessions, sessionsRootExists } from "../lib/live-sessions.js";
 import { MCP_TOOL_DEFS } from "./tool-defs.js";
 import {
   newSessionId,
@@ -56,6 +57,37 @@ function ok(result: unknown) {
 async function resolveArgSession(sessionId: unknown): Promise<string | null> {
   if (typeof sessionId !== "string") return null;
   return resolveSessionRef(sessionId);
+}
+
+/**
+ * Fleets: resolve the view an enumeration tool acts under from its optional
+ * `fleet` / `all_fleets` inputs (else this server process's env). Validation
+ * mirrors the CLI pre-parser; errors are BAD_REQUEST.
+ */
+function resolveMcpView(
+  args: Record<string, unknown>
+): { ok: true; view: FleetView } | { ok: false; error: ReturnType<typeof err> } {
+  if (args.fleet !== undefined && !isValidFleetTag(args.fleet)) {
+    return { ok: false, error: err("BAD_REQUEST", FLEET_TAG_MCP_MESSAGE) };
+  }
+  if (args.all_fleets !== undefined && typeof args.all_fleets !== "boolean") {
+    return { ok: false, error: err("BAD_REQUEST", "all_fleets must be a boolean") };
+  }
+  if (args.fleet !== undefined && args.all_fleets === true) {
+    return { ok: false, error: err("BAD_REQUEST", "fleet and all_fleets are mutually exclusive") };
+  }
+  try {
+    return {
+      ok: true,
+      view: {
+        acting: resolveActingFleet({ flag: args.fleet as string | undefined }),
+        allFleets: args.all_fleets === true,
+      },
+    };
+  } catch (e) {
+    if (e instanceof FleetTagError) return { ok: false, error: err("BAD_REQUEST", e.message) };
+    throw e;
+  }
 }
 
 export async function handleStartSession(args: Record<string, unknown>) {
@@ -280,25 +312,26 @@ async function handlePollSession(args: Record<string, any>) {
   return ok({ events, session_status, next_since: nextSince });
 }
 
-async function handleListSessions(args: Record<string, any>) {
+export async function handleListSessions(args: Record<string, any>) {
   const includeOrphaned = args.include_orphaned ?? true;
-  let entries: string[];
-  try {
-    entries = await fs.readdir(sessionsRoot());
-  } catch {
-    return ok({ sessions: [] });
-  }
+  const v = resolveMcpView(args);
+  if (!v.ok) return v.error;
+  if (!(await sessionsRootExists())) return ok({ sessions: [] });
+  const rows = await listSessions(v.view);
   const out: any[] = [];
-  for (const id of entries) {
-    if (!isValidSessionId(id)) continue;
-    const s = await readState(statePath(id));
-    if (!s) continue;
+  let hidden = 0;
+  for (const { id, state: s, inView } of rows) {
     const alive = s.runner_pid ? isPidAlive(s.runner_pid) : false;
     let effectiveStatus = s.status;
     if (!alive && (s.status === "ready" || s.status === "running" || s.status === "starting")) {
       effectiveStatus = "orphaned";
     }
     if (!includeOrphaned && effectiveStatus === "orphaned") continue;
+    // Fleets: count what this tool's own rule would have shown but the view hid.
+    if (!inView) {
+      hidden++;
+      continue;
+    }
     const events = (await readEventsSince(eventsPath(id), 0)).events;
     const requiredCalls = new Set(
       events
@@ -320,31 +353,32 @@ async function handleListSessions(args: Record<string, any>) {
       last_event_at: s.last_event_at,
       turns: s.turns,
       pending_approvals: pendingCount,
+      ...(s.fleet ? { fleet: s.fleet } : {}),
     });
   }
-  return ok({ sessions: out });
+  return ok({ sessions: out, ...(hidden > 0 ? { hidden_in_other_fleets: hidden } : {}) });
 }
 
-async function handleResolveToolCall(args: Record<string, any>) {
+export async function handleResolveToolCall(args: Record<string, any>) {
   if (typeof args.call_id !== "string") return err("BAD_REQUEST", "call_id required");
   if (args.action !== "approve" && args.action !== "reject") {
     return err("BAD_REQUEST", "action must be 'approve' or 'reject'");
   }
   if (typeof args.reason !== "string") return err("BAD_REQUEST", "reason required");
 
-  // Scan live sessions for the pending call_id. The approve_tool request flow
-  // registers each pending entry keyed by call_id in the runner's in-memory
-  // Map. Only one session at a time can hold a given call_id, so first hit wins.
-  let entries: string[];
-  try {
-    entries = await fs.readdir(sessionsRoot());
-  } catch {
+  // Scan the fleet view's live sessions for the pending call_id. The approve_tool
+  // request flow registers each pending entry keyed by call_id in the runner's
+  // in-memory Map. Only one session at a time can hold a given call_id, so first
+  // hit wins.
+  const v = resolveMcpView(args);
+  if (!v.ok) return v.error;
+  if (!(await sessionsRootExists())) {
     return err("SESSION_NOT_FOUND", "no sessions directory");
   }
-  for (const id of entries) {
-    if (!isValidSessionId(id)) continue;
-    const s = await readState(statePath(id));
-    if (!s || !s.runner_pid || !isPidAlive(s.runner_pid)) continue;
+  const rows = await listSessions(v.view);
+  for (const { id, state: s, inView } of rows) {
+    if (!inView) continue;
+    if (!s.runner_pid || !isPidAlive(s.runner_pid)) continue;
     try {
       const resp = await sendRequest(socketPath(id), {
         id: "rtc_" + Date.now(),
