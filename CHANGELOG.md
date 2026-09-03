@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **Fleets: sessions are scoped to the driver that started them.** Every session now carries an optional `fleet` tag, set with `start --fleet <tag>` / `start_session({ fleet })` and otherwise defaulting to the driver's Claude Code session id (`CLAUDE_CODE_SESSION_ID`, an observed export that Claude Code does not document; `CLAW_DRIVE_FLEET` picks the tag explicitly). `status`, `sessions`, `pending`, `watch --all`, `prune`, the approve/reject/defer and provide-output scans, and `list_sessions` / `resolve_tool_call` show the caller's fleet plus untagged sessions; other drivers' sessions are hidden by default, and `--all-fleets` / `all_fleets: true` widens the view. Lineage successors inherit the tag. Explicit session ids and aliases resolve across fleets exactly as before, and a box with a single driver sees no difference.
+- **`send --all` broadcasts a user turn to every live session in the fleet view.** One JSONL line per session reports its `turn_id` or the refusal; exit 0 when every send succeeded, 1 when any failed, 2 when the view holds no live session. `--all-fleets` broadcasts box-wide.
+
+### Fixed
+
+- **A corrupt `state.json` no longer crashes the fleet listings.** `sessions`, `pending`, `prune`, the approve/reject/defer and provide-output scans, and the MCP `list_sessions` and `resolve_tool_call` scans used to abort on the first unparseable state file; the shared enumerator now skips that session, as `watch --all`, `status`, and alias resolution already did. Listings are ordered by session id.
+
 ## [1.9.1] — 2026-09-02
 
 ### Fixed

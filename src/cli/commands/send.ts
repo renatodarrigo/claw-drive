@@ -21,7 +21,7 @@ export type ParsedSendArgs =
 /**
  * Pure argv parser for `claw-drive send`. Only --all, --fleet, --all-fleets
  * and a bare `--` are reserved; any other token is a positional, so a
- * message such as "--verbose please" still passes as it always did.
+ * message such as "--verbose please" is sent verbatim.
  */
 export function parseSendArgs(argv: string[], env: NodeJS.ProcessEnv = process.env): ParsedSendArgs {
   const fleet = parseFleetFlags(argv, env);

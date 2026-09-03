@@ -127,8 +127,7 @@ export const MCP_TOOL_DEFS: McpToolDef[] = [
   {
     name: "resolve_tool_call",
     description:
-      "Approve or reject a paused tool call by call_id. Scans live sessions; first session holding the call_id wins. Set remember_as_policy to append the resolved decision as a new Rule. Set preview_only to return the rule that would be remembered without resolving or mutating. Set remembered_rule to append an explicit (edited) rule instead of the derived one." +
-      " Scans the live sessions in the caller's fleet view; pass all_fleets: true (or fleet) to reach a call paused in another driver's session.",
+      "Approve or reject a paused tool call by call_id. Scans the live sessions in the caller's fleet view; first session holding the call_id wins — pass all_fleets: true (or fleet) to reach a call paused in another driver's session. Set remember_as_policy to append the resolved decision as a new Rule. Set preview_only to return the rule that would be remembered without resolving or mutating. Set remembered_rule to append an explicit (edited) rule instead of the derived one.",
     inputSchema: {
       type: "object",
       properties: {

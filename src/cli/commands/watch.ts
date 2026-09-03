@@ -506,10 +506,11 @@ export function parseWatchArgs(
 }
 
 /**
- * `watch --all` fleet multiplexer: tail every live session into one merged,
- * session_id-tagged stream with dynamic membership, running until SIGINT. The
- * mux owns enumeration + rescan (src/lib/watch-multiplexer.ts) and reuses the
- * per-session tailer; this just wires it to stdout + SIGINT.
+ * `watch --all` fleet multiplexer: tail every live session in the fleet view
+ * into one merged, session_id-tagged stream with dynamic membership, running
+ * until SIGINT. The mux owns enumeration + rescan
+ * (src/lib/watch-multiplexer.ts) and reuses the per-session tailer; this just
+ * wires it to stdout + SIGINT.
  */
 async function cmdWatchAll(
   parsed: Extract<ParsedWatchArgs, { ok: true; all: true }>
@@ -547,7 +548,7 @@ export async function cmdWatch(argv: string[]): Promise<number> {
         "  --decision-only: shorthand for --only on the human-attention kinds\n" +
         "  --no-token-filter: surface every event regardless of trailing token\n" +
         "  --idle-after SECONDS: emit synthetic 'idle' event after N seconds of silence (default 600; 0 disables)\n" +
-        "  --follow-lineage: follow the session's rotation lineage — hop to each successor (rotation or recover) and keep streaming; lines carry session_id/alias/generation tags; exits when a member stops without a successor\n" +
+        "  --follow-lineage: follow the session's rotation lineage — hop to each successor (rotation or recover) and keep streaming; lines carry session_id/alias/generation tags, plus fleet when the session has one; exits when a member stops without a successor\n" +
         "  --no-suspected-needs-input: disable the silent-miss backstop (no-token '?' turns drop as before; on by default)\n" +
         "  --fleet TAG: act as this fleet (default: CLAW_DRIVE_FLEET, else the driver's Claude Code session id); the view is that fleet plus untagged sessions\n" +
         "  --all-fleets: widen --all to every fleet on this machine\n" +
@@ -566,8 +567,8 @@ export async function cmdWatch(argv: string[]): Promise<number> {
     return 2;
   }
   if (parsed.followLineage) {
-    // Lineage walk: sequential per-member tailers with the --all tag trio on
-    // every line; hops on rotation and recover successors; exits when a
+    // Lineage walk: sequential per-member tailers with the --all tag quartet
+    // on every line; hops on rotation and recover successors; exits when a
     // member stops without one. Wiring mirrors cmdWatchAll.
     let watchError: string | null = null;
     const lineage = startLineageTailer({

@@ -32,7 +32,7 @@ export async function sessionsRootExists(): Promise<boolean> {
  * The one sessions-root enumerator every fleet surface uses. Returns every
  * valid-id session dir whose state.json exists AND parses, sorted by id, each
  * row carrying `inView` per the fleet predicate. A corrupt state.json is
- * skipped (the posture alias resolution and `status` already take) rather
+ * skipped — the posture alias resolution and `status` already take — rather
  * than aborting the listing. Rows are NOT pre-filtered so each surface can
  * apply its own liveness rule and then count what the view hid. A missing
  * root yields `[]`.

@@ -29,12 +29,11 @@ export interface WatchMultiplexerHandle {
  * `watch --all`: tail every live session **in the fleet view** into one merged,
  * `session_id`-tagged JSONL stream with dynamic membership. Sessions present
  * at start are tailed immediately; a periodic rescan of the live set picks up
- * sessions spawned
- * later. A session's tailer self-closes when it stops (its `session_stopped`
- * surfaces first); the merged stream runs until `close()` (SIGINT), not when
- * any single session stops. Every per-session filter (`shouldEmit`, `--only` /
- * `--decision-only`, the sentinel tokenFilter + CD-6 backstop, `--idle-after`)
- * applies independently inside each tailer.
+ * sessions spawned later. A session's tailer self-closes when it stops (its
+ * `session_stopped` surfaces first); the merged stream runs until `close()`
+ * (SIGINT), not when any single session stops. Every per-session filter
+ * (`shouldEmit`, `--only` / `--decision-only`, the sentinel tokenFilter + CD-6
+ * backstop, `--idle-after`) applies independently inside each tailer.
  */
 export function startWatchMultiplexer(opts: WatchMultiplexerOptions): WatchMultiplexerHandle {
   const tailers = new Map<string, SessionTailerHandle>();
