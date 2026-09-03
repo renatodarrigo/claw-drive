@@ -1,6 +1,8 @@
 import * as fs from "node:fs/promises";
-import { sessionsRoot, sessionDir, statePath, crashHandoverPath, isValidSessionId } from "../../lib/paths.js";
-import { readState, isPidAlive } from "../../lib/state.js";
+import { sessionDir, crashHandoverPath } from "../../lib/paths.js";
+import { isPidAlive } from "../../lib/state.js";
+import { parseFleetFlags } from "../../lib/fleet.js";
+import { listSessions, sessionsRootExists } from "../../lib/live-sessions.js";
 
 function parseDuration(s: string): number {
   const m = /^(\d+)([smhd])$/.exec(s);
@@ -11,25 +13,27 @@ function parseDuration(s: string): number {
 }
 
 export async function cmdPrune(argv: string[]): Promise<number> {
+  // Fleets: prune deletes only within the fleet view — another driver's dead
+  // sessions are theirs to prune; --all-fleets widens deliberately.
+  const fleet = parseFleetFlags(argv);
+  if (!fleet.ok) {
+    console.error(fleet.error);
+    return 2;
+  }
+  const args = fleet.rest;
   let olderThan = parseDuration("24h");
   let force = false;
-  for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === "--older-than") olderThan = parseDuration(argv[++i] ?? "24h");
-    else if (argv[i] === "--force") force = true;
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--older-than") olderThan = parseDuration(args[++i] ?? "24h");
+    else if (args[i] === "--force") force = true;
   }
   const cutoff = Date.now() - olderThan;
-  let entries: string[];
-  try {
-    entries = await fs.readdir(sessionsRoot());
-  } catch {
-    return 0;
-  }
+  if (!(await sessionsRootExists())) return 0;
+  const rows = await listSessions(fleet.view);
   const removed: string[] = [];
   const skipped: string[] = [];
-  for (const id of entries) {
-    if (!isValidSessionId(id)) continue;
-    const s = await readState(statePath(id));
-    if (!s) continue;
+  for (const { id, state: s, inView } of rows) {
+    if (!inView) continue;
     const alive = s.runner_pid ? isPidAlive(s.runner_pid) : false;
     if (alive) continue;
     const startedAt = Date.parse(s.started_at);

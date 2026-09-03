@@ -113,6 +113,6 @@ export const COMMANDS: readonly CommandEntry[] = [
   // Maintenance
   { name: "prune", group: "maintenance",
     summary: "Delete old stopped/orphaned session dirs.",
-    usage: "prune [--older-than 24h] [--force]",
+    usage: "prune [--older-than 24h] [--force] [--fleet TAG] [--all-fleets]",
     handler: cmdPrune },
 ];
