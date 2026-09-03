@@ -58,7 +58,7 @@ export const COMMANDS: readonly CommandEntry[] = [
   // Observe
   { name: "sessions", group: "observe",
     summary: "List all sessions, including orphaned ones.",
-    usage: "sessions",
+    usage: "sessions [--fleet TAG] [--all-fleets]",
     handler: cmdSessions },
   { name: "status", group: "observe",
     summary: "Snapshot of one or all sessions: state, turn, pending decisions, recent errors.",
@@ -82,7 +82,7 @@ export const COMMANDS: readonly CommandEntry[] = [
     handler: cmdWatch },
   { name: "pending", group: "observe",
     summary: "List tool calls awaiting a human decision.",
-    usage: "pending [<session>]",
+    usage: "pending [<session>] [--fleet TAG] [--all-fleets]",
     handler: cmdPending },
   // Resolve decisions
   { name: "approve", group: "decide",
