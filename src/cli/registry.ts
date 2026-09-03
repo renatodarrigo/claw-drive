@@ -78,7 +78,7 @@ export const COMMANDS: readonly CommandEntry[] = [
     handler: cmdTail },
   { name: "watch", group: "observe",
     summary: "Stream human-actionable events as JSONL for Monitor; --all merges every live session.",
-    usage: "watch <session|--all> [--replay|--since N]",
+    usage: "watch <session|--all> [--replay|--since N] [--fleet TAG] [--all-fleets]",
     handler: cmdWatch },
   { name: "pending", group: "observe",
     summary: "List tool calls awaiting a human decision.",

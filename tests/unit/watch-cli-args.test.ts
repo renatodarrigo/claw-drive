@@ -1,9 +1,30 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   parseWatchArgs,
   cmdWatch,
   DECISION_ONLY_KINDS,
 } from "../../src/cli/commands/watch.js";
+
+// Fleets: parseWatchArgs now reaches resolveActingFleet through process.env
+// for every call that doesn't pass an explicit env (i.e. every pre-existing
+// call in this file). Pin both inputs so ambient values — the vitest process
+// inherits CLAUDE_CODE_SESSION_ID from Claude Code — can't leak into a result.
+let prevFleet: string | undefined;
+let prevSessionId: string | undefined;
+
+beforeEach(() => {
+  prevFleet = process.env.CLAW_DRIVE_FLEET;
+  prevSessionId = process.env.CLAUDE_CODE_SESSION_ID;
+  delete process.env.CLAW_DRIVE_FLEET;
+  delete process.env.CLAUDE_CODE_SESSION_ID;
+});
+
+afterEach(() => {
+  if (prevFleet === undefined) delete process.env.CLAW_DRIVE_FLEET;
+  else process.env.CLAW_DRIVE_FLEET = prevFleet;
+  if (prevSessionId === undefined) delete process.env.CLAUDE_CODE_SESSION_ID;
+  else process.env.CLAUDE_CODE_SESSION_ID = prevSessionId;
+});
 
 describe("parseWatchArgs — session id", () => {
   it("rejects missing session id", () => {
@@ -419,5 +440,42 @@ describe("cmdWatch — usage text on a parse error", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe("parseWatchArgs — fleet flags (watch --all is a fleet surface)", () => {
+  const EMPTY: NodeJS.ProcessEnv = {};
+
+  it("--all --fleet TAG scopes the fleet view", () => {
+    const r = parseWatchArgs(["--all", "--fleet", "team-a"], EMPTY);
+    expect(r.ok).toBe(true);
+    if (r.ok && r.all) expect(r.view).toEqual({ acting: "team-a", allFleets: false });
+  });
+
+  it("--all --all-fleets widens the view", () => {
+    const r = parseWatchArgs(["--all", "--all-fleets", "--replay"], EMPTY);
+    expect(r.ok).toBe(true);
+    if (r.ok && r.all) {
+      expect(r.view).toEqual({ acting: undefined, allFleets: true });
+      expect(r.since).toBe(0);
+    }
+  });
+
+  it("--all with no fleet flags derives the acting fleet from the env", () => {
+    const r = parseWatchArgs(["--all"], { CLAUDE_CODE_SESSION_ID: "abc" });
+    expect(r.ok).toBe(true);
+    if (r.ok && r.all) expect(r.view).toEqual({ acting: "abc", allFleets: false });
+  });
+
+  it("fleet flags on the single-session form are rejected, including with --follow-lineage", () => {
+    const r1 = parseWatchArgs(["sess_abcdef0123456789", "--fleet", "x"], EMPTY);
+    expect(r1).toEqual({ ok: false, error: "--fleet/--all-fleets apply only to the fleet view" });
+    const r2 = parseWatchArgs(["sess_abcdef0123456789", "--follow-lineage", "--all-fleets"], EMPTY);
+    expect(r2).toEqual({ ok: false, error: "--fleet/--all-fleets apply only to the fleet view" });
+  });
+
+  it("--fleet and --all-fleets together are rejected before anything else", () => {
+    const r = parseWatchArgs(["--all", "--fleet", "a", "--all-fleets"], EMPTY);
+    expect(r).toEqual({ ok: false, error: "--fleet and --all-fleets are mutually exclusive" });
   });
 });

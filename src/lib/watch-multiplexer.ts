@@ -3,6 +3,7 @@ import { startSessionTailer, type SessionTailerHandle } from "./session-tailer.j
 import { readState } from "./state.js";
 import { statePath } from "./paths.js";
 import type { WatchFilterArgs } from "../cli/commands/watch.js";
+import type { FleetView } from "./fleet.js";
 
 const DEFAULT_RESCAN_INTERVAL_MS = 1000;
 
@@ -11,6 +12,8 @@ export interface WatchMultiplexerOptions {
   emit: (line: string) => void;
   /** The per-session filter/replay flags applied independently in each tailer. */
   filters: WatchFilterArgs;
+  /** Fleets: the view membership is scoped to (resolved once by the caller; rescans reuse it). */
+  view: FleetView;
   /** Live-set rescan cadence (dynamic membership). Defaults to 1000ms. */
   rescanIntervalMs?: number;
 }
@@ -23,9 +26,10 @@ export interface WatchMultiplexerHandle {
 }
 
 /**
- * `watch --all`: tail every live session into one merged, `session_id`-tagged
- * JSONL stream with dynamic membership. Sessions present at start are tailed
- * immediately; a periodic rescan of the live set picks up sessions spawned
+ * `watch --all`: tail every live session **in the fleet view** into one merged,
+ * `session_id`-tagged JSONL stream with dynamic membership. Sessions present
+ * at start are tailed immediately; a periodic rescan of the live set picks up
+ * sessions spawned
  * later. A session's tailer self-closes when it stops (its `session_stopped`
  * surfaces first); the merged stream runs until `close()` (SIGINT), not when
  * any single session stops. Every per-session filter (`shouldEmit`, `--only` /
@@ -91,7 +95,7 @@ export function startWatchMultiplexer(opts: WatchMultiplexerOptions): WatchMulti
     if (finished) return;
     let live: string[];
     try {
-      live = await listLiveSessions();
+      live = await listLiveSessions(opts.view);
     } catch {
       return;
     }

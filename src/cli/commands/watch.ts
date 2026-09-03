@@ -1,5 +1,6 @@
 import { isValidSessionId } from "../../lib/paths.js";
 import { isValidAlias, resolveSessionRef } from "../../lib/alias.js";
+import { parseFleetFlags, FLEET_FLAGS_SINGLE_FORM_ERROR, type FleetView } from "../../lib/fleet.js";
 import { type Event } from "../../lib/events.js";
 import {
   extractTrailingToken,
@@ -157,7 +158,7 @@ export interface WatchFilterArgs {
 
 export type ParsedWatchArgs =
   | ({ ok: true; all: false; sessionId: string; followLineage: boolean } & WatchFilterArgs)
-  | ({ ok: true; all: true } & WatchFilterArgs)
+  | ({ ok: true; all: true; view: FleetView } & WatchFilterArgs)
   | { ok: false; error: string };
 
 /**
@@ -383,7 +384,14 @@ export function deriveCurrentTurn(events: Event[]): string | null {
  * Pure argv parser for `claw-drive watch`. Extracted from `cmdWatch` so tests
  * can exercise flag combinations without spawning a subprocess.
  */
-export function parseWatchArgs(argv: string[]): ParsedWatchArgs {
+export function parseWatchArgs(
+  argv: string[],
+  env: NodeJS.ProcessEnv = process.env
+): ParsedWatchArgs {
+  // Fleets: lift --fleet / --all-fleets before the watch parser sees argv.
+  const fleet = parseFleetFlags(argv, env);
+  if (!fleet.ok) return { ok: false, error: fleet.error };
+  const args = fleet.rest;
   let sessionId: string | null = null;
   let all = false;
   let since: number | "current" = "current";
@@ -395,12 +403,12 @@ export function parseWatchArgs(argv: string[]): ParsedWatchArgs {
   let suspectedNeedsInput = true;
   let followLineage = false;
 
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
     if (a === "--all") {
       all = true;
     } else if (a === "--since") {
-      const v = argv[++i];
+      const v = args[++i];
       if (v === undefined) return { ok: false, error: "--since requires a value" };
       since = Number(v);
     } else if (a === "--replay") {
@@ -416,7 +424,7 @@ export function parseWatchArgs(argv: string[]): ParsedWatchArgs {
         return { ok: false, error: "--only and --decision-only are mutually exclusive" };
       }
       onlySet = true;
-      const csv = argv[++i];
+      const csv = args[++i];
       if (csv === undefined) {
         return { ok: false, error: "--only requires a comma-separated list of kinds" };
       }
@@ -439,7 +447,7 @@ export function parseWatchArgs(argv: string[]): ParsedWatchArgs {
     } else if (a === "--no-suspected-needs-input") {
       suspectedNeedsInput = false;
     } else if (a === "--idle-after") {
-      const v = argv[++i];
+      const v = args[++i];
       if (v === undefined) {
         return { ok: false, error: "--idle-after requires a value (non-negative integer seconds; 0 disables)" };
       }
@@ -488,9 +496,12 @@ export function parseWatchArgs(argv: string[]): ParsedWatchArgs {
   if (!all && sessionId === null) {
     return { ok: false, error: "session id missing or malformed" };
   }
+  if (!all && fleet.flagsSeen) {
+    return { ok: false, error: FLEET_FLAGS_SINGLE_FORM_ERROR };
+  }
 
   return all
-    ? { ok: true, all: true, ...filters }
+    ? { ok: true, all: true, view: fleet.view, ...filters }
     : { ok: true, all: false, sessionId: sessionId as string, followLineage, ...filters };
 }
 
@@ -512,6 +523,7 @@ async function cmdWatchAll(
       suspectedNeedsInput: parsed.suspectedNeedsInput,
       idleAfterSeconds: parsed.idleAfterSeconds,
     },
+    view: parsed.view,
   });
   process.once("SIGINT", () => mux.close());
   await mux.done;
@@ -526,8 +538,8 @@ export async function cmdWatch(argv: string[]): Promise<number> {
         "\nusage: claw-drive watch <session_id> [--since N | --replay] " +
         "[--only KIND[,KIND]... | --decision-only] [--no-token-filter] " +
         "[--idle-after SECONDS] [--follow-lineage] [--no-suspected-needs-input]\n" +
-        "   or: claw-drive watch --all [same flags]   (merge every live session into one\n" +
-        "       session_id-tagged stream; dynamic membership; runs until SIGINT)\n" +
+        "   or: claw-drive watch --all [same flags] [--fleet TAG] [--all-fleets]   (merge every live session\n" +
+        "       in the fleet view into one session_id-tagged stream; dynamic membership; runs until SIGINT)\n" +
         "  default: stream NEW events only (no replay), idle event after 600s of silence\n" +
         "  --since N: start from seq N (0 = full replay)\n" +
         "  --replay: shorthand for --since 0\n" +
@@ -537,6 +549,8 @@ export async function cmdWatch(argv: string[]): Promise<number> {
         "  --idle-after SECONDS: emit synthetic 'idle' event after N seconds of silence (default 600; 0 disables)\n" +
         "  --follow-lineage: follow the session's rotation lineage — hop to each successor (rotation or recover) and keep streaming; lines carry session_id/alias/generation tags; exits when a member stops without a successor\n" +
         "  --no-suspected-needs-input: disable the silent-miss backstop (no-token '?' turns drop as before; on by default)\n" +
+        "  --fleet TAG: act as this fleet (default: CLAW_DRIVE_FLEET, else the driver's Claude Code session id); the view is that fleet plus untagged sessions\n" +
+        "  --all-fleets: widen --all to every fleet on this machine\n" +
         `  valid kinds: ${[...VALID_WATCH_KINDS].join(", ")}`
     );
     return 2;
