@@ -551,6 +551,6 @@ Bash subprocesses and stdio MCP servers on claude 2.1.258; absent from the
 documented environment-variable reference). If it disappears, new sessions
 are untagged and every surface degrades to the unscoped behavior of earlier
 releases — except that sessions tagged before it disappeared stay hidden
-from a no-identity view until `--all-fleets` widens it, or
+from a no-identity view until `--all-fleets` widens it, or `--fleet <tag>` /
 `CLAW_DRIVE_FLEET` names their tag. Renaming `CLAW_DRIVE_FLEET`, changing
 the grammar, or changing the default view are breaking changes.
