@@ -84,7 +84,7 @@ const inView = async (): Promise<SessionRow[]> =>
   (await listSessions({ acting: "team-a", allFleets: false })).filter((r) => r.inView);
 
 describe("sendToFleet", () => {
-  it("one line per target in id order regardless of settle order, with alias/fleet when present, keys in the spec's order", async () => {
+  it("one line per target in id order, with alias/fleet when present, keys in the spec's order", async () => {
     // Every member here settles in milliseconds — the no-socket connect error
     // first, though it sorts last — so no timeoutMs is passed and the default
     // 5 s window is never approached: a stalled box cannot redden ordering.
