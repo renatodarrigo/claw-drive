@@ -79,10 +79,10 @@ export interface SessionState {
   /**
    * Fleets (additive-optional; absent = unowned, which is every pre-fleet
    * state file). The driver-scoping tag stamped at start — explicit
-   * `start --fleet` / `start_session({ fleet })`, else the driver's
-   * CLAUDE_CODE_SESSION_ID — and inherited verbatim by every lineage
-   * successor (rotate / recover / crash auto-respawn). Grammar, provenance
-   * and view semantics: src/lib/fleet.ts.
+   * `start --fleet` / `start_session({ fleet })`, else CLAW_DRIVE_FLEET,
+   * else the driver's CLAUDE_CODE_SESSION_ID — and inherited verbatim by
+   * every lineage successor (rotate / recover / crash auto-respawn).
+   * Grammar, provenance and view semantics: src/lib/fleet.ts.
    */
   fleet?: string;
 }

@@ -64,11 +64,11 @@ FLEET
   — CLAUDE_CODE_SESSION_ID, an export observed on claude 2.1.258 and not
   documented upstream, so its absence just leaves sessions untagged). Listings
   show your fleet plus untagged sessions; --all-fleets widens, --fleet TAG acts
-  as another fleet. 'watch --all' merges the fleet's live sessions into one
-  session_id-tagged stream with dynamic membership; 'send --all' broadcasts a
-  turn to them. Name sessions with 'start --name'. 'status' snapshots one
-  session or the whole view: state, current turn, pending decisions, recent
-  errors.
+  as another fleet. 'watch --all' merges the fleet view's live sessions into
+  one session_id-tagged stream with dynamic membership; 'send --all'
+  broadcasts a turn to them. Name sessions with 'start --name'. 'status'
+  snapshots one session or the whole view: state, current turn, pending
+  decisions, recent errors.
 `;
 
 const POINTERS = `LEARN MORE

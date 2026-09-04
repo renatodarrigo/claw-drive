@@ -203,7 +203,7 @@ Tail events for a session and return current session status.
 
 List sessions on disk (live and orphaned).
 
-**Optional inputs:** `include_orphaned: boolean`, `fleet: string`, `all_fleets: boolean` (mutually exclusive with `fleet`; both invalid → `BAD_REQUEST`)
+**Optional inputs:** `include_orphaned: boolean`, `fleet: string`, `all_fleets: boolean` (mutually exclusive with `fleet`; passing both, or an invalid value → `BAD_REQUEST`)
 
 **Response:** `{ "sessions": [{ "session_id", "status", "cwd", "started_at", "last_event_at", "turns", "pending_approvals", "fleet"? }, ...], "hidden_in_other_fleets"?: <number> }`
 
@@ -550,5 +550,7 @@ the predecessor's tag verbatim.
 Bash subprocesses and stdio MCP servers on claude 2.1.258; absent from the
 documented environment-variable reference). If it disappears, new sessions
 are untagged and every surface degrades to the unscoped behavior of earlier
-releases. Renaming `CLAW_DRIVE_FLEET`, changing the grammar, or changing the
-default view are breaking changes.
+releases — except that sessions tagged before it disappeared stay hidden
+from a no-identity view until `--all-fleets` widens it, or
+`CLAW_DRIVE_FLEET` names their tag. Renaming `CLAW_DRIVE_FLEET`, changing
+the grammar, or changing the default view are breaking changes.
