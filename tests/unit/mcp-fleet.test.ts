@@ -11,8 +11,9 @@ import type { ControlRequest, ControlResponse } from "../../src/lib/socket-proto
 
 let home: string;
 const servers: net.Server[] = [];
-const ENV_KEYS = ["CLAW_DRIVE_HOME", "CLAW_DRIVE_FLEET", "CLAUDE_CODE_SESSION_ID"] as const;
+const ENV_KEYS = ["CLAW_DRIVE_HOME", "CLAW_DRIVE_BIN", "CLAW_DRIVE_FLEET", "CLAUDE_CODE_SESSION_ID"] as const;
 const saved: Partial<Record<(typeof ENV_KEYS)[number], string | undefined>> = {};
+let stubDir: string;
 const MCP_TAG_MESSAGE =
   "fleet must be 1-64 chars of letters, digits, '_', '.', '-' and start with a letter or digit";
 
@@ -47,6 +48,15 @@ beforeEach(async () => {
   process.env.CLAW_DRIVE_HOME = home;
   process.env.CLAW_DRIVE_FLEET = "team-a";
   delete process.env.CLAUDE_CODE_SESSION_ID;
+  // handleStartSession spawns CLAW_DRIVE_BIN as the runner. Point it at a stub
+  // (start-fleet.test.ts precedent) so a regression of the fleet-tag guard
+  // fails an assertion here instead of launching a real runner — and a real
+  // claude — out of the unit suite.
+  stubDir = await fs.mkdtemp(path.join(os.tmpdir(), "cd-mcp-fleet-stub-"));
+  const stub = path.join(stubDir, "fake-runner");
+  await fs.writeFile(stub, '#!/bin/sh\ntouch "$CLAW_DRIVE_HOME/sessions/$2/ready"\n', { mode: 0o755 });
+  await fs.chmod(stub, 0o755);
+  process.env.CLAW_DRIVE_BIN = stub;
 });
 
 afterEach(async () => {
@@ -56,6 +66,7 @@ afterEach(async () => {
     else process.env[k] = saved[k];
   }
   await fs.rm(home, { recursive: true, force: true });
+  await fs.rm(stubDir, { recursive: true, force: true });
 });
 
 describe("list_sessions — fleet view", () => {
@@ -143,10 +154,9 @@ describe("tool-defs — fleet inputs", () => {
 });
 
 describe("server's own CLAW_DRIVE_FLEET — invalid env surfaces as BAD_REQUEST", () => {
-  // Same code path as the Task 3 review finding: an invalid fleet tag coming
-  // from this server process's OWN environment (as opposed to an invalid
-  // `fleet` input) must surface the env-flavored FleetTagError text, not
-  // FLEET_TAG_MCP_MESSAGE.
+  // Same code path as an invalid `fleet` input, but the tag comes from this
+  // server process's OWN environment — so it must surface the env-flavored
+  // FleetTagError text, not FLEET_TAG_MCP_MESSAGE.
   it("handleStartSession({ cwd }) rejects an invalid CLAW_DRIVE_FLEET in its own env", async () => {
     process.env.CLAW_DRIVE_FLEET = "-x";
     const parent = path.join(os.homedir(), "tmp", "claw-drive-ut");

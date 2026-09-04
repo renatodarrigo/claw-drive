@@ -3,15 +3,17 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import type * as net from "node:net";
-import { cmdSend, sendToFleet } from "../../src/cli/commands/send.js";
-import { listSessions } from "../../src/lib/live-sessions.js";
+import { cmdSend, sendToFleet, type SendFn } from "../../src/cli/commands/send.js";
+import { listSessions, type SessionRow } from "../../src/lib/live-sessions.js";
 import { startSocketServer } from "../../src/runner/socket-server.js";
 import { sessionDir, statePath, socketPath } from "../../src/lib/paths.js";
 import type { ControlRequest, ControlResponse } from "../../src/lib/socket-protocol.js";
 
 // Real socket servers stand in for runners (socket-protocol precedent): the
 // fan-out's transport, ordering, timeout, and refusal paths are exercised
-// against production wire semantics, not mocks.
+// against production wire semantics, not mocks. The one exception is the
+// parallelism test — concurrency is not observable from the wire without
+// timing it, so that one latches through the deps.send seam instead.
 
 let home: string;
 const servers: net.Server[] = [];
@@ -78,34 +80,67 @@ afterEach(async () => {
   await fs.rm(home, { recursive: true, force: true });
 });
 
+const inView = async (): Promise<SessionRow[]> =>
+  (await listSessions({ acting: "team-a", allFleets: false })).filter((r) => r.inView);
+
 describe("sendToFleet", () => {
   it("one line per target in id order regardless of settle order, with alias/fleet when present, keys in the spec's order", async () => {
-    await session("sess_c_hang", { fleet: "team-a" }, "hang");
+    // Every member here settles in milliseconds — the no-socket connect error
+    // first, though it sorts last — so no timeoutMs is passed and the default
+    // 5 s window is never approached: a stalled box cannot redden ordering.
     await session("sess_a_ok", { fleet: "team-a", alias: "reviewer" }, "accept");
     await session("sess_b_exited", {}, "refuse-exited");
     await session("sess_d_nosock", { fleet: "team-a", status: "starting" }, "no-socket");
-    const targets = (await listSessions({ acting: "team-a", allFleets: false })).filter((r) => r.inView);
-    const lines = await sendToFleet(targets, "hello", { timeoutMs: 200 });
-    expect(lines.map((l) => l.session_id)).toEqual(["sess_a_ok", "sess_b_exited", "sess_c_hang", "sess_d_nosock"]);
+    const lines = await sendToFleet(await inView(), "hello");
+    expect(lines.map((l) => l.session_id)).toEqual(["sess_a_ok", "sess_b_exited", "sess_d_nosock"]);
     expect(Object.keys(lines[0])).toEqual(["session_id", "alias", "fleet", "ok", "turn_id"]);
     expect(lines[0]).toEqual({ session_id: "sess_a_ok", alias: "reviewer", fleet: "team-a", ok: true, turn_id: "turn_5" });
     expect(lines[1]).toEqual({
       session_id: "sess_b_exited", ok: false, error: "SESSION_EXITED",
       message: "session process has exited; turn cannot start — use recover",
     });
-    expect(lines[2]).toMatchObject({ session_id: "sess_c_hang", fleet: "team-a", ok: false, error: "SESSION_UNREACHABLE", message: "socket timeout" });
-    expect(lines[3]).toMatchObject({ session_id: "sess_d_nosock", ok: false, error: "SESSION_UNREACHABLE" });
+    expect(lines[2]).toMatchObject({ session_id: "sess_d_nosock", ok: false, error: "SESSION_UNREACHABLE" });
     expect(Object.keys(lines[1])).toEqual(["session_id", "ok", "error", "message"]);
   });
 
-  it("sends the message to every target in parallel (a hanging member does not delay the others)", async () => {
-    await session("sess_a_hang", { fleet: "team-a" }, "hang");
-    await session("sess_b_ok", { fleet: "team-a" }, "accept");
-    const targets = (await listSessions({ acting: "team-a", allFleets: false })).filter((r) => r.inView);
-    const started = Date.now();
-    const lines = await sendToFleet(targets, "hello", { timeoutMs: 300 });
-    expect(Date.now() - started).toBeLessThan(1000); // one timeout window, not one per member
-    expect(lines.map((l) => l.ok)).toEqual([false, true]);
+  it("a member that never answers becomes SESSION_UNREACHABLE at the timeout", async () => {
+    // The only member hangs, so a scheduler stall can delay this test but
+    // never flip it — the line is a timeout either way.
+    await session("sess_hang", { fleet: "team-a" }, "hang");
+    const lines = await sendToFleet(await inView(), "hello", { timeoutMs: 100 });
+    expect(lines).toEqual([
+      { session_id: "sess_hang", fleet: "team-a", ok: false, error: "SESSION_UNREACHABLE", message: "socket timeout" },
+    ]);
+  });
+
+  it("fans the turn out in parallel: the second send begins before the first settles", async () => {
+    // A latch through the deps.send seam, not the wall clock: the first send
+    // parks until the second has begun. A serial fan-out never begins the
+    // second, so the safety timer rejects the parked send and this fails in
+    // ~2 s — it cannot pass on a fast machine or hang on a slow one.
+    await session("sess_a", { fleet: "team-a" }, "no-socket");
+    await session("sess_b", { fleet: "team-a" }, "no-socket");
+    let secondBegan!: () => void;
+    let giveUp!: (e: Error) => void;
+    const bothInFlight = new Promise<void>((resolve) => { secondBegan = resolve; });
+    const safety = new Promise<never>((_, reject) => { giveUp = reject; });
+    const timer = setTimeout(() => giveUp(new Error("the second send never began — the fan-out is serial")), 2000);
+    let calls = 0;
+    const send: SendFn = async (_socketPath, req) => {
+      const n = ++calls;
+      if (n === 1) await Promise.race([bothInFlight, safety]);
+      else secondBegan();
+      return { id: req.id, ok: true, result: { turn_id: `turn_${n}` } };
+    };
+    try {
+      const lines = await sendToFleet(await inView(), "hello", { send });
+      expect(lines.map((l) => [l.session_id, l.ok, l.turn_id])).toEqual([
+        ["sess_a", true, "turn_1"],
+        ["sess_b", true, "turn_2"],
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
   });
 });
 
