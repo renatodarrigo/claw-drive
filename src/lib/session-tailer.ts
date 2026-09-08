@@ -41,6 +41,12 @@ export interface SessionTailerOptions {
    * aliasWithGeneration) and never changes `aliasTag`'s shape.
    */
   generationTag?: number;
+  /**
+   * Fleets: additive passthrough of the session's fleet tag, added after
+   * `generationTag` when set — the session_id/alias/generation trio becomes a
+   * quartet so a widened `watch --all` consumer can attribute lines by fleet.
+   */
+  fleetTag?: string;
   /** Called if the events file cannot be watched (e.g. it vanished). */
   onWatchError?: (message: string) => void;
 }
@@ -82,7 +88,8 @@ export interface SessionTailerHandle {
  * the caller (single-session `cmdWatch` or the multiplexer), not the tailer.
  */
 export function startSessionTailer(opts: SessionTailerOptions): SessionTailerHandle {
-  const { sessionId, emit, allowed, noTokenFilter, suspectedNeedsInput, tag, aliasTag, generationTag } = opts;
+  const { sessionId, emit, allowed, noTokenFilter, suspectedNeedsInput, tag, aliasTag, generationTag, fleetTag } =
+    opts;
 
   const allEvents: Event[] = [];
   const idle = newIdleState(opts.idleAfterSeconds, Date.now());
@@ -133,6 +140,7 @@ export function startSessionTailer(opts: SessionTailerOptions): SessionTailerHan
             session_id: tag,
             ...(aliasTag !== undefined ? { alias: aliasTag } : {}),
             ...(generationTag !== undefined ? { generation: generationTag } : {}),
+            ...(fleetTag !== undefined ? { fleet: fleetTag } : {}),
             ...(payload as object),
           };
     emit(JSON.stringify(out) + "\n");

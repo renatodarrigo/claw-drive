@@ -1,6 +1,6 @@
 ---
 name: claw-drive-status
-description: Fetch a snapshot of one or all driven claw-drive sessions and characterize what's happening. Usage — /claw-drive-status [<session-id>]. Calls `claw-drive status [--json]` under the hood, parses the result, and surfaces what's noteworthy (sessions waiting on input, pending tool decisions, recent failures) — does NOT dump raw JSON to the user. Use this when the user asks "what's going on?" or you need a cold-start snapshot of in-flight driven sessions.
+description: Fetch a snapshot of one driven claw-drive session, or of every session in the driver's fleet view, and characterize what's happening. Usage — /claw-drive-status [<session-id>]. Calls `claw-drive status [--json]` under the hood, parses the result, and surfaces what's noteworthy (sessions waiting on input, pending tool decisions, recent failures) — does NOT dump raw JSON to the user. Use this when the user asks "what's going on?" or you need a cold-start snapshot of in-flight driven sessions.
 ---
 
 # Claw-drive — status
@@ -22,7 +22,7 @@ The user has invoked this skill to ask "what's happening across the driven sessi
 
    Capture stdout + exit code. If exit code is `1`, the session id was unknown — surface "session `<id>` not found." If exit code is `2` or `3`, surface the stderr message verbatim.
 
-4. **Parse the JSON.** Single-session form is a bare object `{ session_id, status, ... }`. All-sessions form is `{ "sessions": [ ... ] }`.
+4. **Parse the JSON.** Single-session form is a bare object `{ session_id, status, ... }`. The no-argument form is `{ "sessions": [ ... ] }` — the driver's fleet view, its own sessions plus untagged ones — and it carries `hidden_in_other_fleets` when the view hid sessions belonging to another driver.
 
 5. **Characterize, don't dump.** Apply this priority chain when summarizing the result back to the user:
 
@@ -37,6 +37,7 @@ The user has invoked this skill to ask "what's happening across the driven sessi
    - Lead with the count and rough breakdown (`X running, Y stopped, Z orphaned`).
    - Call out the noteworthy sessions by id (only those with pending decisions, errors, or NEEDS-* tokens). Use a short id form (first ~20 chars + `…`) so the chat doesn't get unwieldy.
    - Don't enumerate quiet sessions individually — group as a count at the bottom.
+   - If `hidden_in_other_fleets` is present, close with one line: "N session(s) belong to other drivers' fleets — `claw-drive status --all-fleets` shows them."
 
 7. **Single-session output** (session id was passed):
    - The user wants depth. Lead with `current_turn.last_assistant_text` (or `last_completed_turn.last_assistant_text` if no current turn) so they know what B is "saying right now."

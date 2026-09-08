@@ -148,6 +148,22 @@ describe("recoverSession successor scaffolding (stub runner bin)", () => {
     expect(succ?.respawn_streak).toBeUndefined();
   });
 
+  it("the successor inherits the predecessor's fleet verbatim; an untagged predecessor stays untagged", async () => {
+    const tagged = "sess_20200101T000000_flt001";
+    await deadSession(tagged, { fleet: "team-a" });
+    await fs.writeFile(crashHandoverPath(tagged), "## Current objective\nresume");
+    const r1 = await recoverSession({ sessionId: tagged });
+    expect(r1.ok).toBe(true);
+    expect((await readState(statePath(newSessionIdOf(r1))))?.fleet).toBe("team-a");
+
+    const untagged = "sess_20200101T000000_flt002";
+    await deadSession(untagged);
+    await fs.writeFile(crashHandoverPath(untagged), "## Current objective\nresume");
+    const r2 = await recoverSession({ sessionId: untagged });
+    expect(r2.ok).toBe(true);
+    expect(await readState(statePath(newSessionIdOf(r2)))).not.toHaveProperty("fleet");
+  });
+
   function briefOf(succ: unknown): string {
     const b = (succ as { scenario_brief?: string } | null)?.scenario_brief;
     if (typeof b !== "string") throw new TypeError("successor carries no scenario_brief");

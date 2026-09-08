@@ -186,9 +186,27 @@ A driver supervising several sessions at once (A spawning B, C, D, …) can merg
 claw-drive watch --all
 ```
 
-`watch --all` tails **every live session** concurrently and writes a single merged JSONL feed where each line carries an additive `session_id` field, so the driver can attribute every event. Membership is **dynamic**: a session spawned after `watch --all` starts joins the stream automatically, and a session that stops has its tail closed (its `session_stopped` surfaces first) — the merged stream itself runs until you SIGINT it. Every single-session flag works identically under `--all` (`--replay`, `--only` / `--decision-only`, `--no-token-filter`, `--idle-after`, `--no-suspected-needs-input`), and each session's filters apply independently.
+`watch --all` tails **every live session in your fleet view** (see [Fleets](#fleets-one-drivers-sessions)) concurrently and writes a single merged JSONL feed where each line carries an additive `session_id` field, so the driver can attribute every event. Membership is **dynamic**: a session spawned after `watch --all` starts joins the stream automatically, and a session that stops has its tail closed (its `session_stopped` surfaces first) — the merged stream itself runs until you SIGINT it. Every single-session flag works identically under `--all` (`--replay`, `--only` / `--decision-only`, `--no-token-filter`, `--idle-after`, `--no-suspected-needs-input`), and each session's filters apply independently.
 
 For a point-in-time snapshot of the whole fleet rather than a live feed, `claw-drive status` (no argument) is the companion — a summary table of every session's state, last token, and pending-decision count.
+
+### Fleets: one driver's sessions
+
+Several drivers can use claw-drive on one machine at once — two Claude Code sessions each supervising their own B's — and they share one sessions root. Every session therefore carries an optional **fleet tag**, and every listing acts as one fleet:
+
+- **Tagging:** `start --fleet <tag>` / `start_session({ fleet })` sets it explicitly. Otherwise the tag defaults to `CLAW_DRIVE_FLEET`, else to the driver's Claude Code session id (`CLAUDE_CODE_SESSION_ID`, which Claude Code exports to its Bash subprocesses and MCP servers — observed on claude 2.1.258, not a documented guarantee). With none of those the session is untagged. Rotation and recovery successors inherit the tag.
+- **The view:** `status`, `sessions`, `pending`, `watch --all`, `prune`, `send --all`, the approve/reject/defer and provide-output scans, and the MCP `list_sessions` / `resolve_tool_call` scans show the acting fleet's sessions **plus untagged ones**. Other drivers' sessions are hidden; the human tables say how many on stderr, and `status --json` / `list_sessions` report `hidden_in_other_fleets`. A shell with no fleet identity of its own — a plain terminal, a cron job — sees only untagged sessions until it passes `--fleet <tag>` or `--all-fleets`, or sets `CLAW_DRIVE_FLEET`.
+- **Widening:** `--all-fleets` (CLI) / `all_fleets: true` (MCP) shows every fleet on the machine, and the `status` / `sessions` tables gain a FLEET column. `--fleet <tag>` acts as another fleet — how a fresh driver session picks up a fleet an earlier one started. (Machine outputs — `pending` and `watch --all` lines, `status --json`, `list_sessions` rows — carry `fleet` on any tagged session, widened or not.)
+- **Not scoped:** an explicit `sess_…` id or an alias always resolves, whatever fleet holds it. Aliases stay unique across the whole machine.
+- **Broadcast:** `claw-drive send --all "<message>"` sends one user turn to every live session in the view and prints one JSONL line per session (`session_id`, `alias`/`fleet` when set, `ok`, then `turn_id` or the refusal). Exit 0 when every send succeeded, 1 when any failed, 2 when the view holds no live session.
+
+```bash
+export CLAW_DRIVE_FLEET=review-crew     # every command below acts as this fleet
+claw-drive start --cwd ~/code/app --name reviewer
+claw-drive status                       # this fleet + untagged sessions
+claw-drive status --all-fleets          # everyone, with a FLEET column
+claw-drive send --all "Checkpoint your work and end the turn with [DONE]."
+```
 
 ### Session aliases: `start --name`
 
@@ -205,7 +223,7 @@ Over MCP, pass `name` to `start_session({ cwd, policy, name: "reviewer" })`.
 - **Constraints:** 1–32 chars, starts with a letter, then letters/digits/`_`/`-`; it must not begin with `sess_` (that's the canonical-id shape).
 - **Uniqueness:** an alias is unique among **live** sessions. Starting with an alias another live session already holds fails with an error naming the conflicting `session_id`. Once a holder stops (or is pruned), the alias is free to reuse.
 - **Resolution:** every session argument — `send`, `stop`, `interrupt`, `policy`, `tail`, `show`, `report`, single-session `watch`, single-id `status`, single-target `pending`, and the MCP session tools — accepts either an alias or a canonical id.
-- **Display:** `status`, `sessions`, `pending`, and `watch --all` show the alias alongside the `session_id` when present.
+- **Display:** `status`, `sessions`, `pending`, and `watch --all` show the alias alongside the `session_id` when present; `pending`, `watch --all` and `status --json` also carry the `fleet` tag when the session has one, and the `status` / `sessions` tables gain a FLEET column under `--all-fleets`.
 
 `start` still prints the canonical `session_id`, so scripts that capture it are unaffected. (No post-start rename, no cross-restart registry, no namespacing — an alias lives with its session.)
 
@@ -304,13 +322,13 @@ B's echo fires the hook → policy defers → monitor alerts A → human answers
 
 | Tool | Purpose |
 |---|---|
-| `start_session` | Start a driven session; returns `{session_id, watch_command, notification_contract}`. `watch_command` is a ready-made Monitor payload; `notification_contract` describes the session's sentinel vocabulary, watch flags, and idle threshold so drivers can stay forward-compatible. Optional `wrapper: false` opts out of injecting the sentinel-token contract into B's system prompt. |
+| `start_session` | Start a driven session; returns `{session_id, watch_command, notification_contract, fleet?}`. `watch_command` is a ready-made Monitor payload; `notification_contract` describes the session's sentinel vocabulary, watch flags, and idle threshold so drivers can stay forward-compatible. Optional `wrapper: false` opts out of injecting the sentinel-token contract into B's system prompt. Optional `fleet` tags the session (default: the server's acting fleet); the response echoes the tag stamped. |
 | `stop_session` | Reap B; keep session dir for inspection |
 | `send_turn` | Non-blocking; returns `turn_id` |
 | `poll_turn` | Fetch events + status for a turn (optional long-poll) |
 | `poll_session` | Tail all events for a session |
-| `list_sessions` | List live + orphaned sessions |
-| `resolve_tool_call` | Approve/reject a paused tool call; optionally remember as policy, preview the derived rule, or append an explicit one |
+| `list_sessions` | List live + orphaned sessions in the fleet view; optional `fleet` / `all_fleets`. Rows carry `fleet` when set; `hidden_in_other_fleets` counts what the view hid. |
+| `resolve_tool_call` | Approve/reject a paused tool call found in the fleet view (`fleet` / `all_fleets` widen the scan); optionally remember as policy, preview the derived rule, or append an explicit one |
 | `update_policy` | Replace a session's policy |
 | `interrupt_turn` | SIGINT B to cancel the current turn |
 | `provide_tool_output` | Inject human-run command output back into B's conversation; auto-resolves pending defer if needed |
@@ -322,27 +340,28 @@ B's echo fires the hook → policy defers → monitor alerts A → human answers
 | Command | Purpose |
 |---|---|
 | `help` | Print the full capability map (concepts + every command + every MCP tool). Same output as `--help`, `-h`, and a bare `claw-drive`. |
-| `sessions` | List sessions (live + orphaned) |
-| `status [<session>] [--json]` | Fleet snapshot — one row per live session (state, last token, pending-decision count). With a session argument, just that one; `--json` for structured output. Point-in-time companion to `watch --all`. |
+| `sessions [--fleet TAG] [--all-fleets]` | List sessions (live + orphaned) in the fleet view. `--all-fleets` adds a FLEET column. |
+| `status [<session>] [--json] [--fleet TAG] [--all-fleets]` | Fleet snapshot — one row per session in the fleet view (state, last token, pending-decision count); a stderr line counts sessions hidden in other fleets, `--all-fleets` shows them with a FLEET column. With a session argument, just that one (any fleet); `--json` for structured output, with `hidden_in_other_fleets` when the view hid something. Point-in-time companion to `watch --all`. |
 | `show <session>` | State + last 20 events |
 | `report <session> [--json] [--idle-after SECONDS]` | Human-readable session report rendered from `events.jsonl`: a summary header (id, alias, cwd, model, started/ended, duration, exit reason, turn/tool-call/decision counts) followed by a chronological transcript — user turns, assistant text, one consolidated line per tool call (policy resolution and how any pause was resolved), sentinel outcomes, idle gaps (`--idle-after`, default `600`), and session lifecycle markers. `--json` emits the summary object only (header fields + per-category counts); works for live and dead sessions; strictly read-only. |
 | `tail <session> [--since N] [--follow]` | Stream events |
-| `pending [<session>]` | List awaiting-approval calls. An escalated decision carries a capped `rationale` (when available) and (for Edit/Write) a `diff`. |
-| `approve <call_id> [--reason R] [--remember]` | Approve a paused call. `--remember` derives a rule and appends to `auto_approve`. |
-| `reject <call_id> [--reason R] [--remember]` | Reject a paused call. `--remember` appends to `auto_reject`. |
-| `defer <call_id> [--reason R] [--remember]` | Defer a paused call to the human. `--remember` appends to `auto_defer`. |
-| `send <session> "<msg>"` | Send a user turn |
-| `start --cwd PATH [--policy FILE] [--brief FILE] [--name ALIAS] [--no-wrapper]` | Start a session. `--name` gives it a reusable alias (see [Session aliases](#session-aliases-start---name)); `--no-wrapper` starts B without the sentinel-token wrapper (pair with `watch --no-token-filter`). |
+| `pending [<session>] [--fleet TAG] [--all-fleets]` | List awaiting-approval calls in the fleet view (lines carry `fleet` when set). An escalated decision carries a capped `rationale` (when available) and (for Edit/Write) a `diff`. |
+| `approve <call_id> [--reason R] [--remember] [--fleet TAG] [--all-fleets]` | Approve a paused call found in the fleet view. `--remember` derives a rule and appends to `auto_approve`. |
+| `reject <call_id> [--reason R] [--remember] [--fleet TAG] [--all-fleets]` | Reject a paused call found in the fleet view. `--remember` appends to `auto_reject`. |
+| `defer <call_id> [--reason R] [--remember] [--fleet TAG] [--all-fleets]` | Defer a paused call found in the fleet view to the human. `--remember` appends to `auto_defer`. |
+| `send <session> "<msg>"` | Send a user turn. A bare `--` ends flag parsing for a message that is literally `--all`, `--fleet`, or `--all-fleets`. |
+| `send --all "<msg>" [--fleet TAG] [--all-fleets]` | Broadcast a user turn to every live session in the fleet view: one JSONL line per session with `turn_id` or the refusal; exit 0 all sent, 1 any failed, 2 empty view. See [Fleets](#fleets-one-drivers-sessions). |
+| `start --cwd PATH [--policy FILE] [--brief FILE] [--name ALIAS] [--no-wrapper] [--fleet TAG]` | Start a session. `--name` gives it a reusable alias (see [Session aliases](#session-aliases-start---name)); `--no-wrapper` starts B without the sentinel-token wrapper (pair with `watch --no-token-filter`); `--fleet` tags it for driver scoping (see [Fleets](#fleets-one-drivers-sessions)). |
 | `stop <session>` | Reap B |
 | `rotate <session>` | Rotate a session at its context threshold. See [Context rotation & crash recovery](#context-rotation--crash-recovery). |
 | `recover <session_id> [--no-start] [--model M]` | Continue a dead session from its crash-handover, distilling one from `events.jsonl` if needed. Canonical id only — aliases resolve among live sessions only. |
 | `interrupt <session> <turn>` | SIGINT B |
 | `policy <session> [--set FILE] [--show]` | View/replace a session's policy |
 | `policy-test '<command>' [flags]` | Diagnose a tool call against a policy. Three output formats (default human, `--explain`, `--json`); multi-tool via `--tool TOOL --arg KEY=VALUE`; `--policy starter\|permissive\|bypass\|<file>`; `--exit-on reject\|defer\|approve\|escalate` for CI gating. |
-| `prune [--older-than 24h] [--force]` | Remove dead sessions older than cutoff. `--force` also removes a dead session whose crash-handover hasn't been consumed yet. |
+| `prune [--older-than 24h] [--force] [--fleet TAG] [--all-fleets]` | Remove dead sessions in the fleet view older than cutoff. `--force` also removes a dead session whose crash-handover hasn't been consumed yet. A run with no fleet identity — cron, a plain shell — prunes untagged sessions only, so a machine-wide sweep needs `--all-fleets`. |
 | `watch <session> [--since N \| --replay] [--only KIND[,KIND]... \| --decision-only] [--no-token-filter] [--idle-after SECONDS] [--follow-lineage] [--no-suspected-needs-input]` | Stream noteworthy events as JSONL. Used by Monitor flows. Sentinel filter is on by default (`turn_completed` surfaces only when the trailing `[TOKEN]` is present). `--no-token-filter` disables the sentinel filter entirely. `--decision-only` and `--only` are kind-level subset filters that compose with the sentinel filter. `--idle-after SECONDS` (default `600`, `0` disables) emits a synthetic `idle` event when no surfaced event has been seen for that long. The silent-miss backstop surfaces a no-token `turn_completed` whose final line ends in `?` with an additive `suspected_needs_input` marker; `--no-suspected-needs-input` disables it. `--follow-lineage` keeps the stream alive across the lineage — on rotation or recovery the watcher hops to the successor, until a member stops without one. |
-| `watch --all [same flags except --follow-lineage]` | Merge every live session into one JSONL stream, each line tagged with an additive `session_id`. Dynamic membership (sessions spawned later join via a periodic rescan); runs until SIGINT. All single-session filters apply per session. `status` (no arg) is the point-in-time fleet-snapshot companion. |
-| `provide-output <call_id> [--stdout S] [--stderr S] [--exit N] [--extra S] [--from-file PATH]` | Relay human-run command output to a deferred call |
+| `watch --all [same flags except --follow-lineage] [--fleet TAG] [--all-fleets]` | Merge every live session in the fleet view into one JSONL stream, each line tagged with an additive `session_id` (plus `alias`, `generation`, `fleet` when set). Dynamic membership (sessions spawned later join via a periodic rescan); runs until SIGINT. All single-session filters apply per session. `status` (no arg) is the point-in-time fleet-snapshot companion. |
+| `provide-output <call_id> [--stdout S] [--stderr S] [--exit N] [--extra S] [--from-file PATH] [--fleet TAG] [--all-fleets]` | Relay human-run command output to a deferred call found in the fleet view |
 
 ### Decision context (rationale + diff)
 

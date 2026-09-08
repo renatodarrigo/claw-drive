@@ -127,6 +127,7 @@ Start a new driven Claude Code session.
 | `model` | `string` | no | Claude model override. |
 | `decision_timeout_seconds` | `number` | no | Gate timeout in seconds. |
 | `wrapper` | `boolean` | no | Whether to inject the sentinel-token wrapper into the driven session's system prompt. Defaults to `true`. Pass `false` for raw (no-token-filter) mode. |
+| `fleet` | `string` | no | Fleet tag for driver scoping — 1–64 chars of letters, digits, `_`, `.`, `-`, starting with a letter or digit. Defaults to the server's `CLAW_DRIVE_FLEET`, else its `CLAUDE_CODE_SESSION_ID`; absent both, the session is untagged. See [§7](#7-fleets). |
 
 **Response:**
 
@@ -140,13 +141,15 @@ Start a new driven Claude Code session.
     "timeout_ms": 3600000,
     "persistent": true
   },
-  "notification_contract": { ... }
+  "notification_contract": { ... },
+  "fleet": "<string>"
 }
 ```
 
 The `watch_command` shape is a ready-made payload for the Monitor tool.
 The `notification_contract` shape is described in the
 [notification\_contract](#notification_contract) section.
+`fleet` is present iff a tag was stamped.
 
 #### `stop_session`
 
@@ -200,9 +203,11 @@ Tail events for a session and return current session status.
 
 List sessions on disk (live and orphaned).
 
-**Optional input:** `include_orphaned: boolean`
+**Optional inputs:** `include_orphaned: boolean`, `fleet: string`, `all_fleets: boolean` (mutually exclusive with `fleet`; passing both, or an invalid value → `BAD_REQUEST`)
 
-**Response:** `{ "sessions": [{ "session_id", "status", "cwd", "started_at", "last_event_at", "turns", "pending_approvals" }, ...] }`
+**Response:** `{ "sessions": [{ "session_id", "status", "cwd", "started_at", "last_event_at", "turns", "pending_approvals", "fleet"? }, ...], "hidden_in_other_fleets"?: <number> }`
+
+Scoped to the caller's fleet view (the acting fleet's sessions plus untagged ones; see [§7](#7-fleets)). `fleet` is present on tagged rows. `hidden_in_other_fleets` is present only when the view hid a session the `include_orphaned` rule would otherwise have listed.
 
 #### `resolve_tool_call`
 
@@ -210,10 +215,11 @@ Approve or reject a paused tool call by `call_id`.
 
 **Required inputs:** `call_id: string`, `action: "approve" | "reject"`, `reason: string`
 
-**Optional inputs:** `remember_as_policy: boolean`, `preview_only: boolean`, `remembered_rule: Rule`
+**Optional inputs:** `remember_as_policy: boolean`, `preview_only: boolean`, `remembered_rule: Rule`, `fleet: string`, `all_fleets: boolean`
 
 - `preview_only` — return `{ would_remember, list, source, bypass? }` for the rule that would be remembered; the call is **not** resolved and policy is **not** mutated.
 - `remembered_rule` — append this explicit (edited) rule instead of the derived one. Validated; an invalid rule returns `BAD_RULE` and resolves nothing.
+- `fleet` / `all_fleets` — scope the scan to that fleet's view / to every fleet on the machine (mutually exclusive). Default: the server's acting fleet ([§7](#7-fleets)).
 
 **Response:** `{ "ok": true }` — or, when `preview_only: true`: `{ "ok": true, "result": { "would_remember", "list", "source", "bypass"? } }`
 
@@ -430,26 +436,26 @@ each completes, not just the stream's own cost reading.
 
 | Subcommand | Flags |
 |------------|-------|
-| `sessions` | _(none)_ |
+| `sessions` | `--fleet TAG`, `--all-fleets` |
 | `show <session>` | _(none)_ |
 | `report <session>` | `--json`, `--idle-after SECONDS`, `--help` / `-h` |
 | `tail <session>` | `--since N`, `--follow` / `-f` |
-| `watch <session\|--all>` | `--since N`, `--replay`, `--only KIND[,KIND]...`, `--decision-only`, `--no-token-filter`, `--idle-after SECONDS`, `--follow-lineage`, `--no-suspected-needs-input` |
-| `pending [<session>]` | _(none)_ |
-| `approve <call_id>` | `--reason R`, `--remember`, `--remember-as JSON`, `--preview`, `--json` |
-| `reject <call_id>` | `--reason R`, `--remember`, `--remember-as JSON`, `--preview`, `--json` |
-| `defer <call_id>` | `--reason R`, `--remember`, `--remember-as JSON`, `--preview`, `--json` |
-| `send <session> "<message>"` | _(none)_ |
-| `start` | `--cwd PATH` (required), `--policy FILE`, `--brief FILE`, `--name ALIAS`, `--no-wrapper` |
+| `watch <session\|--all>` | `--since N`, `--replay`, `--only KIND[,KIND]...`, `--decision-only`, `--no-token-filter`, `--idle-after SECONDS`, `--follow-lineage`, `--no-suspected-needs-input`, `--fleet TAG` (`--all` only), `--all-fleets` (`--all` only) |
+| `pending [<session>]` | `--fleet TAG`, `--all-fleets` (no-argument form only) |
+| `approve <call_id>` | `--reason R`, `--remember`, `--remember-as JSON`, `--preview`, `--json`, `--fleet TAG`, `--all-fleets` |
+| `reject <call_id>` | `--reason R`, `--remember`, `--remember-as JSON`, `--preview`, `--json`, `--fleet TAG`, `--all-fleets` |
+| `defer <call_id>` | `--reason R`, `--remember`, `--remember-as JSON`, `--preview`, `--json`, `--fleet TAG`, `--all-fleets` |
+| `send <session\|--all> "<message>"` | `--all`, `--fleet TAG` (`--all` only), `--all-fleets` (`--all` only), `--` (end of flags) |
+| `start` | `--cwd PATH` (required), `--policy FILE`, `--brief FILE`, `--name ALIAS`, `--no-wrapper`, `--fleet TAG` |
 | `stop <session>` | _(none)_ |
 | `rotate <session>` | _(none)_ |
 | `recover <session_id>` | `--no-start`, `--model M` |
 | `interrupt <session> <turn>` | _(none)_ |
 | `policy <session>` | `--set FILE`, `--show` |
 | `policy-test '<command>'` | `--tool TOOL`, `--arg KEY=VALUE`, `--policy SPEC`, `--explain`, `--json`, `--exit-on DECISION`, `--no-color`, `--help` / `-h` |
-| `status [<session>]` | `--json`, `--help` / `-h` |
-| `prune` | `--older-than DURATION`, `--force` |
-| `provide-output <call_id>` | `--stdout S`, `--stderr S`, `--exit N`, `--extra S`, `--from-file PATH` |
+| `status [<session>]` | `--json`, `--help` / `-h`, `--fleet TAG`, `--all-fleets` (no-argument form only) |
+| `prune` | `--older-than DURATION`, `--force`, `--fleet TAG`, `--all-fleets` |
+| `provide-output <call_id>` | `--stdout S`, `--stderr S`, `--exit N`, `--extra S`, `--from-file PATH`, `--fleet TAG`, `--all-fleets` |
 
 **Global flags** (handled before subcommand dispatch):
 
@@ -518,3 +524,33 @@ renamed.
 
 Consumers should read `notification_contract` at session-start time rather than
 hardcoding assumptions about a specific claw-drive version.
+
+---
+
+### 7. Fleets
+
+Driver scoping lives in `src/lib/fleet.ts`. A session may carry an
+additive-optional `fleet` tag in `state.json` (absent on every pre-fleet state
+file = untagged). Every enumeration surface — the CLI `status`, `sessions`,
+`pending`, `watch --all`, `prune`, `send --all`, the `approve`/`reject`/`defer`
+and `provide-output` scans, and the MCP `list_sessions` / `resolve_tool_call`
+scans — acts as one **acting fleet** and shows that fleet's sessions plus
+untagged ones. Explicit session ids and aliases are never scoped.
+
+**Acting-fleet resolution (frozen order):** `--fleet TAG` / `fleet` input →
+`CLAW_DRIVE_FLEET` → `CLAUDE_CODE_SESSION_ID` → none (the view is untagged
+sessions only). `--all-fleets` / `all_fleets: true` widens to every session.
+
+**Tag grammar (frozen):** `^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`.
+
+**Inheritance:** rotation, `recover`, and crash auto-respawn successors carry
+the predecessor's tag verbatim.
+
+`CLAUDE_CODE_SESSION_ID` is an **observed** Claude Code export (present in
+Bash subprocesses and stdio MCP servers on claude 2.1.258; absent from the
+documented environment-variable reference). If it disappears, new sessions
+are untagged and every surface degrades to the unscoped behavior of earlier
+releases — except that sessions tagged before it disappeared stay hidden
+from a no-identity view until `--all-fleets` widens it, or `--fleet <tag>` /
+`CLAW_DRIVE_FLEET` names their tag. Renaming `CLAW_DRIVE_FLEET`, changing
+the grammar, or changing the default view are breaking changes.

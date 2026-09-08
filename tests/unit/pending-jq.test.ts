@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
@@ -9,16 +9,31 @@ import { appendEvent, type Event } from "../../src/lib/events.js";
 
 let tmpHome: string;
 let origHome: string | undefined;
+let origFleet: string | undefined;
+let origSid: string | undefined;
 
 beforeEach(async () => {
   tmpHome = await fs.mkdtemp(path.join(os.tmpdir(), "claw-drive-pending-jq-"));
   origHome = process.env.CLAW_DRIVE_HOME;
   process.env.CLAW_DRIVE_HOME = tmpHome;
+  // Fleets: cmdPending now reaches resolveActingFleet through process.env on
+  // every call. Pin CLAW_DRIVE_FLEET / CLAUDE_CODE_SESSION_ID for the whole
+  // file so the pre-fleet suites below are not at the mercy of whatever the
+  // ambient environment (e.g. the Claude Code session driving this process)
+  // happens to export.
+  origFleet = process.env.CLAW_DRIVE_FLEET;
+  origSid = process.env.CLAUDE_CODE_SESSION_ID;
+  delete process.env.CLAW_DRIVE_FLEET;
+  delete process.env.CLAUDE_CODE_SESSION_ID;
 });
 
 afterEach(async () => {
   if (origHome === undefined) delete process.env.CLAW_DRIVE_HOME;
   else process.env.CLAW_DRIVE_HOME = origHome;
+  if (origFleet === undefined) delete process.env.CLAW_DRIVE_FLEET;
+  else process.env.CLAW_DRIVE_FLEET = origFleet;
+  if (origSid === undefined) delete process.env.CLAUDE_CODE_SESSION_ID;
+  else process.env.CLAUDE_CODE_SESSION_ID = origSid;
   await fs.rm(tmpHome, { recursive: true, force: true });
 });
 
@@ -146,5 +161,54 @@ describe("cmdPending alias/generation tag shape (CD-1: machine-readable fields a
     const parsed = JSON.parse(captured.trim());
     expect(parsed.alias).toBe("scout");
     expect(parsed).not.toHaveProperty("generation");
+  });
+});
+
+describe("cmdPending — fleet view", () => {
+  let savedFleet: string | undefined;
+  let savedSid: string | undefined;
+  beforeEach(() => {
+    savedFleet = process.env.CLAW_DRIVE_FLEET;
+    savedSid = process.env.CLAUDE_CODE_SESSION_ID;
+    process.env.CLAW_DRIVE_FLEET = "team-a";
+    delete process.env.CLAUDE_CODE_SESSION_ID;
+  });
+  afterEach(() => {
+    if (savedFleet === undefined) delete process.env.CLAW_DRIVE_FLEET;
+    else process.env.CLAW_DRIVE_FLEET = savedFleet;
+    if (savedSid === undefined) delete process.env.CLAUDE_CODE_SESSION_ID;
+    else process.env.CLAUDE_CODE_SESSION_ID = savedSid;
+  });
+
+  it("no-arg form lists own + untagged pending calls, tags lines with fleet, hides the other fleet", async () => {
+    await setupSession("sess_own", [makeDecisionEvent("ls own")], { fleet: "team-a" });
+    await setupSession("sess_other", [makeDecisionEvent("ls other")], { fleet: "team-b" });
+    await setupSession("sess_free", [makeDecisionEvent("ls free")]);
+    const { code, captured } = await captureStdout(() => cmdPending([]));
+    expect(code).toBe(0);
+    const lines = captured.trim().split("\n").map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(lines.map((l) => l.session_id)).toEqual(["sess_free", "sess_own"]);
+    expect(lines[1].fleet).toBe("team-a");
+    expect(lines[0]).not.toHaveProperty("fleet");
+  });
+
+  it("--all-fleets includes the other fleet", async () => {
+    await setupSession("sess_other", [makeDecisionEvent("ls other")], { fleet: "team-b" });
+    const { captured } = await captureStdout(() => cmdPending(["--all-fleets"]));
+    expect(JSON.parse(captured.trim()).fleet).toBe("team-b");
+  });
+
+  it("an explicit target resolves across fleets, but rejects the fleet flags", async () => {
+    await setupSession("sess_other", [makeDecisionEvent("ls other")], { fleet: "team-b" });
+    const { code, captured } = await captureStdout(() => cmdPending(["sess_other"]));
+    expect(code).toBe(0);
+    expect(JSON.parse(captured.trim()).session_id).toBe("sess_other");
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(await cmdPending(["sess_other", "--all-fleets"])).toBe(2);
+      expect(errSpy.mock.calls.flat().join("\n")).toContain("--fleet/--all-fleets apply only to the fleet view");
+    } finally {
+      errSpy.mockRestore();
+    }
   });
 });

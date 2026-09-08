@@ -1,23 +1,33 @@
-import * as fs from "node:fs/promises";
-import { sessionsRoot, statePath, eventsPath, isValidSessionId } from "../../lib/paths.js";
-import { readState, isPidAlive } from "../../lib/state.js";
+import { eventsPath } from "../../lib/paths.js";
+import { isPidAlive } from "../../lib/state.js";
 import { readEventsSince } from "../../lib/events.js";
 import { aliasWithGeneration } from "../../lib/alias.js";
+import { parseFleetFlags, hiddenFleetsHint } from "../../lib/fleet.js";
+import { listSessions, sessionsRootExists } from "../../lib/live-sessions.js";
 
-export async function cmdSessions(_argv: string[]): Promise<number> {
-  let entries: string[];
-  try {
-    entries = await fs.readdir(sessionsRoot());
-  } catch {
+export async function cmdSessions(argv: string[]): Promise<number> {
+  // Fleets: the listing is scoped to the acting fleet plus untagged sessions;
+  // --all-fleets widens it and adds a FLEET column. Extra positionals are
+  // ignored, as they always were.
+  const fleet = parseFleetFlags(argv);
+  if (!fleet.ok) {
+    console.error(fleet.error);
+    return 2;
+  }
+  if (!(await sessionsRootExists())) {
     console.log("(no sessions)");
     return 0;
   }
-  const rows: string[] = [];
-  rows.push(["SESSION_ID", "STATUS", "TURNS", "PENDING", "CWD"].join("\t"));
-  for (const id of entries) {
-    if (!isValidSessionId(id)) continue;
-    const s = await readState(statePath(id));
-    if (!s) continue;
+  const rows = await listSessions(fleet.view);
+  const fleetColumn = fleet.view.allFleets;
+  const out: string[] = [];
+  out.push(["SESSION_ID", "STATUS", "TURNS", "PENDING", "CWD", ...(fleetColumn ? ["FLEET"] : [])].join("\t"));
+  let hidden = 0;
+  for (const { id, state: s, inView } of rows) {
+    if (!inView) {
+      hidden++;
+      continue;
+    }
     const alive = s.runner_pid ? isPidAlive(s.runner_pid) : false;
     const status =
       !alive && (s.status === "ready" || s.status === "running" || s.status === "starting")
@@ -35,8 +45,11 @@ export async function cmdSessions(_argv: string[]): Promise<number> {
     // CD-10: show the alias inline with the id when present; un-aliased rows
     // render byte-identically to before.
     const idCell = s.alias ? `${id} (${aliasWithGeneration(s.alias, s.generation)})` : id;
-    rows.push([idCell, status, String(s.turns), String(pending), s.cwd].join("\t"));
+    out.push(
+      [idCell, status, String(s.turns), String(pending), s.cwd, ...(fleetColumn ? [s.fleet ?? "-"] : [])].join("\t")
+    );
   }
-  console.log(rows.join("\n"));
+  console.log(out.join("\n"));
+  if (hidden > 0) console.error(hiddenFleetsHint(hidden));
   return 0;
 }

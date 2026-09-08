@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   parseStatusArgs,
   buildSessionSnapshot,
@@ -11,6 +11,27 @@ import {
 } from "../../src/cli/commands/status.js";
 import type { SessionState } from "../../src/lib/state.js";
 import type { Event } from "../../src/lib/events.js";
+
+// Fleets: parseStatusArgs now reaches resolveActingFleet through process.env
+// for every call that doesn't pass an explicit env (i.e. every pre-existing
+// call in this file). Pin both inputs so ambient values — the vitest process
+// inherits CLAUDE_CODE_SESSION_ID from Claude Code — can't leak into a result.
+let prevFleet: string | undefined;
+let prevSessionId: string | undefined;
+
+beforeEach(() => {
+  prevFleet = process.env.CLAW_DRIVE_FLEET;
+  prevSessionId = process.env.CLAUDE_CODE_SESSION_ID;
+  delete process.env.CLAW_DRIVE_FLEET;
+  delete process.env.CLAUDE_CODE_SESSION_ID;
+});
+
+afterEach(() => {
+  if (prevFleet === undefined) delete process.env.CLAW_DRIVE_FLEET;
+  else process.env.CLAW_DRIVE_FLEET = prevFleet;
+  if (prevSessionId === undefined) delete process.env.CLAUDE_CODE_SESSION_ID;
+  else process.env.CLAUDE_CODE_SESSION_ID = prevSessionId;
+});
 
 const NOW = "2026-04-27T12:45:01Z";
 const NOW_MS = Date.parse(NOW);
@@ -800,5 +821,58 @@ describe("status — CD-10 alias display", () => {
     const withoutA = JSON.parse(renderJson(buildSessionSnapshot(baseState(), [], NOW_MS)!));
     expect(withA.alias).toBe("x");
     expect("alias" in withoutA).toBe(false);
+  });
+});
+
+describe("fleets — parseStatusArgs", () => {
+  const EMPTY: NodeJS.ProcessEnv = {};
+
+  it("no-arg form carries the view (flags, then env, then none)", () => {
+    expect(parseStatusArgs(["--fleet", "team-a", "--json"], EMPTY)).toEqual({
+      ok: true, help: false, sessionId: undefined, json: true, view: { acting: "team-a", allFleets: false },
+    });
+    expect(parseStatusArgs(["--all-fleets"], EMPTY)).toEqual({
+      ok: true, help: false, sessionId: undefined, json: false, view: { acting: undefined, allFleets: true },
+    });
+    expect(parseStatusArgs([], { CLAUDE_CODE_SESSION_ID: "abc" })).toEqual({
+      ok: true, help: false, sessionId: undefined, json: false, view: { acting: "abc", allFleets: false },
+    });
+  });
+
+  it("the single-session form rejects the fleet flags", () => {
+    expect(parseStatusArgs(["sess_abcdef0123456789", "--all-fleets"], EMPTY)).toEqual({
+      ok: false, error: "--fleet/--all-fleets apply only to the fleet view",
+    });
+  });
+
+  it("--help still wins even next to a fleet flag", () => {
+    expect(parseStatusArgs(["--fleet", "x", "--help"], EMPTY)).toEqual({ ok: true, help: true });
+  });
+});
+
+describe("fleets — snapshot, table, json", () => {
+  it("buildSessionSnapshot carries fleet when set and omits it otherwise", () => {
+    expect(buildSessionSnapshot(baseState({ fleet: "team-a" }), [], NOW_MS)?.fleet).toBe("team-a");
+    expect(buildSessionSnapshot(baseState(), [], NOW_MS)).not.toHaveProperty("fleet");
+  });
+
+  it("renderSummaryTable appends a FLEET column only when asked, '-' for untagged rows", () => {
+    const tagged = buildSessionSnapshot(baseState({ fleet: "team-a" }), [], NOW_MS)!;
+    const untagged = buildSessionSnapshot(baseState({ session_id: "sess_bbbbbb0123456789" }), [], NOW_MS)!;
+    const plain = renderSummaryTable([tagged, untagged], NOW_MS);
+    expect(plain.split("\n")[0].endsWith("CWD")).toBe(true);
+    expect(plain).not.toContain("FLEET");
+    const withColumn = renderSummaryTable([tagged, untagged], NOW_MS, { fleetColumn: true });
+    const lines = withColumn.split("\n");
+    expect(lines[0].endsWith("CWD\tFLEET")).toBe(true);
+    expect(lines[1].endsWith("\tteam-a")).toBe(true);
+    expect(lines[2].endsWith("\t-")).toBe(true);
+  });
+
+  it("renderJson carries hidden_in_other_fleets only when above zero", () => {
+    const snap = buildSessionSnapshot(baseState(), [], NOW_MS)!;
+    expect(JSON.parse(renderJson([snap]))).toEqual({ sessions: [snap] });
+    expect(JSON.parse(renderJson([snap], 0))).toEqual({ sessions: [snap] });
+    expect(JSON.parse(renderJson([snap], 2))).toEqual({ sessions: [snap], hidden_in_other_fleets: 2 });
   });
 });

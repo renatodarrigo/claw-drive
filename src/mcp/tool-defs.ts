@@ -14,7 +14,10 @@ export const MCP_TOOL_DEFS: McpToolDef[] = [
       "+ notification_contract (describes the session's vocabulary, surface modes, watch flags, and idle default — " +
       "drivers can read it instead of hardcoding to a specific claw-drive version). " +
       "Optional `wrapper: false` opts out of the sentinel-token wrapper (B doesn't receive the system-prompt " +
-      "injection); when set, `notification_contract.wrapper_enabled` is `false`.",
+      "injection); when set, `notification_contract.wrapper_enabled` is `false`." +
+      " Optional `fleet` tags the session for driver scoping (default: this server's CLAW_DRIVE_FLEET, else its " +
+      "CLAUDE_CODE_SESSION_ID; absent both, the session is untagged and visible to every driver); the response " +
+      "carries `fleet` when one was stamped.",
     inputSchema: {
       type: "object",
       properties: {
@@ -33,6 +36,11 @@ export const MCP_TOOL_DEFS: McpToolDef[] = [
           type: "boolean",
           description:
             "Whether to inject the v0.5.6 sentinel-token contract wrapper into B's system prompt via --append-system-prompt. Default true. Pass false to opt out (raw v0.5.5-style behavior; watch's token filter then has nothing to anchor on, so combine with --no-token-filter).",
+        },
+        fleet: {
+          type: "string",
+          description:
+            "Optional fleet tag scoping this session to a driver: 1-64 chars of letters, digits, '_', '.', '-', starting with a letter or digit. Defaults to the server's CLAW_DRIVE_FLEET, else its CLAUDE_CODE_SESSION_ID; absent both, the session is untagged.",
         },
       },
       required: ["cwd"],
@@ -97,16 +105,29 @@ export const MCP_TOOL_DEFS: McpToolDef[] = [
   {
     name: "list_sessions",
     description:
-      "List sessions on disk (live + orphaned). Orphaned = state.json status is running/ready/starting but runner_pid is dead.",
+      "List sessions on disk (live + orphaned) in the caller's fleet view — the acting fleet's sessions plus untagged ones; " +
+      "other drivers' sessions are hidden and counted in `hidden_in_other_fleets` (present only when above zero). " +
+      "Rows carry `fleet` when the session is tagged. Orphaned = state.json status is running/ready/starting but runner_pid is dead.",
     inputSchema: {
       type: "object",
-      properties: { include_orphaned: { type: "boolean" } },
+      properties: {
+        include_orphaned: { type: "boolean" },
+        fleet: {
+          type: "string",
+          description:
+            "Act as this fleet (default: this server's CLAW_DRIVE_FLEET, else its CLAUDE_CODE_SESSION_ID). Mutually exclusive with all_fleets.",
+        },
+        all_fleets: {
+          type: "boolean",
+          description: "Widen the view to every fleet on this machine. Mutually exclusive with fleet.",
+        },
+      },
     },
   },
   {
     name: "resolve_tool_call",
     description:
-      "Approve or reject a paused tool call by call_id. Scans live sessions; first session holding the call_id wins. Set remember_as_policy to append the resolved decision as a new Rule. Set preview_only to return the rule that would be remembered without resolving or mutating. Set remembered_rule to append an explicit (edited) rule instead of the derived one.",
+      "Approve or reject a paused tool call by call_id. Scans the live sessions in the caller's fleet view; first session holding the call_id wins — pass all_fleets: true (or fleet) to reach a call paused in another driver's session. Set remember_as_policy to append the resolved decision as a new Rule. Set preview_only to return the rule that would be remembered without resolving or mutating. Set remembered_rule to append an explicit (edited) rule instead of the derived one.",
     inputSchema: {
       type: "object",
       properties: {
@@ -116,6 +137,11 @@ export const MCP_TOOL_DEFS: McpToolDef[] = [
         remember_as_policy: { type: "boolean" },
         preview_only: { type: "boolean" },
         remembered_rule: { type: "object" },
+        fleet: {
+          type: "string",
+          description: "Act as this fleet for the scan (default: the server's CLAW_DRIVE_FLEET, else its CLAUDE_CODE_SESSION_ID).",
+        },
+        all_fleets: { type: "boolean", description: "Scan every fleet on this machine. Mutually exclusive with fleet." },
       },
       required: ["call_id", "action", "reason"],
     },

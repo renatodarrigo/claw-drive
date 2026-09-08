@@ -251,6 +251,18 @@ the `init` event lists each server with `{"name":"...","status":"connected"|"pen
   `--max-turns > 1` mode was not probed (only tool results mid-turn were seen).
   May require a second line on stdin or may not be possible in pipe mode.
 
+### Session id in the child environment (observed 2026-09-02, claude 2.1.258)
+
+Claude Code exports `CLAUDE_CODE_SESSION_ID` — the local session UUID — to
+the Bash tool's subprocesses and to the stdio MCP servers it launches
+(checked via `/proc/<pid>/environ` on two live `claw-drive mcp` processes).
+It is absent from the documented environment-variable reference and there
+are open upstream requests for exactly this exposure (anthropics/claude-code
+#25642, #47018), so claw-drive treats it as observed, fail-open behavior: it
+is the default fleet tag when present, and its absence simply leaves sessions
+untagged (see `src/lib/fleet.ts`). Whether it survives `--resume` /
+`--continue` or changes on `/clear` was not probed.
+
 ## Full flag list (relevant subset)
 
 ```

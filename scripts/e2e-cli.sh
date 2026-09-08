@@ -64,6 +64,8 @@ section "empty-state listings"
 expect_exit "sessions on empty home"  0 "$BIN" sessions
 expect_exit "pending on empty home"   0 "$BIN" pending
 expect_exit "prune on empty home"     0 "$BIN" prune
+expect_exit "status --all-fleets on empty home" 0 "$BIN" status --all-fleets
+expect_exit "send --all on empty home (no live session in view → exit 2)" 2 "$BIN" send --all "hello"
 
 section "error handling (exit codes are observed, not assumed)"
 # Observed via running each command against an empty CLAW_DRIVE_HOME:

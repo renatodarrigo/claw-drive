@@ -193,6 +193,7 @@ export async function recoverSession(input: RecoverInput): Promise<RecoverOutcom
     originalBrief,
     wrapper: state.wrapper,
     alias,
+    fleet: state.fleet,
     mcpServers: await readSessionMcpServers(input.sessionId),
     lineage: {
       generation,
