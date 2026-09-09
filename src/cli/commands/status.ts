@@ -114,6 +114,12 @@ export function parseStatusArgs(
   let sessionId: string | undefined;
   let json = false;
 
+  // Fleets: the single-session form takes no fleet flags — reported before
+  // any other check, like every other surface. (`--help` / `-h` alone still wins.)
+  if (fleet.flagsSeen && args.some((a) => !a.startsWith("--") && a !== "-h")) {
+    return { ok: false, error: FLEET_FLAGS_SINGLE_FORM_ERROR };
+  }
+
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === "--help" || a === "-h") return { ok: true, help: true };
@@ -132,9 +138,6 @@ export function parseStatusArgs(
       }
       sessionId = a;
     }
-  }
-  if (sessionId !== undefined && fleet.flagsSeen) {
-    return { ok: false, error: FLEET_FLAGS_SINGLE_FORM_ERROR };
   }
 
   return { ok: true, help: false, sessionId, json, view: fleet.view };

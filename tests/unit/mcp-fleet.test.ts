@@ -8,6 +8,7 @@ import { MCP_TOOL_DEFS } from "../../src/mcp/tool-defs.js";
 import { startSocketServer } from "../../src/runner/socket-server.js";
 import { sessionDir, statePath, socketPath } from "../../src/lib/paths.js";
 import type { ControlRequest, ControlResponse } from "../../src/lib/socket-protocol.js";
+import { FLEET_TAG_MCP_MESSAGE } from "../../src/lib/fleet.js";
 
 let home: string;
 const servers: net.Server[] = [];
@@ -176,5 +177,15 @@ describe("server's own CLAW_DRIVE_FLEET — invalid env surfaces as BAD_REQUEST"
     const res = body(await handleListSessions({}));
     expect(res.error).toBe("BAD_REQUEST");
     expect(res.message).toContain("invalid CLAW_DRIVE_FLEET");
+  });
+});
+
+describe("start_session — fleet validated first", () => {
+  it("an invalid fleet input is reported before cwd, policy, and name are checked", async () => {
+    const res = await handleStartSession({
+      cwd: path.join(home, "does-not-exist"), policy: "nonsense", name: "bad name", fleet: "a b",
+    });
+    expect((res as { isError?: boolean }).isError).toBe(true);
+    expect(body(res).message).toBe(FLEET_TAG_MCP_MESSAGE);
   });
 });

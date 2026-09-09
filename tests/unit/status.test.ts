@@ -848,6 +848,16 @@ describe("fleets — parseStatusArgs", () => {
   it("--help still wins even next to a fleet flag", () => {
     expect(parseStatusArgs(["--fleet", "x", "--help"], EMPTY)).toEqual({ ok: true, help: true });
   });
+
+  it("-h still wins even next to a fleet flag", () => {
+    expect(parseStatusArgs(["--fleet", "x", "-h"], EMPTY)).toEqual({ ok: true, help: true });
+  });
+
+  it("the single-session form reports the fleet-flag error before an invalid id", () => {
+    expect(parseStatusArgs(["not a valid id", "--fleet", "a"], EMPTY)).toEqual({
+      ok: false, error: "--fleet/--all-fleets apply only to the fleet view",
+    });
+  });
 });
 
 describe("fleets — snapshot, table, json", () => {

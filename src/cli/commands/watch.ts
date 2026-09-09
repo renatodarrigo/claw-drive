@@ -461,12 +461,11 @@ export function parseWatchArgs(
       return { ok: false, error: `unknown flag: ${a}` };
     } else {
       // A positional token: the (single) session ref — a canonical id or a
-      // CD-10 alias. Shape-validate here; cmdWatch resolves an alias to its id.
+      // CD-10 alias. Recorded raw here; shape-validated after the fleet
+      // check below, so a fleet-flag error on a malformed id is reported
+      // first, like every other surface. cmdWatch resolves an alias to its id.
       if (sessionId !== null) {
         return { ok: false, error: "at most one session id" };
-      }
-      if (!isValidSessionId(a) && !isValidAlias(a)) {
-        return { ok: false, error: "session id missing or malformed" };
       }
       sessionId = a;
     }
@@ -493,11 +492,11 @@ export function parseWatchArgs(
         "--all and --follow-lineage are mutually exclusive — --all already tails every live session in the fleet view, successors included",
     };
   }
-  if (!all && sessionId === null) {
-    return { ok: false, error: "session id missing or malformed" };
-  }
   if (!all && fleet.flagsSeen) {
     return { ok: false, error: FLEET_FLAGS_SINGLE_FORM_ERROR };
+  }
+  if (!all && (sessionId === null || (!isValidSessionId(sessionId) && !isValidAlias(sessionId)))) {
+    return { ok: false, error: "session id missing or malformed" };
   }
 
   return all
