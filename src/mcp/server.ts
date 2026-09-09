@@ -317,7 +317,6 @@ export async function handleListSessions(args: Record<string, any>) {
   const includeOrphaned = args.include_orphaned ?? true;
   const v = resolveMcpView(args);
   if (!v.ok) return v.error;
-  if (!(await sessionsRootExists())) return ok({ sessions: [] });
   const rows = await listSessions(v.view);
   const out: any[] = [];
   let hidden = 0;
