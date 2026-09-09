@@ -211,4 +211,22 @@ describe("cmdPending — fleet view", () => {
       errSpy.mockRestore();
     }
   });
+
+  it("--fleet team-b acts as that fleet; --fleet with --all-fleets and an invalid tag exit 2", async () => {
+    await setupSession("sess_own", [makeDecisionEvent("ls own")], { fleet: "team-a" });
+    await setupSession("sess_other", [makeDecisionEvent("ls other")], { fleet: "team-b" });
+    const { code, captured } = await captureStdout(() => cmdPending(["--fleet", "team-b"]));
+    expect(code).toBe(0);
+    expect(captured.trim().split("\n").map((l) => (JSON.parse(l) as { session_id: string }).session_id)).toEqual(["sess_other"]);
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(await cmdPending(["--fleet", "team-b", "--all-fleets"])).toBe(2);
+      expect(await cmdPending(["--fleet", "a b"])).toBe(2);
+      const err = errSpy.mock.calls.flat().join("\n");
+      expect(err).toContain("--fleet and --all-fleets are mutually exclusive");
+      expect(err).toContain("invalid --fleet 'a b'");
+    } finally {
+      errSpy.mockRestore();
+    }
+  });
 });

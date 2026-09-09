@@ -185,6 +185,18 @@ describe("parseFleetFlags", () => {
       flagsSeen: false,
     });
   });
+
+  it("--fleet given twice: the last one wins", () => {
+    expect(parseFleetFlags(["--fleet", "a", "--fleet", "b"], EMPTY)).toEqual({
+      ok: true, rest: [], view: { acting: "b", allFleets: false }, flagsSeen: true,
+    });
+  });
+
+  it("an invalid tag next to --all-fleets reports the mutual-exclusion error (checked before validation)", () => {
+    expect(parseFleetFlags(["--fleet", "a b", "--all-fleets"], EMPTY)).toEqual({
+      ok: false, error: "--fleet and --all-fleets are mutually exclusive",
+    });
+  });
 });
 
 describe("shared strings", () => {

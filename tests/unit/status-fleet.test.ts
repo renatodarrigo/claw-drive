@@ -84,6 +84,15 @@ describe("claw-drive status — fleet view", () => {
     expect(r.err).toBe("(1 session in other fleets hidden; --all-fleets shows them)");
   });
 
+  it("--fleet with --all-fleets, and an invalid --fleet tag, exit 2 with the parser's message", async () => {
+    const both = await run(["--fleet", "team-b", "--all-fleets"]);
+    expect(both.code).toBe(2);
+    expect(both.err).toBe("--fleet and --all-fleets are mutually exclusive");
+    const bad = await run(["--fleet", "a b"]);
+    expect(bad.code).toBe(2);
+    expect(bad.err).toMatch(/^invalid --fleet 'a b'/);
+  });
+
   it("--json carries fleet per row and hidden_in_other_fleets, with nothing on stderr", async () => {
     const r = await run(["--json"]);
     const body = JSON.parse(r.out) as { sessions: Array<{ session_id: string; fleet?: string }>; hidden_in_other_fleets?: number };

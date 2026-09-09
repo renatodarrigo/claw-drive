@@ -211,6 +211,13 @@ describe("fleet stamp (fleets)", () => {
     expect((await readState(statePath(a)))!.fleet).toBe("team-a");
     const b = "sess_20260902T000000_fleet2";
     await scaffoldSessionDir(baseInput(b));
-    expect(await readState(statePath(b))).not.toHaveProperty("fleet");
+    const stateB = await readState(statePath(b));
+    expect(stateB).toMatchObject({ session_id: b });
+    expect(stateB).not.toHaveProperty("fleet");
+    const c = "sess_20260902T000000_fleet3";
+    await scaffoldSessionDir({ ...baseInput(c), fleet: "" });
+    const stateC = await readState(statePath(c));
+    expect(stateC).toMatchObject({ session_id: c });
+    expect(stateC).not.toHaveProperty("fleet");
   });
 });

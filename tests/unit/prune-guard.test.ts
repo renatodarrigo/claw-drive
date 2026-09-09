@@ -112,6 +112,15 @@ describe("prune — fleet view", () => {
     expect(await exists(sessionDir("sess_20200101T000000_fre002"))).toBe(false);
     expect(await exists(sessionDir("sess_20200101T000000_bad001"))).toBe(true);
   });
+
+  it("--fleet TAG interleaved with --older-than and --force acts as that fleet", async () => {
+    await deadSession("sess_20200101T000000_oth003", { fleet: "team-b" });
+    await fs.writeFile(crashHandoverPath("sess_20200101T000000_oth003"), "x");
+    await deadSession("sess_20200101T000000_own003", { fleet: "team-a" });
+    await cmdPrune(["--older-than", "1h", "--fleet", "team-b", "--force"]);
+    expect(await exists(sessionDir("sess_20200101T000000_oth003"))).toBe(false);
+    expect(await exists(sessionDir("sess_20200101T000000_own003"))).toBe(true);
+  });
 });
 
 describe("prune — argv hygiene", () => {

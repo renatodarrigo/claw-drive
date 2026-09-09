@@ -3,6 +3,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
 import { startWatchMultiplexer } from "../../src/lib/watch-multiplexer.js";
+import type { FleetView } from "../../src/lib/fleet.js";
 
 let root: string;
 let prevHome: string | undefined;
@@ -56,10 +57,21 @@ async function waitUntil(cond: () => boolean, ms = 5000): Promise<void> {
   }
 }
 
-function collect(view: { acting: string | undefined; allFleets: boolean }) {
+function collect(view: FleetView) {
   const lines: string[] = [];
   const mux = startWatchMultiplexer({ emit: (l) => lines.push(l), filters: FILTERS, view, rescanIntervalMs: 25 });
   return { lines, mux };
+}
+
+/** Run `body` against a live multiplexer and close it even when an assertion throws. */
+async function withMux(view: FleetView, body: (lines: string[]) => Promise<void>): Promise<void> {
+  const { lines, mux } = collect(view);
+  try {
+    await body(lines);
+  } finally {
+    mux.close();
+    await mux.done;
+  }
 }
 
 beforeEach(async () => {
@@ -79,34 +91,31 @@ describe("startWatchMultiplexer — fleet view membership", () => {
     await makeSession("sess_own", { fleet: "A" });
     await makeSession("sess_other", { fleet: "B" });
     await makeSession("sess_free");
-    const { lines, mux } = collect({ acting: "A", allFleets: false });
-    await waitUntil(() => seen(lines).has("sess_own") && seen(lines).has("sess_free"));
-    await new Promise((r) => setTimeout(r, 100)); // several rescans: the other fleet must still be absent
-    expect(seen(lines).has("sess_other")).toBe(false);
-    mux.close();
-    await mux.done;
+    await withMux({ acting: "A", allFleets: false }, async (lines) => {
+      await waitUntil(() => seen(lines).has("sess_own") && seen(lines).has("sess_free"));
+      await new Promise((r) => setTimeout(r, 100)); // several rescans: the other fleet must still be absent
+      expect(seen(lines).has("sess_other")).toBe(false);
+    });
   });
 
   it("--all-fleets tails every fleet", async () => {
     await makeSession("sess_own", { fleet: "A" });
     await makeSession("sess_other", { fleet: "B" });
-    const { lines, mux } = collect({ acting: "A", allFleets: true });
-    await waitUntil(() => seen(lines).has("sess_own") && seen(lines).has("sess_other"));
-    mux.close();
-    await mux.done;
+    await withMux({ acting: "A", allFleets: true }, async (lines) => {
+      await waitUntil(() => seen(lines).has("sess_own") && seen(lines).has("sess_other"));
+    });
   });
 
   it("the rescan admits a later own-fleet session and keeps ignoring another fleet's", async () => {
     await makeSession("sess_free");
-    const { lines, mux } = collect({ acting: "A", allFleets: false });
-    await waitUntil(() => seen(lines).has("sess_free"));
-    await makeSession("sess_late_own", { fleet: "A" });
-    await makeSession("sess_late_other", { fleet: "B" });
-    await waitUntil(() => seen(lines).has("sess_late_own"));
-    await new Promise((r) => setTimeout(r, 100));
-    expect(seen(lines).has("sess_late_other")).toBe(false);
-    mux.close();
-    await mux.done;
+    await withMux({ acting: "A", allFleets: false }, async (lines) => {
+      await waitUntil(() => seen(lines).has("sess_free"));
+      await makeSession("sess_late_own", { fleet: "A" });
+      await makeSession("sess_late_other", { fleet: "B" });
+      await waitUntil(() => seen(lines).has("sess_late_own"));
+      await new Promise((r) => setTimeout(r, 100));
+      expect(seen(lines).has("sess_late_other")).toBe(false);
+    });
   });
 });
 
@@ -114,29 +123,24 @@ describe("startWatchMultiplexer — fleet tag on lines", () => {
   it("lines from a tagged member carry fleet; an untagged member's lines do not", async () => {
     await makeSession("sess_own", { fleet: "A", alias: "reviewer" });
     await makeSession("sess_free");
-    const { lines, mux } = collect({ acting: "A", allFleets: false });
-    await waitUntil(() => seen(lines).has("sess_own") && seen(lines).has("sess_free"));
-    const own = lines.map((l) => JSON.parse(l)).find((p) => p.session_id === "sess_own");
-    const free = lines.map((l) => JSON.parse(l)).find((p) => p.session_id === "sess_free");
-    expect(own.alias).toBe("reviewer");
-    expect(own.fleet).toBe("A");
-    expect(free).not.toHaveProperty("fleet");
-    mux.close();
-    await mux.done;
+    await withMux({ acting: "A", allFleets: false }, async (lines) => {
+      await waitUntil(() => seen(lines).has("sess_own") && seen(lines).has("sess_free"));
+      const own = lines.map((l) => JSON.parse(l)).find((p) => p.session_id === "sess_own");
+      const free = lines.map((l) => JSON.parse(l)).find((p) => p.session_id === "sess_free");
+      expect(own.alias).toBe("reviewer");
+      expect(own.fleet).toBe("A");
+      expect(free).not.toHaveProperty("fleet");
+    });
   });
 
   it("a member whose state carries an empty fleet emits no fleet key", async () => {
     await makeSession("sess_blank", { fleet: "" });
-    const { lines, mux } = collect({ acting: "A", allFleets: false });
-    try {
+    await withMux({ acting: "A", allFleets: false }, async (lines) => {
       await waitUntil(() => seen(lines).has("sess_blank"));
       const line = lines
         .map((l) => JSON.parse(l) as Record<string, unknown>)
         .find((l) => l.session_id === "sess_blank");
       expect(line).not.toHaveProperty("fleet");
-    } finally {
-      mux.close();
-      await mux.done;
-    }
+    });
   });
 });

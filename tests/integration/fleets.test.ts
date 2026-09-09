@@ -96,7 +96,10 @@ describe("fleets (integration, through the binary)", () => {
     expect(lines.map((l) => l.session_id)).toEqual(["sess_free000000000001", "sess_own000000000001"]);
     expect(lines.every((l) => l.ok === false && l.error === "SESSION_UNREACHABLE")).toBe(true);
     expect(lines[1]).toMatchObject({ alias: "reviewer", fleet: "team-a" });
-    // Stop the untagged session: with it dead, a fleet nobody uses sees no live session at all.
+  });
+
+  it("send --all with no live session in view exits 2 and names the live sessions hidden in other fleets", async () => {
+    // With the untagged session dead, a fleet nobody uses sees no live session at all.
     await fs.writeFile(path.join(root, "sessions", "sess_free000000000001", "state.json"), stateJson("sess_free000000000001", { status: "stopped", runner_pid: null }));
     const empty = await runCliBlocking(binPath, env({ CLAW_DRIVE_FLEET: "team-z" }), ["send", "--all", "wrap up"]);
     expect(empty.code).toBe(2);
