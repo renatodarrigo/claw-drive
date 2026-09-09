@@ -48,11 +48,12 @@ POLICY & SAFETY
     escalate       pause and ask you.
     auto_defer     deny in B and hand the command to the human to run locally;
                    feed the result back with provide-output.
-  Templates: starter (conservative, the default), permissive (adds common dev
-  CLIs), bypass (approve everything — sandboxes only). A session budget /
-  circuit-breaker caps spend and trips on repeated failures. Unresolved
-  decisions fail secure after decision_timeout_seconds (default 3600). Lint a
-  policy with 'policy lint'; dry-run a command against one with 'policy-test'.
+  Templates: starter (conservative), permissive (adds common dev CLIs), bypass
+  (approve everything — sandboxes only). A session started with no policy
+  runs under bypass, so pass one. A session budget / circuit-breaker caps
+  spend and trips on repeated failures. Unresolved decisions fail secure after
+  decision_timeout_seconds (default 3600). Lint a policy with 'policy lint';
+  dry-run a command against one with 'policy-test'.
   A rotation block bounds context per session: at threshold_tokens the runner
   emits context_threshold_reached (re-fires each completed turn while above)
   and 'rotate' becomes available; max_generations (default 10) caps the

@@ -58,7 +58,7 @@
     <ul>
       <li><code>&lt;cwd&gt;</code> — absolute or <code>~</code>-relative path to a project. Must exist and not equal the parent session's cwd.</li>
       <li><code>--brief &lt;file&gt;</code> — scenario brief. If omitted, the skill asks for one inline.</li>
-      <li><code>--policy &lt;file&gt;</code> — policy JSON. If omitted, claw-drive uses the conservative starter.</li>
+      <li><code>--policy &lt;file&gt;</code> — policy JSON. If omitted, the skill loads the conservative starter template shipped with claw-drive (claw-drive's own default with no policy is <code>"bypass"</code>).</li>
       <li><code>--verbose</code> — bypass both the sentinel-token wrapper injection (B never sees the contract) and the watch-side sentinel filter (every <code>turn_completed</code> surfaces). Equivalent to <code>start_session({wrapper: false})</code> + <code>claw-drive watch &lt;id&gt; --no-token-filter</code>. Use this if you orchestrate based on raw <code>turn_completed</code> events rather than B's <code>[TOKEN]</code> signals.</li>
     </ul>
 
