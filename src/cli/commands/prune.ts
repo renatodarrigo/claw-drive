@@ -12,6 +12,12 @@ function parseDuration(s: string): number {
   return n * (unit === "s" ? 1000 : unit === "m" ? 60000 : unit === "h" ? 3600000 : 86400000);
 }
 
+const USAGE =
+  "usage: claw-drive prune [--older-than 24h] [--force] [--fleet TAG] [--all-fleets]\n" +
+  "  removes dead sessions in the fleet view started before the cutoff (default 24h);\n" +
+  "  --force also removes a dead session whose crash handover was never consumed;\n" +
+  "  --help / -h print this text; any other argument is an error and removes nothing";
+
 export async function cmdPrune(argv: string[]): Promise<number> {
   // Fleets: prune deletes only within the fleet view — another driver's dead
   // sessions are theirs to prune; --all-fleets widens deliberately.
@@ -24,8 +30,30 @@ export async function cmdPrune(argv: string[]): Promise<number> {
   let olderThan = parseDuration("24h");
   let force = false;
   for (let i = 0; i < args.length; i++) {
-    if (args[i] === "--older-than") olderThan = parseDuration(args[++i] ?? "24h");
-    else if (args[i] === "--force") force = true;
+    const a = args[i];
+    if (a === "--help" || a === "-h") {
+      console.log(USAGE);
+      return 0;
+    }
+    if (a === "--older-than") {
+      const v = args[++i];
+      if (v === undefined) {
+        console.error("--older-than requires a duration such as 24h");
+        return 2;
+      }
+      try {
+        olderThan = parseDuration(v);
+      } catch (e) {
+        console.error((e as Error).message);
+        return 2;
+      }
+    } else if (a === "--force") {
+      force = true;
+    } else {
+      // A destructive command must not run on an argument it does not know.
+      console.error(`unknown argument: ${a}\n${USAGE}`);
+      return 2;
+    }
   }
   const cutoff = Date.now() - olderThan;
   if (!(await sessionsRootExists())) return 0;

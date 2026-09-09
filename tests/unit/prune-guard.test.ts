@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -111,5 +111,44 @@ describe("prune — fleet view", () => {
     await expect(cmdPrune([])).resolves.toBe(0);
     expect(await exists(sessionDir("sess_20200101T000000_fre002"))).toBe(false);
     expect(await exists(sessionDir("sess_20200101T000000_bad001"))).toBe(true);
+  });
+});
+
+describe("prune — argv hygiene", () => {
+  it("--help / -h print usage and exit 0 without touching the sessions root", async () => {
+    await deadSession("sess_20200101T000000_help01");
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      expect(await cmdPrune(["--help"])).toBe(0);
+      expect(await cmdPrune(["-h"])).toBe(0);
+      expect(log.mock.calls.flat().join("\n")).toContain("usage: claw-drive prune");
+    } finally {
+      log.mockRestore();
+    }
+    expect(await exists(sessionDir("sess_20200101T000000_help01"))).toBe(true);
+  });
+
+  it("an unknown flag or a positional exits 2 and prunes nothing", async () => {
+    await deadSession("sess_20200101T000000_unkn01");
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(await cmdPrune(["--bogus"])).toBe(2);
+      expect(await cmdPrune(["sess_20200101T000000_unkn01"])).toBe(2);
+      expect(err.mock.calls.flat().join("\n")).toContain("unknown argument: --bogus");
+    } finally {
+      err.mockRestore();
+    }
+    expect(await exists(sessionDir("sess_20200101T000000_unkn01"))).toBe(true);
+  });
+
+  it("a missing or invalid --older-than value exits 2 with a message, not a stack trace", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(await cmdPrune(["--older-than", "soon"])).toBe(2);
+      expect(await cmdPrune(["--older-than"])).toBe(2);
+      expect(err.mock.calls.flat().join("\n")).toContain("invalid duration: soon");
+    } finally {
+      err.mockRestore();
+    }
   });
 });

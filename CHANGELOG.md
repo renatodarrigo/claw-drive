@@ -10,6 +10,7 @@
 - **Fleet flags are rejected before any other check on every single-session form.** `watch --all-fleets` reported a missing session id, `status <bad-id> --fleet x` reported the bad id, and `start_session` validated `cwd`, the policy, and `name` before an invalid `fleet`; each now reports the fleet-flag error first, as `send`, `pending`, and `claw-drive start` already did. Only a call that is wrong in two ways sees a different message.
 - **`send --all` says when the view hid live sessions.** The count of live sessions in other fleets was printed only when the view was empty (exit 2); a non-empty broadcast prints the same stderr note — `(N live in other fleets not sent; --all-fleets broadcasts to them)` — with stdout and the exit codes unchanged.
 - **`status` no longer prints `?` for a session that was active while the table was being built.** The age column is computed against one clock reading taken before the sessions are enumerated, so a session whose last event landed during the enumeration had a negative age and printed `?`; it prints `0s ago`.
+- **`prune --help` prints usage instead of pruning.** `prune` ignored arguments it did not recognize and ran with its defaults, so `--help` (or a typo) removed every dead session older than 24 hours in the view. `--help` / `-h` print usage and exit 0; any other unrecognized argument, a missing `--older-than` value, or an invalid duration exits 2 before the sessions root is touched.
 
 ## [1.10.0] — 2026-09-09
 

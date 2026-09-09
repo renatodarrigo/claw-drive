@@ -454,7 +454,7 @@ each completes, not just the stream's own cost reading.
 | `policy <session>` | `--set FILE`, `--show` |
 | `policy-test '<command>'` | `--tool TOOL`, `--arg KEY=VALUE`, `--policy SPEC`, `--explain`, `--json`, `--exit-on DECISION`, `--no-color`, `--help` / `-h` |
 | `status [<session>]` | `--json`, `--help` / `-h`, `--fleet TAG`, `--all-fleets` (no-argument form only) |
-| `prune` | `--older-than DURATION`, `--force`, `--fleet TAG`, `--all-fleets` |
+| `prune` | `--older-than DURATION`, `--force`, `--fleet TAG`, `--all-fleets`, `--help` / `-h` |
 | `provide-output <call_id>` | `--stdout S`, `--stderr S`, `--exit N`, `--extra S`, `--from-file PATH`, `--fleet TAG`, `--all-fleets` |
 
 **Global flags** (handled before subcommand dispatch):
