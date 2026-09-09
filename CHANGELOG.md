@@ -6,6 +6,7 @@
 
 - **A hand-edited empty or null `fleet` tag reads as untagged everywhere.** The in-view predicate treated any present `fleet` key as a tag, so such a session was hidden from every default view, while the tables and machine lines rendered it as untagged; one shared presence test — a non-empty string — now decides both, and lineage successors inherit only a real tag.
 - **`(no sessions)` is back when the sessions root is not a directory.** The root check accepted any path that merely existed, so a plain file at `~/.claw-drive/sessions` produced an empty table (exit 0) instead of the `(no sessions)` line the listings print for a missing root; the check requires a directory.
+- **`status <id>` tells a corrupt state file from an unknown id again.** Since the listings began skipping an unparseable `state.json`, an explicit id pointing at one reported `session not found`; it reports `session not found or unreadable` when the file exists but cannot be read (exit 1 either way).
 
 ## [1.10.0] — 2026-09-09
 

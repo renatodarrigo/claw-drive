@@ -109,4 +109,16 @@ describe("claw-drive status — fleet view", () => {
     expect(r.out).toContain("sess_free");
     expect(r.err).toBe("(2 sessions in other fleets hidden; --all-fleets shows them)");
   });
+
+  it("an explicit id whose state.json is corrupt says 'not found or unreadable'; an unknown id says 'not found'", async () => {
+    const dir = path.join(home, "sessions", "sess_corrupt00000001");
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(path.join(dir, "state.json"), "{nope");
+    const corrupt = await run(["sess_corrupt00000001"]);
+    expect(corrupt.code).toBe(1);
+    expect(corrupt.err).toBe("session not found or unreadable");
+    const unknown = await run(["sess_missing00000001"]);
+    expect(unknown.code).toBe(1);
+    expect(unknown.err).toBe("session not found");
+  });
 });

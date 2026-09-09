@@ -1,4 +1,5 @@
-import { eventsPath, isValidSessionId } from "../../lib/paths.js";
+import * as fs from "node:fs/promises";
+import { eventsPath, isValidSessionId, statePath } from "../../lib/paths.js";
 import { isValidAlias, resolveSessionRef, aliasWithGeneration } from "../../lib/alias.js";
 import { parseFleetFlags, hiddenFleetsHint, isTagged, FLEET_FLAGS_SINGLE_FORM_ERROR, type FleetView } from "../../lib/fleet.js";
 import { listSessions, type SessionRow } from "../../lib/live-sessions.js";
@@ -569,7 +570,10 @@ export async function cmdStatus(argv: string[]): Promise<number> {
     const targetId = (await resolveSessionRef(parsed.sessionId)) ?? parsed.sessionId;
     const row = rows.find((r) => r.id === targetId);
     if (row === undefined) {
-      console.error("session not found");
+      // The enumerator skips a state.json it cannot parse — tell that apart
+      // from an id that has no directory at all.
+      const stateOnDisk = await fs.access(statePath(targetId)).then(() => true, () => false);
+      console.error(stateOnDisk ? "session not found or unreadable" : "session not found");
       return 1;
     }
     const snap = await buildSnapshotForRow(row, nowMs);
