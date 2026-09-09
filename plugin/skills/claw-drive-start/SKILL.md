@@ -36,7 +36,7 @@ The user has invoked this skill to kick off a driven session. This is the standa
      "wrapper": <false if --verbose, else omit>
    }
    ```
-   Capture the response: `{ session_id, watch_command, notification_contract }`. The `notification_contract` describes the session's vocabulary, surface modes, watch flags, and the idle default — read it programmatically rather than hardcoding to a specific claw-drive version.
+   Capture the response: `{ session_id, watch_command, notification_contract, fleet? }`. The `notification_contract` describes the session's vocabulary, surface modes, watch flags, and the idle default — read it programmatically rather than hardcoding to a specific claw-drive version. `fleet` is the tag stamped on the session (the server's acting fleet). Keep it: after a `/clear` the session id Bash sees changes while the MCP server's does not (observed on claude 2.1.261), so `claw-drive` calls made from Bash need `--fleet <that tag>` (or `--all-fleets`) to see this session.
 
    The runner queues `scenario_brief` as Session B's first user turn on its own — do NOT also send the brief with `send_turn`, or B receives the mission twice.
 

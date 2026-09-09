@@ -16,7 +16,9 @@
  *   3. observed  — CLAUDE_CODE_SESSION_ID (Claude Code exports its session
  *                  UUID to Bash subprocesses and stdio MCP servers; observed
  *                  on claude 2.1.258, not a documented guarantee — a
- *                  malformed or absent value simply yields no identity)
+ *                  malformed or absent value simply yields no identity; on
+ *                  2.1.261 it changes on /clear while a running MCP server
+ *                  keeps its launch-time value, and --resume keeps it)
  *   4. none      — the view is untagged sessions only
  *
  * Explicit ids and aliases are never scoped: only enumeration is.
