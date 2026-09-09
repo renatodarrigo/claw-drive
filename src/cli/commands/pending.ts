@@ -1,5 +1,5 @@
 import { statePath, eventsPath } from "../../lib/paths.js";
-import { readState, isPidAlive } from "../../lib/state.js";
+import { readState, isPidAlive, type SessionState } from "../../lib/state.js";
 import { readEventsSince } from "../../lib/events.js";
 import { resolveSessionRef } from "../../lib/alias.js";
 import { parseFleetFlags, FLEET_FLAGS_SINGLE_FORM_ERROR, isTagged } from "../../lib/fleet.js";
@@ -14,7 +14,10 @@ export async function cmdPending(argv: string[]): Promise<number> {
     return 2;
   }
   const target = fleet.rest[0];
-  let ids: string[];
+  // Each target carries the state it was enumerated (or resolved) with, so
+  // the loop below never re-reads state.json. The liveness rule is unchanged:
+  // a session whose runner pid is dead lists nothing.
+  const targets: Array<{ id: string; state: SessionState }> = [];
   if (target) {
     if (fleet.flagsSeen) {
       console.error(FLEET_FLAGS_SINGLE_FORM_ERROR);
@@ -26,17 +29,19 @@ export async function cmdPending(argv: string[]): Promise<number> {
       console.error(`no live session for '${target}'`);
       return 2;
     }
-    ids = [id];
+    const s = await readState(statePath(id));
+    if (s) targets.push({ id, state: s });
   } else {
     if (!(await sessionsRootExists())) {
       console.log("(no sessions)");
       return 0;
     }
-    ids = (await listSessions(fleet.view)).filter((r) => r.inView).map((r) => r.id);
+    for (const r of await listSessions(fleet.view)) {
+      if (r.inView) targets.push({ id: r.id, state: r.state });
+    }
   }
-  for (const id of ids) {
-    const s = await readState(statePath(id));
-    if (!s || (s.runner_pid && !isPidAlive(s.runner_pid))) continue;
+  for (const { id, state: s } of targets) {
+    if (s.runner_pid && !isPidAlive(s.runner_pid)) continue;
     const events = (await readEventsSince(eventsPath(id), 0)).events;
     const resolved = new Set(
       events.filter((e) => e.kind === "tool_decision_resolved").map((e) => (e as any).call_id as string)

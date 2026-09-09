@@ -1,9 +1,8 @@
-import { eventsPath, statePath, isValidSessionId } from "../../lib/paths.js";
+import { eventsPath, isValidSessionId } from "../../lib/paths.js";
 import { isValidAlias, resolveSessionRef, aliasWithGeneration } from "../../lib/alias.js";
 import { parseFleetFlags, hiddenFleetsHint, isTagged, FLEET_FLAGS_SINGLE_FORM_ERROR, type FleetView } from "../../lib/fleet.js";
-import { listSessions } from "../../lib/live-sessions.js";
+import { listSessions, type SessionRow } from "../../lib/live-sessions.js";
 import {
-  readState,
   isPidAlive,
   type SessionState,
   type SessionStatus as SessionStateStatus,
@@ -507,21 +506,17 @@ export function renderJson(snap: SessionSnapshot | SessionSnapshot[], hiddenInOt
   return JSON.stringify(snap);
 }
 
-async function buildSnapshotForId(id: string, nowMs: number): Promise<SessionSnapshot | null> {
-  let state: SessionState | null;
-  try {
-    state = await readState(statePath(id));
-  } catch {
-    return null;
-  }
-  if (state === null) return null;
+/** Snapshot a session from the state it was enumerated with — nothing here re-reads state.json. */
+async function buildSnapshotForRow(row: SessionRow, nowMs: number): Promise<SessionSnapshot> {
   let events: Event[] = [];
   try {
-    events = (await readEventsSince(eventsPath(id), 0)).events;
+    events = (await readEventsSince(eventsPath(row.id), 0)).events;
   } catch {
     events = [];
   }
-  return buildSessionSnapshot(state, events, nowMs);
+  // row.state is never null (SessionRow only carries parsed state), so the
+  // null branch of buildSessionSnapshot is unreachable here.
+  return buildSessionSnapshot(row.state, events, nowMs)!;
 }
 
 function printUsage(): void {
@@ -561,11 +556,10 @@ export async function cmdStatus(argv: string[]): Promise<number> {
   }
 
   const nowMs = Date.now();
-  // Fleets: one enumeration; rows carry inView per the acting fleet. A
-  // missing root simply yields no rows (the outputs below are the same as
-  // an empty root's, so the old readdir special-case is gone).
+  // Fleets: one enumeration; rows carry inView per the acting fleet and the
+  // state they were enumerated with — nothing below re-reads state.json. A
+  // missing root simply yields no rows.
   const rows = await listSessions(parsed.view);
-  const ids = rows.map((r) => r.id);
 
   if (parsed.sessionId) {
     // CD-10: resolve an alias to its canonical id (a canonical id passes
@@ -573,15 +567,12 @@ export async function cmdStatus(argv: string[]): Promise<number> {
     // back to the raw arg for canonical ids of stopped sessions still on disk.
     // An explicit id is explicit intent: it resolves whatever fleet it is in.
     const targetId = (await resolveSessionRef(parsed.sessionId)) ?? parsed.sessionId;
-    if (!ids.includes(targetId)) {
+    const row = rows.find((r) => r.id === targetId);
+    if (row === undefined) {
       console.error("session not found");
       return 1;
     }
-    const snap = await buildSnapshotForId(targetId, nowMs);
-    if (snap === null) {
-      console.error("session not found or unreadable");
-      return 1;
-    }
+    const snap = await buildSnapshotForRow(row, nowMs);
     if (parsed.json) {
       console.log(renderJson(snap));
     } else {
@@ -597,8 +588,7 @@ export async function cmdStatus(argv: string[]): Promise<number> {
       hidden++;
       continue;
     }
-    const snap = await buildSnapshotForId(row.id, nowMs);
-    if (snap !== null) snaps.push(snap);
+    snaps.push(await buildSnapshotForRow(row, nowMs));
   }
 
   if (parsed.json) {
