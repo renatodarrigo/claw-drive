@@ -16,6 +16,7 @@ import {
   statePath,
 } from "./paths.js";
 import { writeState, type SessionState } from "./state.js";
+import { isTagged } from "./fleet.js";
 import type { Policy } from "./policy.js";
 
 export function newSessionId(): string {
@@ -124,7 +125,7 @@ export async function scaffoldSessionDir(input: ScaffoldInput): Promise<void> {
   }
   if (input.wrapper !== undefined) state.wrapper = input.wrapper;
   if (input.alias !== undefined) state.alias = input.alias;
-  if (input.fleet !== undefined) state.fleet = input.fleet;
+  if (isTagged(input.fleet)) state.fleet = input.fleet;
   if (input.lineage) {
     state.generation = input.lineage.generation;
     state.root_session_id = input.lineage.root_session_id;

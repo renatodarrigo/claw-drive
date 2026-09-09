@@ -2,7 +2,7 @@ import { statePath, eventsPath } from "../../lib/paths.js";
 import { readState, isPidAlive } from "../../lib/state.js";
 import { readEventsSince } from "../../lib/events.js";
 import { resolveSessionRef } from "../../lib/alias.js";
-import { parseFleetFlags, FLEET_FLAGS_SINGLE_FORM_ERROR } from "../../lib/fleet.js";
+import { parseFleetFlags, FLEET_FLAGS_SINGLE_FORM_ERROR, isTagged } from "../../lib/fleet.js";
 import { listSessions, sessionsRootExists } from "../../lib/live-sessions.js";
 
 export async function cmdPending(argv: string[]): Promise<number> {
@@ -56,7 +56,7 @@ export async function cmdPending(argv: string[]): Promise<number> {
         ...(s.alias ? { alias: s.alias } : {}),
         ...(s.generation !== undefined ? { generation: s.generation } : {}),
         // Fleets: additive, present only when the session is tagged.
-        ...(s.fleet ? { fleet: s.fleet } : {}),
+        ...(isTagged(s.fleet) ? { fleet: s.fleet } : {}),
       };
       console.log(JSON.stringify({ ...tag, ...p }));
     }

@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **A hand-edited empty or null `fleet` tag reads as untagged everywhere.** The in-view predicate treated any present `fleet` key as a tag, so such a session was hidden from every default view, while the tables and machine lines rendered it as untagged; one shared presence test — a non-empty string — now decides both, and lineage successors inherit only a real tag.
+
 ## [1.10.0] — 2026-09-09
 
 ### Added

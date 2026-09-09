@@ -124,4 +124,19 @@ describe("startWatchMultiplexer — fleet tag on lines", () => {
     mux.close();
     await mux.done;
   });
+
+  it("a member whose state carries an empty fleet emits no fleet key", async () => {
+    await makeSession("sess_blank", { fleet: "" });
+    const { lines, mux } = collect({ acting: "A", allFleets: false });
+    try {
+      await waitUntil(() => seen(lines).has("sess_blank"));
+      const line = lines
+        .map((l) => JSON.parse(l) as Record<string, unknown>)
+        .find((l) => l.session_id === "sess_blank");
+      expect(line).not.toHaveProperty("fleet");
+    } finally {
+      mux.close();
+      await mux.done;
+    }
+  });
 });

@@ -2,7 +2,7 @@ import { eventsPath } from "../../lib/paths.js";
 import { isPidAlive } from "../../lib/state.js";
 import { readEventsSince } from "../../lib/events.js";
 import { aliasWithGeneration } from "../../lib/alias.js";
-import { parseFleetFlags, hiddenFleetsHint } from "../../lib/fleet.js";
+import { parseFleetFlags, hiddenFleetsHint, isTagged } from "../../lib/fleet.js";
 import { listSessions, sessionsRootExists } from "../../lib/live-sessions.js";
 
 export async function cmdSessions(argv: string[]): Promise<number> {
@@ -46,7 +46,7 @@ export async function cmdSessions(argv: string[]): Promise<number> {
     // render byte-identically to before.
     const idCell = s.alias ? `${id} (${aliasWithGeneration(s.alias, s.generation)})` : id;
     out.push(
-      [idCell, status, String(s.turns), String(pending), s.cwd, ...(fleetColumn ? [s.fleet ?? "-"] : [])].join("\t")
+      [idCell, status, String(s.turns), String(pending), s.cwd, ...(fleetColumn ? [isTagged(s.fleet) ? s.fleet : "-"] : [])].join("\t")
     );
   }
   console.log(out.join("\n"));

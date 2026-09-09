@@ -1,6 +1,6 @@
 import { eventsPath, statePath, isValidSessionId } from "../../lib/paths.js";
 import { isValidAlias, resolveSessionRef, aliasWithGeneration } from "../../lib/alias.js";
-import { parseFleetFlags, hiddenFleetsHint, FLEET_FLAGS_SINGLE_FORM_ERROR, type FleetView } from "../../lib/fleet.js";
+import { parseFleetFlags, hiddenFleetsHint, isTagged, FLEET_FLAGS_SINGLE_FORM_ERROR, type FleetView } from "../../lib/fleet.js";
 import { listSessions } from "../../lib/live-sessions.js";
 import {
   readState,
@@ -302,7 +302,7 @@ export function buildSessionSnapshot(
   return {
     session_id: state.session_id,
     ...(state.alias ? { alias: state.alias } : {}),
-    ...(state.fleet ? { fleet: state.fleet } : {}),
+    ...(isTagged(state.fleet) ? { fleet: state.fleet } : {}),
     status,
     cwd: state.cwd,
     policy_label,
@@ -392,7 +392,7 @@ export function renderSummaryTable(
       compactCwd(s.cwd),
       // Fleets: the column exists only under --all-fleets, where widened
       // rows need attribution; '-' marks an untagged session.
-      ...(opts.fleetColumn ? [s.fleet ?? "-"] : []),
+      ...(opts.fleetColumn ? [isTagged(s.fleet) ? s.fleet : "-"] : []),
     ]);
   }
   return rows.map((r) => r.join("\t")).join("\n");

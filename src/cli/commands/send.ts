@@ -1,7 +1,7 @@
 import { socketPath } from "../../lib/paths.js";
 import { sendRequest } from "../../runner/socket-server.js";
 import { resolveSessionRef } from "../../lib/alias.js";
-import { parseFleetFlags, FLEET_FLAGS_SINGLE_FORM_ERROR, type FleetView } from "../../lib/fleet.js";
+import { parseFleetFlags, FLEET_FLAGS_SINGLE_FORM_ERROR, isTagged, type FleetView } from "../../lib/fleet.js";
 import { listSessions, isLiveState, sessionsRootExists, type SessionRow } from "../../lib/live-sessions.js";
 
 const USAGE =
@@ -91,7 +91,7 @@ export async function sendToFleet(
     const head: SendAllLine = {
       session_id: t.id,
       ...(t.state.alias ? { alias: t.state.alias } : {}),
-      ...(t.state.fleet ? { fleet: t.state.fleet } : {}),
+      ...(isTagged(t.state.fleet) ? { fleet: t.state.fleet } : {}),
       ok: false,
     };
     const r = settled[i];

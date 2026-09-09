@@ -24,6 +24,7 @@ import {
   FLEET_TAG_MCP_MESSAGE,
   FleetTagError,
   isValidFleetTag,
+  isTagged,
   resolveActingFleet,
   type FleetView,
 } from "../lib/fleet.js";
@@ -353,7 +354,7 @@ export async function handleListSessions(args: Record<string, any>) {
       last_event_at: s.last_event_at,
       turns: s.turns,
       pending_approvals: pendingCount,
-      ...(s.fleet ? { fleet: s.fleet } : {}),
+      ...(isTagged(s.fleet) ? { fleet: s.fleet } : {}),
     });
   }
   return ok({ sessions: out, ...(hidden > 0 ? { hidden_in_other_fleets: hidden } : {}) });

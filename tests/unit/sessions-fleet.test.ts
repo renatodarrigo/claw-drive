@@ -97,4 +97,14 @@ describe("claw-drive sessions — fleet view", () => {
     expect((await run(["--fleet"])).code).toBe(2);
     expect((await run(["--fleet", "a", "--all-fleets"])).code).toBe(2);
   });
+
+  it("a hand-edited empty fleet reads as untagged: listed with no identity, '-' under --all-fleets", async () => {
+    await writeSession("sess_blank000000001", { fleet: "" });
+    delete process.env.CLAW_DRIVE_FLEET;
+    const plain = await run([]);
+    expect(plain.out).toContain("sess_blank000000001");
+    const widened = await run(["--all-fleets"]);
+    const row = widened.out.split("\n").find((l) => l.startsWith("sess_blank000000001"));
+    expect(row?.endsWith("\t-")).toBe(true);
+  });
 });
