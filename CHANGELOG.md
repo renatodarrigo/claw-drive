@@ -8,6 +8,7 @@
 - **`(no sessions)` is back when the sessions root is not a directory.** The root check accepted any path that merely existed, so a plain file at `~/.claw-drive/sessions` produced an empty table (exit 0) instead of the `(no sessions)` line the listings print for a missing root; the check requires a directory.
 - **`status <id>` tells a corrupt state file from an unknown id again.** Since the listings began skipping an unparseable `state.json`, an explicit id pointing at one reported `session not found`; it reports `session not found or unreadable` when the file exists but cannot be read (exit 1 either way).
 - **Fleet flags are rejected before any other check on every single-session form.** `watch --all-fleets` reported a missing session id, `status <bad-id> --fleet x` reported the bad id, and `start_session` validated `cwd`, the policy, and `name` before an invalid `fleet`; each now reports the fleet-flag error first, as `send`, `pending`, and `claw-drive start` already did. Only a call that is wrong in two ways sees a different message.
+- **`send --all` says when the view hid live sessions.** The count of live sessions in other fleets was printed only when the view was empty (exit 2); a non-empty broadcast prints the same stderr note — `(N live in other fleets not sent; --all-fleets broadcasts to them)` — with stdout and the exit codes unchanged.
 
 ## [1.10.0] — 2026-09-09
 

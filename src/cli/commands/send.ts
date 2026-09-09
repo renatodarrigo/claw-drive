@@ -9,6 +9,7 @@ const USAGE =
   `   or: claw-drive send --all "<message>" [--fleet TAG] [--all-fleets]\n` +
   `  --all: broadcast to every live session in the fleet view — one JSONL line per session;\n` +
   `         exit 0 when every send succeeded, 1 when any failed, 2 when the view has no live session\n` +
+  `         a stderr line counts live sessions hidden in other fleets, sent to or not\n` +
   `  --fleet TAG: act as this fleet (default: CLAW_DRIVE_FLEET, else the driver's Claude Code session id)\n` +
   `  --all-fleets: broadcast to every fleet on this machine\n` +
   `  --: end of flags — a message that is literally --all, --fleet, or --all-fleets goes after it`;
@@ -108,16 +109,19 @@ async function sendAll(message: string, view: FleetView): Promise<number> {
   const rows = (await sessionsRootExists()) ? await listSessions(view) : [];
   const live = rows.filter((r) => isLiveState(r.state));
   const targets = live.filter((r) => r.inView);
+  const hiddenLive = live.length - targets.length;
+  const hiddenNote = `${hiddenLive} live in other fleets`;
   if (targets.length === 0) {
-    const hiddenLive = live.length - targets.length;
     console.error(
-      "no live sessions in view" +
-        (hiddenLive > 0 ? ` (${hiddenLive} live in other fleets; --all-fleets broadcasts to them)` : "")
+      "no live sessions in view" + (hiddenLive > 0 ? ` (${hiddenNote}; --all-fleets broadcasts to them)` : "")
     );
     return 2;
   }
   const lines = await sendToFleet(targets, message);
   for (const line of lines) console.log(JSON.stringify(line));
+  // Fleets: the tables narrate hidden rows on stderr; a partial broadcast
+  // is the more surprising case, so it says what it did not reach.
+  if (hiddenLive > 0) console.error(`(${hiddenNote} not sent; --all-fleets broadcasts to them)`);
   return lines.every((l) => l.ok) ? 0 : 1;
 }
 

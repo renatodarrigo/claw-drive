@@ -154,7 +154,7 @@ describe("claw-drive send --all", () => {
     const r = await capture(() => cmdSend(["--all", "wrap up"]));
     expect(r.code).toBe(0);
     expect(r.out.map((l) => JSON.parse(l).session_id)).toEqual(["sess_free", "sess_own"]);
-    expect(r.err).toBe("");
+    expect(r.err).toBe("(1 live in other fleets not sent; --all-fleets broadcasts to them)");
   });
 
   it("exits 1 when any member refuses, still reporting every member", async () => {
@@ -184,6 +184,16 @@ describe("claw-drive send --all", () => {
     const none = await capture(() => cmdSend(["--all", "go"]));
     expect(none.code).toBe(2);
     expect(none.err).toBe("no live sessions in view");
+  });
+
+  it("a non-empty view still counts the live sessions hidden in other fleets on stderr", async () => {
+    await session("sess_a", { fleet: "team-a" }, "accept");
+    await session("sess_b", { fleet: "team-b" }, "accept");
+    await session("sess_c", { fleet: "team-c" }, "accept");
+    const r = await capture(() => cmdSend(["--all", "hi"]));
+    expect(r.code).toBe(0);
+    expect(r.out.map((l) => (JSON.parse(l) as { session_id: string }).session_id)).toEqual(["sess_a"]);
+    expect(r.err).toBe("(2 live in other fleets not sent; --all-fleets broadcasts to them)");
   });
 
   it("usage errors exit 2 before any socket is touched", async () => {
