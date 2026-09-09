@@ -93,6 +93,12 @@ describe("claw-drive sessions — fleet view", () => {
     expect(r.out).toBe("(no sessions)");
   });
 
+  it("a plain file where the sessions directory should be still prints '(no sessions)'", async () => {
+    await fs.rm(path.join(home, "sessions"), { recursive: true, force: true });
+    await fs.writeFile(path.join(home, "sessions"), "");
+    expect((await run([])).out).toBe("(no sessions)");
+  });
+
   it("flag errors exit 2", async () => {
     expect((await run(["--fleet"])).code).toBe(2);
     expect((await run(["--fleet", "a", "--all-fleets"])).code).toBe(2);

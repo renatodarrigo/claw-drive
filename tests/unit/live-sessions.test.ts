@@ -130,6 +130,13 @@ describe("listSessions — fleet view", () => {
     await fs.mkdir(path.join(root, "sessions"), { recursive: true });
     expect(await sessionsRootExists()).toBe(true);
   });
+
+  it("a plain file at the sessions root path is not a root: sessionsRootExists() false, listSessions() []", async () => {
+    await fs.rm(path.join(root, "sessions"), { recursive: true, force: true });
+    await fs.writeFile(path.join(root, "sessions"), "not a directory");
+    expect(await sessionsRootExists()).toBe(false);
+    expect(await listSessions(NO_IDENTITY)).toEqual([]);
+  });
 });
 
 describe("isLiveState", () => {
