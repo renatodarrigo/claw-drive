@@ -336,8 +336,10 @@ const NO_SESSIONS_MSG = "(no sessions)";
 function relativeTime(iso: string | null, nowMs: number): string {
   if (!iso) return "?";
   const ms = nowMs - Date.parse(iso);
-  if (isNaN(ms) || ms < 0) return "?";
-  const sec = Math.floor(ms / 1000);
+  if (isNaN(ms)) return "?";
+  // One clock reading serves the whole table; a session whose last event
+  // landed while the table was being built is simply "just now".
+  const sec = Math.max(0, Math.floor(ms / 1000));
   if (sec < 60) return `${sec}s ago`;
   const min = Math.floor(sec / 60);
   if (min < 60) return `${min}m ago`;
