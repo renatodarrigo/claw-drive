@@ -48,7 +48,7 @@
 
     <p>Verifies the CLI is on <code>PATH</code> (else prints the install one-liner and stops). Adds the <code>"claw-drive"</code> entry under <code>mcpServers</code>, preserving any existing entries. With <code>--policy &lt;path&gt;</code>, also drops the conservative starter policy at the given path (skips if the file already exists).</p>
 
-    <p>After init, restart Claude Code (or run <code>/mcp</code>) to see <code>claw-drive</code> in the MCP list.</p>
+    <p>After init — and after every claw-drive upgrade — restart Claude Code (or run <code>/mcp</code>): a running session keeps the MCP server it launched at startup, so an upgrade reaches the MCP tools only in a fresh one.</p>
 
     <h3 id="start"><code>/claw-drive-start</code></h3>
     <p>Spawns Session B and starts the Monitor flow.</p>

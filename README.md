@@ -56,6 +56,10 @@ cd claw-drive
 
 Clone-based installs default to **symlink mode** — changes in your working tree apply to the installed bins immediately. Pass `--copy` for a snapshot install instead.
 
+### Upgrading
+
+Re-run the install one-liner (or `git pull && ./install.sh` in a clone). A Claude Code session keeps the `claw-drive mcp` server it launched at startup, so after an upgrade restart Claude Code (or run `/mcp`) before driving: until then the old server answers, with its old tool schemas. `claw-drive` calls from Bash pick up the new build at once.
+
 ### Install flags
 
 ```bash

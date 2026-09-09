@@ -63,7 +63,7 @@ The user has invoked this skill to register claw-drive in the current project. T
 
 6. **Confirm and explain next steps.** Report:
    - `.mcp.json` updated at `<project>/.mcp.json`
-   - Restart Claude Code (or run `/mcp` in this session) to see `claw-drive` in the MCP list
+   - Restart Claude Code (or run `/mcp` in this session) to see `claw-drive` in the MCP list — and again after every claw-drive upgrade, because a running session keeps the MCP server it launched at startup
    - Next: `/claw-drive-start` to spawn a driven session
 
 ## What this skill does NOT do
