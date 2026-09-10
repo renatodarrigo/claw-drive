@@ -170,6 +170,8 @@ describe("claw-drive send --all", () => {
     await session("sess_other", { fleet: "team-b" }, "accept");
     const wide = await capture(() => cmdSend(["--all", "go", "--all-fleets"]));
     expect(wide.out.map((l) => JSON.parse(l).session_id)).toEqual(["sess_other", "sess_own"]);
+    // A widened view hides nothing, so the hidden-live note has nothing to say.
+    expect(wide.err).toBe("");
     const asB = await capture(() => cmdSend(["--all", "go", "--fleet", "team-b"]));
     expect(asB.out.map((l) => JSON.parse(l).session_id)).toEqual(["sess_other"]);
   });
