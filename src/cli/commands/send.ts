@@ -9,7 +9,7 @@ const USAGE =
   `   or: claw-drive send --all "<message>" [--fleet TAG] [--all-fleets]\n` +
   `  --all: broadcast to every live session in the fleet view — one JSONL line per session;\n` +
   `         exit 0 when every send succeeded, 1 when any failed, 2 when the view has no live session\n` +
-  `         a stderr line counts live sessions hidden in other fleets, sent to or not\n` +
+  `         a stderr line counts live sessions hidden in other fleets, whether or not anything was sent\n` +
   `  --fleet TAG: act as this fleet (default: CLAW_DRIVE_FLEET, else the driver's Claude Code session id)\n` +
   `  --all-fleets: broadcast to every fleet on this machine\n` +
   `  --: end of flags — a message that is literally --all, --fleet, or --all-fleets goes after it`;

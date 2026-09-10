@@ -251,7 +251,7 @@ the `init` event lists each server with `{"name":"...","status":"connected"|"pen
   `--max-turns > 1` mode was not probed (only tool results mid-turn were seen).
   May require a second line on stdin or may not be possible in pipe mode.
 
-### Session id in the child environment (observed 2026-09-02 on claude 2.1.258; rotation probed 2026-09-09 on 2.1.261)
+### Session id in the child environment (observed 2026-09-02 on claude 2.1.258; `/clear` and `--resume` probed 2026-09-09 on 2.1.261)
 
 Claude Code exports `CLAUDE_CODE_SESSION_ID` — the local session UUID — to
 the Bash tool's subprocesses and to the stdio MCP servers it launches

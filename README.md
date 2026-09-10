@@ -58,7 +58,7 @@ Clone-based installs default to **symlink mode** — changes in your working tre
 
 ### Upgrading
 
-Re-run the install one-liner (or `git pull && ./install.sh` in a clone). A Claude Code session keeps the `claw-drive mcp` server it launched at startup, so after an upgrade restart Claude Code (or run `/mcp`) before driving: until then the old server answers, with its old tool schemas. `claw-drive` calls from Bash pick up the new build at once.
+Re-run the install one-liner. In a clone, run `git pull && npm run build` — the installer rebuilds only when `src/index.ts` is newer than `dist/`, and a symlink-mode install serves the clone's own `dist/`. A Claude Code session keeps the `claw-drive mcp` server it launched at startup, so after an upgrade restart Claude Code (or run `/mcp`) before driving: until then the old server answers, with its old tool schemas. `claw-drive` calls from Bash use the new `dist/` as soon as it is built.
 
 ### Install flags
 
@@ -192,7 +192,7 @@ claw-drive watch --all
 
 `watch --all` tails **every live session in your fleet view** (see [Fleets](#fleets-one-drivers-sessions)) concurrently and writes a single merged JSONL feed where each line carries an additive `session_id` field, so the driver can attribute every event. Membership is **dynamic**: a session spawned after `watch --all` starts joins the stream automatically, and a session that stops has its tail closed (its `session_stopped` surfaces first) — the merged stream itself runs until you SIGINT it. Every single-session flag works identically under `--all` (`--replay`, `--only` / `--decision-only`, `--no-token-filter`, `--idle-after`, `--no-suspected-needs-input`), and each session's filters apply independently.
 
-For a point-in-time snapshot of the whole fleet rather than a live feed, `claw-drive status` (no argument) is the companion — a summary table of every session in the view — state, last token, and pending-decision count.
+For a point-in-time snapshot of the whole fleet rather than a live feed, `claw-drive status` (no argument) is the companion — a summary table of every session in the view: state, last token, and pending-decision count.
 
 ### Fleets: one driver's sessions
 
@@ -354,7 +354,7 @@ B's echo fires the hook → policy defers → monitor alerts A → human answers
 | `reject <call_id> [--reason R] [--remember] [--fleet TAG] [--all-fleets]` | Reject a paused call found in the fleet view. `--remember` appends to `auto_reject`. |
 | `defer <call_id> [--reason R] [--remember] [--fleet TAG] [--all-fleets]` | Defer a paused call found in the fleet view to the human. `--remember` appends to `auto_defer`. |
 | `send <session> "<msg>"` | Send a user turn. A bare `--` ends flag parsing for a message that is literally `--all`, `--fleet`, or `--all-fleets`. |
-| `send --all "<msg>" [--fleet TAG] [--all-fleets]` | Broadcast a user turn to every live session in the fleet view: one JSONL line per session with `turn_id` or the refusal; exit 0 all sent, 1 any failed, 2 empty view. See [Fleets](#fleets-one-drivers-sessions). |
+| `send --all "<msg>" [--fleet TAG] [--all-fleets]` | Broadcast a user turn to every live session in the fleet view: one JSONL line per session with `turn_id` or the refusal; exit 0 all sent, 1 any failed, 2 empty view; a stderr line counts live sessions hidden in other fleets. See [Fleets](#fleets-one-drivers-sessions). |
 | `start --cwd PATH [--policy FILE] [--brief FILE] [--name ALIAS] [--no-wrapper] [--fleet TAG]` | Start a session. `--name` gives it a reusable alias (see [Session aliases](#session-aliases-start---name)); `--no-wrapper` starts B without the sentinel-token wrapper (pair with `watch --no-token-filter`); `--fleet` tags it for driver scoping (see [Fleets](#fleets-one-drivers-sessions)). |
 | `stop <session>` | Reap B |
 | `rotate <session>` | Rotate a session at its context threshold. See [Context rotation & crash recovery](#context-rotation--crash-recovery). |
@@ -422,8 +422,8 @@ Under heavy concurrency (e.g., B with many subagents), a single `poll_session` c
 
 Two policy templates ship in `templates/`:
 
-- **`claw-drive-policy.json`** — conservative starter. `install.sh --policy` and the `/claw-drive-start` skill use it by default; `start_session` and `claw-drive start` themselves default to `"bypass"` when no policy is given, so pass one. Safe for unknown projects. Auto-rejects `Edit`/`Write` and Bash write vectors against the policy file itself and `~/.claw-drive/` runtime state — see [docs/policies.html](https://renatodarrigo.github.io/claw-drive/policies.html#policy-file).
-- **`claw-drive-policy-permissive.json`** — starter plus common dev-CLI auto-approves (`rg`, `sed`, `awk`, `jq`, `diff`, `mkdir -p`, `touch`, `cp` (non-recursive), `mv`, non-recursive `chmod`/`chown`, safe `git` ops including `git -C <path>` prefix forms, `bash <script>` (rejects `-c` inline form), `rm -f /tmp/...`, comment-prefixed Bash lines (`# rationale`), path/env introspection). Reduces escalation volume in dev-heavy sessions. Destructive commands (`rm -rf`, `git push`, `git reset --hard`, recursive `chmod -R 777`, etc.) still auto-reject — and the comment-prefix rule never beats them since `auto_reject` is evaluated first. Opt in via `--policy templates/claw-drive-policy-permissive.json` at install or by passing the inline policy to `start_session`.
+- **`claw-drive-policy.json`** — conservative starter. `install.sh --policy <path>` drops it at the path you pass, and the `/claw-drive-start` skill loads it when `--policy` is omitted; `start_session` and `claw-drive start` themselves default to `"bypass"` when no policy is given, so pass one. Safe for unknown projects. Auto-rejects `Edit`/`Write` and Bash write vectors against the policy file itself and `~/.claw-drive/` runtime state — see [docs/policies.html](https://renatodarrigo.github.io/claw-drive/policies.html#policy-file).
+- **`claw-drive-policy-permissive.json`** — starter plus common dev-CLI auto-approves (`rg`, `sed`, `awk`, `jq`, `diff`, `mkdir -p`, `touch`, `cp` (non-recursive), `mv`, non-recursive `chmod`/`chown`, safe `git` ops including `git -C <path>` prefix forms, `bash <script>` (rejects `-c` inline form), `rm -f /tmp/...`, comment-prefixed Bash lines (`# rationale`), path/env introspection). Reduces escalation volume in dev-heavy sessions. Destructive commands (`rm -rf`, `git push`, `git reset --hard`, recursive `chmod -R 777`, etc.) still auto-reject — and the comment-prefix rule never beats them since `auto_reject` is evaluated first. Opt in with `claw-drive start --policy templates/claw-drive-policy-permissive.json`, or by passing the file's contents as `policy` to `start_session` (`install.sh --policy` only ever drops the starter).
 
 ## Context rotation & crash recovery
 

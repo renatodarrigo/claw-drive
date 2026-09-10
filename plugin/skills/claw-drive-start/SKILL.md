@@ -24,9 +24,13 @@ The user has invoked this skill to kick off a driven session. This is the standa
 3. **Resolve the policy.** If `--policy <file>` was passed, read the file content as JSON. Otherwise load the conservative starter template yourself — claw-drive's own default when `policy` is omitted or `null` is `"bypass"`, which auto-approves every tool call, so never pass `null`:
    ```bash
    src="${CLAW_DRIVE_SRC_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/claw-drive}/templates/claw-drive-policy.json"
-   [[ -f "$src" ]] && cat "$src" || curl -fsSL https://raw.githubusercontent.com/renatodarrigo/claw-drive/main/templates/claw-drive-policy.json
+   if [[ -f "$src" ]]; then
+     cat "$src"
+   else
+     curl -fsSL https://raw.githubusercontent.com/renatodarrigo/claw-drive/main/templates/claw-drive-policy.json
+   fi
    ```
-   Parse that output as JSON and pass it as `policy`. If neither source is available, stop and tell the user rather than starting Session B under bypass.
+   Parse that output as JSON and pass it as `policy`. If neither source yields parseable JSON, stop and tell the user rather than starting Session B under bypass.
 
 4. **Resolve the brief.** If `--brief <file>` was passed, read the file content. Otherwise ask the user inline:
    > What's the scenario brief for Session B?
