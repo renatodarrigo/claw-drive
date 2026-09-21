@@ -251,7 +251,7 @@ the `init` event lists each server with `{"name":"...","status":"connected"|"pen
   `--max-turns > 1` mode was not probed (only tool results mid-turn were seen).
   May require a second line on stdin or may not be possible in pipe mode.
 
-### Session id in the child environment (observed 2026-09-02, claude 2.1.258)
+### Session id in the child environment (observed 2026-09-02 on claude 2.1.258; `/clear` and `--resume` probed 2026-09-09 on 2.1.261)
 
 Claude Code exports `CLAUDE_CODE_SESSION_ID` — the local session UUID — to
 the Bash tool's subprocesses and to the stdio MCP servers it launches
@@ -260,8 +260,18 @@ It is absent from the documented environment-variable reference and there
 are open upstream requests for exactly this exposure (anthropics/claude-code
 #25642, #47018), so claw-drive treats it as observed, fail-open behavior: it
 is the default fleet tag when present, and its absence simply leaves sessions
-untagged (see `src/lib/fleet.ts`). Whether it survives `--resume` /
-`--continue` or changes on `/clear` was not probed.
+untagged (see `src/lib/fleet.ts`).
+
+Probed on claude 2.1.261 (2026-09-09): `/clear` mints a new session id — the
+Bash tool sees the new value at once, but a stdio MCP server launched at
+session start keeps the id it was launched with (its environment never
+changes), so after a `/clear` the driver's MCP tools and its Bash-spawned
+`claw-drive` calls act as two different fleets until `--fleet <tag>` /
+`CLAW_DRIVE_FLEET` pins one view (or `--all-fleets` widens it).
+`--resume <id>` reuses the original id and re-exports it (`--fork-session`
+is the documented way to get a fresh one). `claude -p` sessions export
+their own id, so a driven session that runs claw-drive itself acts as its
+own fleet. Observed behavior, not a guarantee.
 
 ## Full flag list (relevant subset)
 

@@ -1,5 +1,20 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **A hand-edited empty or null `fleet` tag reads as untagged everywhere.** The in-view predicate treated any present `fleet` key as a tag, so such a session was hidden from every default view, while the tables and machine lines rendered it as untagged; one shared presence test — a non-empty string — now decides both, and lineage successors inherit only a real tag.
+- **`(no sessions)` is back when the sessions root is not a directory.** The root check accepted any path that merely existed, so a plain file at `~/.claw-drive/sessions` produced an empty table (exit 0) instead of the `(no sessions)` line the listings print for a missing root; the check requires a directory.
+- **`status <id>` tells a corrupt state file from an unknown id again.** Since the listings began skipping an unparseable `state.json`, an explicit id pointing at one reported `session not found`; it reports `session not found or unreadable` when the file exists but cannot be read (exit 1 either way).
+- **Fleet flags are rejected before any other check on every single-session form.** `watch --all-fleets` reported a missing session id, `status <bad-id> --fleet x` reported the bad id, and `start_session` validated `cwd`, the policy, and `name` before an invalid `fleet`; each now reports the fleet-flag error first, as `send`, `pending`, and `claw-drive start` already did. Only a call that is wrong in two ways sees a different message.
+- **`send --all` says when the view hid live sessions.** The count of live sessions in other fleets was printed only when the view was empty (exit 2); a non-empty broadcast prints the same stderr note — `(N live in other fleets not sent; --all-fleets broadcasts to them)` — with stdout and the exit codes unchanged.
+- **`status` no longer prints `?` for a session that was active while the table was being built.** The age column is computed against one clock reading taken before the sessions are enumerated, so a session whose last event landed during the enumeration had a negative age and printed `?`; it prints `0s ago`.
+- **`prune --help` prints usage instead of pruning.** `prune` ignored arguments it did not recognize and ran with its defaults, so `--help` (or a typo) removed every prunable dead session older than 24 hours in the view. `--help` / `-h` print usage and exit 0; any other unrecognized argument, a missing `--older-than` value, or an invalid duration exits 2 before the sessions root is touched.
+- **The session-id contract records what `/clear` and `--resume` do.** Probed on claude 2.1.261: `/clear` mints a new `CLAUDE_CODE_SESSION_ID` that Bash subprocesses see at once while a running stdio MCP server keeps the value it was launched with, so a driver's MCP tools and its `claw-drive` calls can act as two fleets after a `/clear` (`--fleet <tag>`, `CLAW_DRIVE_FLEET`, or `--all-fleets` reconciles them); `--resume` reuses the original id. The contract, README, reference, compatibility notes, help text, and the plugin's status and start skills say so.
+- **The install docs say to restart Claude Code after an upgrade.** A running Claude Code session keeps the `claw-drive mcp` server it launched at startup, so an upgrade reaches the MCP tools only after a restart (or `/mcp`); until then the old server answers with its old tool schemas — for a pre-1.10 server, that means sessions started without a fleet tag. The README, install page, plugin page, init skill, and the installer's next-steps text say so.
+- **`/claw-drive-start` no longer starts Session B under `bypass` when `--policy` is omitted.** The skill said claw-drive fell back to the conservative starter; claw-drive's default with no policy is `"bypass"` — every tool call auto-approved — and the README, policies page, plugin page, and help text repeated the claim in their own words. The skill loads the starter template itself, and each page says which default applies where — the permissive template is chosen when a session starts, never at install.
+
 ## [1.10.0] — 2026-09-09
 
 ### Added

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { spawnSync } from "node:child_process";
 import type * as net from "node:net";
 import { resolveCmd } from "../../src/cli/commands/_shared-resolve.js";
 import { cmdProvideOutput } from "../../src/cli/commands/provide-output.js";
@@ -18,6 +19,13 @@ let home: string;
 const servers: net.Server[] = [];
 const ENV_KEYS = ["CLAW_DRIVE_HOME", "CLAW_DRIVE_FLEET", "CLAUDE_CODE_SESSION_ID"] as const;
 const saved: Partial<Record<(typeof ENV_KEYS)[number], string | undefined>> = {};
+
+// A reliably-dead pid: spawn a node that exits immediately, then reuse its
+// (now-reaped) pid. isPidAlive(deadPid) → ESRCH → false.
+const DEAD_PID: number = (() => {
+  const c = spawnSync(process.execPath, ["-e", ""]);
+  return c.pid as number;
+})();
 
 async function liveSession(id: string, over: Record<string, unknown>, holdsCall: string): Promise<void> {
   await fs.mkdir(sessionDir(id), { recursive: true });
@@ -98,6 +106,21 @@ describe("approve/reject/defer scan — fleet view", () => {
     const r = await capture(() => resolveCmd("reject", ["call_in_other", "--fleet", "team-b"]));
     expect(r.code).toBe(0);
     expect((await capture(() => resolveCmd("reject", ["call_in_other", "--fleet", "a b"]))).code).toBe(2);
+  });
+
+  it("a session whose runner pid is dead is skipped even when it is in view and holds the call", async () => {
+    await liveSession("sess_dead", { fleet: "team-a", runner_pid: DEAD_PID }, "call_in_dead");
+    const r = await capture(() => resolveCmd("approve", ["call_in_dead"]));
+    expect(r.code).toBe(1);
+    expect(r.err).toBe("call_id not found in any live session");
+  });
+
+  it("the same call id held by two in-view sessions resolves in the first by sorted id", async () => {
+    await liveSession("sess_dup_b", { fleet: "team-a" }, "call_dup");
+    await liveSession("sess_dup_a", { fleet: "team-a" }, "call_dup");
+    const r = await capture(() => resolveCmd("approve", ["call_dup"]));
+    expect(r.code).toBe(0);
+    expect(JSON.parse(r.out)).toEqual({ session_id: "sess_dup_a", ok: true });
   });
 });
 

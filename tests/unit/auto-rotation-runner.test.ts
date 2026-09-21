@@ -22,6 +22,15 @@ const SID = "sess_autorot001";
 
 let root: string;
 let stubDir: string;
+
+/** Point CLAW_DRIVE_BIN at a runner stub that only marks the successor session ready. */
+async function useStubRunner(): Promise<void> {
+  const stubRunner = path.join(stubDir, "fake-runner");
+  await fs.writeFile(stubRunner, '#!/bin/sh\ntouch "$CLAW_DRIVE_HOME/sessions/$2/ready"\n', { mode: 0o755 });
+  await fs.chmod(stubRunner, 0o755);
+  process.env.CLAW_DRIVE_BIN = stubRunner;
+}
+
 let prevHome: string | undefined;
 let prevPath: string | undefined;
 let prevBin: string | undefined;
@@ -179,10 +188,7 @@ async function makeCtx(fake: FakeB, statePatch?: Partial<SessionState>): Promise
 /** Rotate a predecessor whose state carries `fleet` (or none) and return the successor's state. */
 async function rotateWithFleet(fleet: string | undefined): Promise<SessionState | null> {
   vi.useRealTimers();
-  const stubRunner = path.join(stubDir, "fake-runner");
-  await fs.writeFile(stubRunner, '#!/bin/sh\ntouch "$CLAW_DRIVE_HOME/sessions/$2/ready"\n', { mode: 0o755 });
-  await fs.chmod(stubRunner, 0o755);
-  process.env.CLAW_DRIVE_BIN = stubRunner;
+  await useStubRunner();
   const fake = makeFakeB();
   const ctx = await makeCtx(fake, {
     policy: { rotation: { threshold_tokens: 1000, mode: "manual" } },
@@ -255,10 +261,7 @@ describe("rotation outcomes carry their initiator", () => {
 
   it("a commanded rotate's success is stamped initiated_by manual", async () => {
     vi.useRealTimers();
-    const stubRunner = path.join(stubDir, "fake-runner");
-    await fs.writeFile(stubRunner, '#!/bin/sh\ntouch "$CLAW_DRIVE_HOME/sessions/$2/ready"\n', { mode: 0o755 });
-    await fs.chmod(stubRunner, 0o755);
-    process.env.CLAW_DRIVE_BIN = stubRunner;
+    await useStubRunner();
     const fake = makeFakeB();
     const ctx = await makeCtx(fake, { policy: { rotation: { threshold_tokens: 1000, mode: "manual" } } });
     const rotP = handleRequest(ctx, { id: "r1", op: "rotate" });
@@ -274,10 +277,7 @@ describe("rotation outcomes carry their initiator", () => {
 
   it("a provide_tool_output racing the handover is refused; the rotation completes unperturbed", async () => {
     vi.useRealTimers();
-    const stubRunner = path.join(stubDir, "fake-runner");
-    await fs.writeFile(stubRunner, '#!/bin/sh\ntouch "$CLAW_DRIVE_HOME/sessions/$2/ready"\n', { mode: 0o755 });
-    await fs.chmod(stubRunner, 0o755);
-    process.env.CLAW_DRIVE_BIN = stubRunner;
+    await useStubRunner();
     const fake = makeFakeB();
     const ctx = await makeCtx(fake, { policy: { rotation: { threshold_tokens: 1000, mode: "manual" } } });
     // A deferred call from before the rotation — the survives-into-rotation case.
@@ -332,10 +332,7 @@ async function boundary(ctx: RunnerContext, turnId: string, tokens: number): Pro
 describe("auto-rotation trigger", () => {
   it("rotates at the crossing boundary: threshold event first, then session_rotated initiated_by auto, exactly once", async () => {
     vi.useRealTimers();
-    const stubRunner = path.join(stubDir, "fake-runner");
-    await fs.writeFile(stubRunner, '#!/bin/sh\ntouch "$CLAW_DRIVE_HOME/sessions/$2/ready"\n', { mode: 0o755 });
-    await fs.chmod(stubRunner, 0o755);
-    process.env.CLAW_DRIVE_BIN = stubRunner;
+    await useStubRunner();
     const fake = makeFakeB();
     const ctx = await makeCtx(fake);
     const loop = runStdoutLoop(ctx);

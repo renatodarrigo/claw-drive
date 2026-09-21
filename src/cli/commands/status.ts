@@ -1,9 +1,9 @@
-import { eventsPath, statePath, isValidSessionId } from "../../lib/paths.js";
+import * as fs from "node:fs/promises";
+import { eventsPath, isValidSessionId, statePath } from "../../lib/paths.js";
 import { isValidAlias, resolveSessionRef, aliasWithGeneration } from "../../lib/alias.js";
-import { parseFleetFlags, hiddenFleetsHint, FLEET_FLAGS_SINGLE_FORM_ERROR, type FleetView } from "../../lib/fleet.js";
-import { listSessions } from "../../lib/live-sessions.js";
+import { parseFleetFlags, hiddenFleetsHint, isTagged, FLEET_FLAGS_SINGLE_FORM_ERROR, type FleetView } from "../../lib/fleet.js";
+import { listSessions, type SessionRow } from "../../lib/live-sessions.js";
 import {
-  readState,
   isPidAlive,
   type SessionState,
   type SessionStatus as SessionStateStatus,
@@ -114,6 +114,12 @@ export function parseStatusArgs(
   let sessionId: string | undefined;
   let json = false;
 
+  // Fleets: the single-session form takes no fleet flags — reported before
+  // any other check, like every other surface. (`--help` / `-h` alone still wins.)
+  if (fleet.flagsSeen && args.some((a) => !a.startsWith("--") && a !== "-h")) {
+    return { ok: false, error: FLEET_FLAGS_SINGLE_FORM_ERROR };
+  }
+
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === "--help" || a === "-h") return { ok: true, help: true };
@@ -132,9 +138,6 @@ export function parseStatusArgs(
       }
       sessionId = a;
     }
-  }
-  if (sessionId !== undefined && fleet.flagsSeen) {
-    return { ok: false, error: FLEET_FLAGS_SINGLE_FORM_ERROR };
   }
 
   return { ok: true, help: false, sessionId, json, view: fleet.view };
@@ -302,7 +305,7 @@ export function buildSessionSnapshot(
   return {
     session_id: state.session_id,
     ...(state.alias ? { alias: state.alias } : {}),
-    ...(state.fleet ? { fleet: state.fleet } : {}),
+    ...(isTagged(state.fleet) ? { fleet: state.fleet } : {}),
     status,
     cwd: state.cwd,
     policy_label,
@@ -333,8 +336,10 @@ const NO_SESSIONS_MSG = "(no sessions)";
 function relativeTime(iso: string | null, nowMs: number): string {
   if (!iso) return "?";
   const ms = nowMs - Date.parse(iso);
-  if (isNaN(ms) || ms < 0) return "?";
-  const sec = Math.floor(ms / 1000);
+  if (isNaN(ms)) return "?";
+  // One clock reading serves the whole table; a session whose last event
+  // landed while the table was being built is simply "just now".
+  const sec = Math.max(0, Math.floor(ms / 1000));
   if (sec < 60) return `${sec}s ago`;
   const min = Math.floor(sec / 60);
   if (min < 60) return `${min}m ago`;
@@ -392,7 +397,7 @@ export function renderSummaryTable(
       compactCwd(s.cwd),
       // Fleets: the column exists only under --all-fleets, where widened
       // rows need attribution; '-' marks an untagged session.
-      ...(opts.fleetColumn ? [s.fleet ?? "-"] : []),
+      ...(opts.fleetColumn ? [isTagged(s.fleet) ? s.fleet : "-"] : []),
     ]);
   }
   return rows.map((r) => r.join("\t")).join("\n");
@@ -507,21 +512,17 @@ export function renderJson(snap: SessionSnapshot | SessionSnapshot[], hiddenInOt
   return JSON.stringify(snap);
 }
 
-async function buildSnapshotForId(id: string, nowMs: number): Promise<SessionSnapshot | null> {
-  let state: SessionState | null;
-  try {
-    state = await readState(statePath(id));
-  } catch {
-    return null;
-  }
-  if (state === null) return null;
+/** Snapshot a session from the state it was enumerated with — nothing here re-reads state.json. */
+async function buildSnapshotForRow(row: SessionRow, nowMs: number): Promise<SessionSnapshot> {
   let events: Event[] = [];
   try {
-    events = (await readEventsSince(eventsPath(id), 0)).events;
+    events = (await readEventsSince(eventsPath(row.id), 0)).events;
   } catch {
     events = [];
   }
-  return buildSessionSnapshot(state, events, nowMs);
+  // row.state is never null (SessionRow only carries parsed state), so the
+  // null branch of buildSessionSnapshot is unreachable here.
+  return buildSessionSnapshot(row.state, events, nowMs)!;
 }
 
 function printUsage(): void {
@@ -561,11 +562,10 @@ export async function cmdStatus(argv: string[]): Promise<number> {
   }
 
   const nowMs = Date.now();
-  // Fleets: one enumeration; rows carry inView per the acting fleet. A
-  // missing root simply yields no rows (the outputs below are the same as
-  // an empty root's, so the old readdir special-case is gone).
+  // Fleets: one enumeration; rows carry inView per the acting fleet and the
+  // state they were enumerated with — nothing below re-reads state.json. A
+  // missing root simply yields no rows.
   const rows = await listSessions(parsed.view);
-  const ids = rows.map((r) => r.id);
 
   if (parsed.sessionId) {
     // CD-10: resolve an alias to its canonical id (a canonical id passes
@@ -573,15 +573,15 @@ export async function cmdStatus(argv: string[]): Promise<number> {
     // back to the raw arg for canonical ids of stopped sessions still on disk.
     // An explicit id is explicit intent: it resolves whatever fleet it is in.
     const targetId = (await resolveSessionRef(parsed.sessionId)) ?? parsed.sessionId;
-    if (!ids.includes(targetId)) {
-      console.error("session not found");
+    const row = rows.find((r) => r.id === targetId);
+    if (row === undefined) {
+      // The enumerator skips a state.json it cannot parse — tell that apart
+      // from an id that has no directory at all.
+      const stateOnDisk = await fs.access(statePath(targetId)).then(() => true, () => false);
+      console.error(stateOnDisk ? "session not found or unreadable" : "session not found");
       return 1;
     }
-    const snap = await buildSnapshotForId(targetId, nowMs);
-    if (snap === null) {
-      console.error("session not found or unreadable");
-      return 1;
-    }
+    const snap = await buildSnapshotForRow(row, nowMs);
     if (parsed.json) {
       console.log(renderJson(snap));
     } else {
@@ -597,8 +597,7 @@ export async function cmdStatus(argv: string[]): Promise<number> {
       hidden++;
       continue;
     }
-    const snap = await buildSnapshotForId(row.id, nowMs);
-    if (snap !== null) snaps.push(snap);
+    snaps.push(await buildSnapshotForRow(row, nowMs));
   }
 
   if (parsed.json) {

@@ -473,6 +473,26 @@ describe("renderSummaryTable", () => {
     const out = renderSummaryTable([], NOW_MS);
     expect(out).toMatch(/no sessions/i);
   });
+
+  it("a last_activity_at newer than the table's clock renders as '0s ago', not '?'", () => {
+    const snaps: SessionSnapshot[] = [
+      {
+        session_id: "sess_abcdef0123456789",
+        status: "running",
+        cwd: "/home/ren/Workspace/cloverleaf",
+        policy_digest: "p123",
+        runner_pid: 1,
+        created_at: "2026-04-27T12:00:00Z",
+        last_activity_at: new Date(NOW_MS + 5000).toISOString(),
+        turns: 5,
+        pending_decisions: [],
+        recent_errors: [],
+      },
+    ];
+    const out = renderSummaryTable(snaps, NOW_MS);
+    expect(out).toContain("\t0s ago\t");
+    expect(out).not.toContain("\t?\t");
+  });
 });
 
 describe("renderDetailedBlock", () => {
@@ -847,6 +867,16 @@ describe("fleets — parseStatusArgs", () => {
 
   it("--help still wins even next to a fleet flag", () => {
     expect(parseStatusArgs(["--fleet", "x", "--help"], EMPTY)).toEqual({ ok: true, help: true });
+  });
+
+  it("-h still wins even next to a fleet flag", () => {
+    expect(parseStatusArgs(["--fleet", "x", "-h"], EMPTY)).toEqual({ ok: true, help: true });
+  });
+
+  it("the single-session form reports the fleet-flag error before an invalid id", () => {
+    expect(parseStatusArgs(["not a valid id", "--fleet", "a"], EMPTY)).toEqual({
+      ok: false, error: "--fleet/--all-fleets apply only to the fleet view",
+    });
   });
 });
 

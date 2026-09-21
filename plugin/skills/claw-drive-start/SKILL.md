@@ -1,6 +1,6 @@
 ---
 name: claw-drive-start
-description: Spawn a driven Claude Code session (Session B) in the given directory and start the Monitor flow against the returned watch_command. Usage — /claw-drive-start <cwd> [--brief <file>] [--policy <file>] [--verbose]. The cwd must exist and be a real project root. If --brief is omitted, the user will be asked for the scenario brief inline. If --policy is omitted, the conservative starter shipped with claw-drive is used. By default Session B receives a system-prompt wrapper teaching a two-token vocabulary — emit [NEEDS-INPUT] when the human is needed, [DONE] when the task is complete, nothing otherwise — and Monitor surfaces turn_completed only when one of those two trailing tokens is present. Pass --verbose to bypass both the wrapper injection and the sentinel filter (raw stream including every turn_completed and tool_output_provided).
+description: Spawn a driven Claude Code session (Session B) in the given directory and start the Monitor flow against the returned watch_command. Usage — /claw-drive-start <cwd> [--brief <file>] [--policy <file>] [--verbose]. The cwd must exist and be a real project root. If --brief is omitted, the user will be asked for the scenario brief inline. If --policy is omitted, the skill loads the conservative starter template shipped with claw-drive (claw-drive's own default with no policy is bypass, which auto-approves every tool call). By default Session B receives a system-prompt wrapper teaching a two-token vocabulary — emit [NEEDS-INPUT] when the human is needed, [DONE] when the task is complete, nothing otherwise — and Monitor surfaces turn_completed only when one of those two trailing tokens is present. Pass --verbose to bypass both the wrapper injection and the sentinel filter (raw stream including every turn_completed and tool_output_provided).
 ---
 
 # Claw-drive — start
@@ -21,7 +21,16 @@ The user has invoked this skill to kick off a driven session. This is the standa
 
    Stop. Do not try to call the CLI directly.
 
-3. **Resolve the policy.** If `--policy <file>` was passed, read the file content as JSON. Otherwise pass `null` (claw-drive falls back to the conservative starter).
+3. **Resolve the policy.** If `--policy <file>` was passed, read the file content as JSON. Otherwise load the conservative starter template yourself — claw-drive's own default when `policy` is omitted or `null` is `"bypass"`, which auto-approves every tool call, so never pass `null`:
+   ```bash
+   src="${CLAW_DRIVE_SRC_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/claw-drive}/templates/claw-drive-policy.json"
+   if [[ -f "$src" ]]; then
+     cat "$src"
+   else
+     curl -fsSL https://raw.githubusercontent.com/renatodarrigo/claw-drive/main/templates/claw-drive-policy.json
+   fi
+   ```
+   Parse that output as JSON and pass it as `policy`. If neither source yields parseable JSON, stop and tell the user rather than starting Session B under bypass.
 
 4. **Resolve the brief.** If `--brief <file>` was passed, read the file content. Otherwise ask the user inline:
    > What's the scenario brief for Session B?
@@ -31,12 +40,12 @@ The user has invoked this skill to kick off a driven session. This is the standa
    ```json
    {
      "cwd": "<absolute-cwd>",
-     "policy": <policy-json-or-null>,
+     "policy": <policy-json>,
      "scenario_brief": "<the brief>",
      "wrapper": <false if --verbose, else omit>
    }
    ```
-   Capture the response: `{ session_id, watch_command, notification_contract }`. The `notification_contract` describes the session's vocabulary, surface modes, watch flags, and the idle default — read it programmatically rather than hardcoding to a specific claw-drive version.
+   Capture the response: `{ session_id, watch_command, notification_contract, fleet? }`. The `notification_contract` describes the session's vocabulary, surface modes, watch flags, and the idle default — read it programmatically rather than hardcoding to a specific claw-drive version. `fleet` is the tag stamped on the session (the server's acting fleet). Keep it: after a `/clear` the session id Bash sees changes while the MCP server's does not (observed on claude 2.1.261), so `claw-drive` calls made from Bash need `--fleet <that tag>` (or `--all-fleets`) to see this session.
 
    The runner queues `scenario_brief` as Session B's first user turn on its own — do NOT also send the brief with `send_turn`, or B receives the mission twice.
 

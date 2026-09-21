@@ -48,11 +48,12 @@ POLICY & SAFETY
     escalate       pause and ask you.
     auto_defer     deny in B and hand the command to the human to run locally;
                    feed the result back with provide-output.
-  Templates: starter (conservative, the default), permissive (adds common dev
-  CLIs), bypass (approve everything — sandboxes only). A session budget /
-  circuit-breaker caps spend and trips on repeated failures. Unresolved
-  decisions fail secure after decision_timeout_seconds (default 3600). Lint a
-  policy with 'policy lint'; dry-run a command against one with 'policy-test'.
+  Templates: starter (conservative), permissive (adds common dev CLIs), bypass
+  (approve everything — sandboxes only). A session started with no policy
+  runs under bypass, so pass one. A session budget / circuit-breaker caps
+  spend and trips on repeated failures. Unresolved decisions fail secure after
+  decision_timeout_seconds (default 3600). Lint a policy with 'policy lint';
+  dry-run a command against one with 'policy-test'.
   A rotation block bounds context per session: at threshold_tokens the runner
   emits context_threshold_reached (re-fires each completed turn while above)
   and 'rotate' becomes available; max_generations (default 10) caps the
@@ -62,13 +63,15 @@ FLEET
   Sessions are scoped to the driver that started them: a 'fleet' tag (start
   --fleet TAG, else CLAW_DRIVE_FLEET, else the driver's Claude Code session id
   — CLAUDE_CODE_SESSION_ID, an export observed on claude 2.1.258 and not
-  documented upstream, so its absence just leaves sessions untagged). Listings
-  show your fleet plus untagged sessions; --all-fleets widens, --fleet TAG acts
-  as another fleet. 'watch --all' merges the fleet view's live sessions into
-  one session_id-tagged stream with dynamic membership; 'send --all'
-  broadcasts a turn to them. Name sessions with 'start --name'. 'status'
-  snapshots one session or the whole view: state, current turn, pending
-  decisions, recent errors.
+  documented upstream, so its absence just leaves sessions untagged). It
+  changes on /clear while a running MCP server keeps its launch-time value
+  (observed on 2.1.261), so pin one view with --fleet TAG or CLAW_DRIVE_FLEET
+  when the two disagree. Listings show your fleet plus untagged sessions;
+  --all-fleets widens, --fleet TAG acts as another fleet. 'watch --all' merges
+  the fleet view's live sessions into one session_id-tagged stream with dynamic
+  membership; 'send --all' broadcasts a turn to them. Name sessions with
+  'start --name'. 'status' snapshots one session or the whole view: state,
+  current turn, pending decisions, recent errors.
 `;
 
 const POINTERS = `LEARN MORE

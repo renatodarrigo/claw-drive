@@ -24,6 +24,7 @@ import {
   FLEET_TAG_MCP_MESSAGE,
   FleetTagError,
   isValidFleetTag,
+  isTagged,
   resolveActingFleet,
   type FleetView,
 } from "../lib/fleet.js";
@@ -91,6 +92,23 @@ function resolveMcpView(
 }
 
 export async function handleStartSession(args: Record<string, unknown>) {
+  // Fleets: an explicit `fleet` input must be a valid tag; otherwise the
+  // acting fleet resolves from this server process's env (CLAW_DRIVE_FLEET,
+  // else the CLAUDE_CODE_SESSION_ID Claude Code hands its MCP servers) —
+  // fail-open to unowned. Validated FIRST — before cwd, policy, and alias —
+  // so every surface reports a fleet error ahead of any other check, and
+  // before any dir/state is created.
+  if (args.fleet !== undefined && !isValidFleetTag(args.fleet)) {
+    return err("BAD_REQUEST", FLEET_TAG_MCP_MESSAGE);
+  }
+  let fleet: string | undefined;
+  try {
+    fleet = resolveActingFleet({ flag: args.fleet as string | undefined });
+  } catch (e) {
+    if (e instanceof FleetTagError) return err("BAD_REQUEST", e.message);
+    throw e;
+  }
+
   const cwd = args.cwd;
   if (typeof cwd !== "string") return err("INVALID_CWD", "cwd must be a string");
   try {
@@ -120,21 +138,6 @@ export async function handleStartSession(args: Record<string, unknown>) {
       return err("NAME_IN_USE", `alias '${args.name}' is already in use by live session ${holder}`);
     }
     alias = args.name;
-  }
-
-  // Fleets: an explicit `fleet` input must be a valid tag; otherwise the
-  // acting fleet resolves from this server process's env (CLAW_DRIVE_FLEET,
-  // else the CLAUDE_CODE_SESSION_ID Claude Code hands its MCP servers) —
-  // fail-open to unowned. Validated BEFORE any dir/state is created.
-  if (args.fleet !== undefined && !isValidFleetTag(args.fleet)) {
-    return err("BAD_REQUEST", FLEET_TAG_MCP_MESSAGE);
-  }
-  let fleet: string | undefined;
-  try {
-    fleet = resolveActingFleet({ flag: args.fleet as string | undefined });
-  } catch (e) {
-    if (e instanceof FleetTagError) return err("BAD_REQUEST", e.message);
-    throw e;
   }
 
   const sessionId = newSessionId();
@@ -316,7 +319,6 @@ export async function handleListSessions(args: Record<string, any>) {
   const includeOrphaned = args.include_orphaned ?? true;
   const v = resolveMcpView(args);
   if (!v.ok) return v.error;
-  if (!(await sessionsRootExists())) return ok({ sessions: [] });
   const rows = await listSessions(v.view);
   const out: any[] = [];
   let hidden = 0;
@@ -353,7 +355,7 @@ export async function handleListSessions(args: Record<string, any>) {
       last_event_at: s.last_event_at,
       turns: s.turns,
       pending_approvals: pendingCount,
-      ...(s.fleet ? { fleet: s.fleet } : {}),
+      ...(isTagged(s.fleet) ? { fleet: s.fleet } : {}),
     });
   }
   return ok({ sessions: out, ...(hidden > 0 ? { hidden_in_other_fleets: hidden } : {}) });

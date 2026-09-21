@@ -56,6 +56,10 @@ cd claw-drive
 
 Clone-based installs default to **symlink mode** — changes in your working tree apply to the installed bins immediately. Pass `--copy` for a snapshot install instead.
 
+### Upgrading
+
+Re-run the install one-liner. In a clone, run `git pull && npm run build` — the installer rebuilds only when `src/index.ts` is newer than `dist/`, and a symlink-mode install serves the clone's own `dist/`. A Claude Code session keeps the `claw-drive mcp` server it launched at startup, so after an upgrade restart Claude Code (or run `/mcp`) before driving: until then the old server answers, with its old tool schemas. `claw-drive` calls from Bash use the new `dist/` as soon as it is built.
+
 ### Install flags
 
 ```bash
@@ -188,17 +192,17 @@ claw-drive watch --all
 
 `watch --all` tails **every live session in your fleet view** (see [Fleets](#fleets-one-drivers-sessions)) concurrently and writes a single merged JSONL feed where each line carries an additive `session_id` field, so the driver can attribute every event. Membership is **dynamic**: a session spawned after `watch --all` starts joins the stream automatically, and a session that stops has its tail closed (its `session_stopped` surfaces first) — the merged stream itself runs until you SIGINT it. Every single-session flag works identically under `--all` (`--replay`, `--only` / `--decision-only`, `--no-token-filter`, `--idle-after`, `--no-suspected-needs-input`), and each session's filters apply independently.
 
-For a point-in-time snapshot of the whole fleet rather than a live feed, `claw-drive status` (no argument) is the companion — a summary table of every session's state, last token, and pending-decision count.
+For a point-in-time snapshot of the whole fleet rather than a live feed, `claw-drive status` (no argument) is the companion — a summary table of every session in the view: state, last token, and pending-decision count.
 
 ### Fleets: one driver's sessions
 
 Several drivers can use claw-drive on one machine at once — two Claude Code sessions each supervising their own B's — and they share one sessions root. Every session therefore carries an optional **fleet tag**, and every listing acts as one fleet:
 
-- **Tagging:** `start --fleet <tag>` / `start_session({ fleet })` sets it explicitly. Otherwise the tag defaults to `CLAW_DRIVE_FLEET`, else to the driver's Claude Code session id (`CLAUDE_CODE_SESSION_ID`, which Claude Code exports to its Bash subprocesses and MCP servers — observed on claude 2.1.258, not a documented guarantee). With none of those the session is untagged. Rotation and recovery successors inherit the tag.
+- **Tagging:** `start --fleet <tag>` / `start_session({ fleet })` sets it explicitly. Otherwise the tag defaults to `CLAW_DRIVE_FLEET`, else to the driver's Claude Code session id (`CLAUDE_CODE_SESSION_ID`, which Claude Code exports to its Bash subprocesses and MCP servers — observed on claude 2.1.258, not a documented guarantee). That id changes on `/clear` while a running MCP server keeps the one it was launched with, so after a `/clear` the sessions your MCP tools started are hidden from `claw-drive` calls made in Bash, and the reverse — `--all-fleets` shows them and `--fleet <tag>` / `CLAW_DRIVE_FLEET` pins one view; `--resume` keeps the id (observed on claude 2.1.261). With none of those the session is untagged. Rotation and recovery successors inherit the tag.
 - **The view:** `status`, `sessions`, `pending`, `watch --all`, `prune`, `send --all`, the approve/reject/defer and provide-output scans, and the MCP `list_sessions` / `resolve_tool_call` scans show the acting fleet's sessions **plus untagged ones**. Other drivers' sessions are hidden; the human tables say how many on stderr, and `status --json` / `list_sessions` report `hidden_in_other_fleets`. A shell with no fleet identity of its own — a plain terminal, a cron job — sees only untagged sessions until it passes `--fleet <tag>` or `--all-fleets`, or sets `CLAW_DRIVE_FLEET`.
 - **Widening:** `--all-fleets` (CLI) / `all_fleets: true` (MCP) shows every fleet on the machine, and the `status` / `sessions` tables gain a FLEET column. `--fleet <tag>` acts as another fleet — how a fresh driver session picks up a fleet an earlier one started. (Machine outputs — `pending` and `watch --all` lines, `status --json`, `list_sessions` rows — carry `fleet` on any tagged session, widened or not.)
 - **Not scoped:** an explicit `sess_…` id or an alias always resolves, whatever fleet holds it. Aliases stay unique across the whole machine.
-- **Broadcast:** `claw-drive send --all "<message>"` sends one user turn to every live session in the view and prints one JSONL line per session (`session_id`, `alias`/`fleet` when set, `ok`, then `turn_id` or the refusal). Exit 0 when every send succeeded, 1 when any failed, 2 when the view holds no live session.
+- **Broadcast:** `claw-drive send --all "<message>"` sends one user turn to every live session in the view and prints one JSONL line per session (`session_id`, `alias`/`fleet` when set, `ok`, then `turn_id` or the refusal). Exit 0 when every send succeeded, 1 when any failed, 2 when the view holds no live session. A stderr line counts the live sessions the view hid in other fleets, whether or not anything was sent.
 
 ```bash
 export CLAW_DRIVE_FLEET=review-crew     # every command below acts as this fleet
@@ -350,7 +354,7 @@ B's echo fires the hook → policy defers → monitor alerts A → human answers
 | `reject <call_id> [--reason R] [--remember] [--fleet TAG] [--all-fleets]` | Reject a paused call found in the fleet view. `--remember` appends to `auto_reject`. |
 | `defer <call_id> [--reason R] [--remember] [--fleet TAG] [--all-fleets]` | Defer a paused call found in the fleet view to the human. `--remember` appends to `auto_defer`. |
 | `send <session> "<msg>"` | Send a user turn. A bare `--` ends flag parsing for a message that is literally `--all`, `--fleet`, or `--all-fleets`. |
-| `send --all "<msg>" [--fleet TAG] [--all-fleets]` | Broadcast a user turn to every live session in the fleet view: one JSONL line per session with `turn_id` or the refusal; exit 0 all sent, 1 any failed, 2 empty view. See [Fleets](#fleets-one-drivers-sessions). |
+| `send --all "<msg>" [--fleet TAG] [--all-fleets]` | Broadcast a user turn to every live session in the fleet view: one JSONL line per session with `turn_id` or the refusal; exit 0 all sent, 1 any failed, 2 empty view; a stderr line counts live sessions hidden in other fleets. See [Fleets](#fleets-one-drivers-sessions). |
 | `start --cwd PATH [--policy FILE] [--brief FILE] [--name ALIAS] [--no-wrapper] [--fleet TAG]` | Start a session. `--name` gives it a reusable alias (see [Session aliases](#session-aliases-start---name)); `--no-wrapper` starts B without the sentinel-token wrapper (pair with `watch --no-token-filter`); `--fleet` tags it for driver scoping (see [Fleets](#fleets-one-drivers-sessions)). |
 | `stop <session>` | Reap B |
 | `rotate <session>` | Rotate a session at its context threshold. See [Context rotation & crash recovery](#context-rotation--crash-recovery). |
@@ -418,8 +422,8 @@ Under heavy concurrency (e.g., B with many subagents), a single `poll_session` c
 
 Two policy templates ship in `templates/`:
 
-- **`claw-drive-policy.json`** — conservative starter. Default for `install.sh` and when no `--policy` is passed to `start_session`. Safe for unknown projects. Auto-rejects `Edit`/`Write` and Bash write vectors against the policy file itself and `~/.claw-drive/` runtime state — see [docs/policies.html](https://renatodarrigo.github.io/claw-drive/policies.html#policy-file).
-- **`claw-drive-policy-permissive.json`** — starter plus common dev-CLI auto-approves (`rg`, `sed`, `awk`, `jq`, `diff`, `mkdir -p`, `touch`, `cp` (non-recursive), `mv`, non-recursive `chmod`/`chown`, safe `git` ops including `git -C <path>` prefix forms, `bash <script>` (rejects `-c` inline form), `rm -f /tmp/...`, comment-prefixed Bash lines (`# rationale`), path/env introspection). Reduces escalation volume in dev-heavy sessions. Destructive commands (`rm -rf`, `git push`, `git reset --hard`, recursive `chmod -R 777`, etc.) still auto-reject — and the comment-prefix rule never beats them since `auto_reject` is evaluated first. Opt in via `--policy templates/claw-drive-policy-permissive.json` at install or by passing the inline policy to `start_session`.
+- **`claw-drive-policy.json`** — conservative starter. `install.sh --policy <path>` drops it at the path you pass, and the `/claw-drive-start` skill loads it when `--policy` is omitted; `start_session` and `claw-drive start` themselves default to `"bypass"` when no policy is given, so pass one. Safe for unknown projects. Auto-rejects `Edit`/`Write` and Bash write vectors against the policy file itself and `~/.claw-drive/` runtime state — see [docs/policies.html](https://renatodarrigo.github.io/claw-drive/policies.html#policy-file).
+- **`claw-drive-policy-permissive.json`** — starter plus common dev-CLI auto-approves (`rg`, `sed`, `awk`, `jq`, `diff`, `mkdir -p`, `touch`, `cp` (non-recursive), `mv`, non-recursive `chmod`/`chown`, safe `git` ops including `git -C <path>` prefix forms, `bash <script>` (rejects `-c` inline form), `rm -f /tmp/...`, comment-prefixed Bash lines (`# rationale`), path/env introspection). Reduces escalation volume in dev-heavy sessions. Destructive commands (`rm -rf`, `git push`, `git reset --hard`, recursive `chmod -R 777`, etc.) still auto-reject — and the comment-prefix rule never beats them since `auto_reject` is evaluated first. Opt in with `claw-drive start --policy templates/claw-drive-policy-permissive.json`, or by passing the file's contents as `policy` to `start_session` (`install.sh --policy` only ever drops the starter).
 
 ## Context rotation & crash recovery
 

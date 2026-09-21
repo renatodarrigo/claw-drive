@@ -454,7 +454,7 @@ each completes, not just the stream's own cost reading.
 | `policy <session>` | `--set FILE`, `--show` |
 | `policy-test '<command>'` | `--tool TOOL`, `--arg KEY=VALUE`, `--policy SPEC`, `--explain`, `--json`, `--exit-on DECISION`, `--no-color`, `--help` / `-h` |
 | `status [<session>]` | `--json`, `--help` / `-h`, `--fleet TAG`, `--all-fleets` (no-argument form only) |
-| `prune` | `--older-than DURATION`, `--force`, `--fleet TAG`, `--all-fleets` |
+| `prune` | `--older-than DURATION`, `--force`, `--fleet TAG`, `--all-fleets`, `--help` / `-h` |
 | `provide-output <call_id>` | `--stdout S`, `--stderr S`, `--exit N`, `--extra S`, `--from-file PATH`, `--fleet TAG`, `--all-fleets` |
 
 **Global flags** (handled before subcommand dispatch):
@@ -547,10 +547,15 @@ sessions only). `--all-fleets` / `all_fleets: true` widens to every session.
 the predecessor's tag verbatim.
 
 `CLAUDE_CODE_SESSION_ID` is an **observed** Claude Code export (present in
-Bash subprocesses and stdio MCP servers on claude 2.1.258; absent from the
-documented environment-variable reference). If it disappears, new sessions
-are untagged and every surface degrades to the unscoped behavior of earlier
-releases — except that sessions tagged before it disappeared stay hidden
-from a no-identity view until `--all-fleets` widens it, or `--fleet <tag>` /
+Bash subprocesses and stdio MCP servers — observed on claude 2.1.258,
+re-checked on 2.1.261; absent from the documented environment-variable
+reference). On 2.1.261 it changes on `/clear` while a running stdio MCP
+server keeps the value it was launched with, so one driver's MCP and CLI
+views can act as two fleets after a `/clear` until `--fleet <tag>` /
+`CLAW_DRIVE_FLEET` pins one; `--resume` reuses the original id. Both are
+observations, not guarantees. If it disappears, new sessions are untagged
+and every surface degrades to the unscoped behavior of earlier releases —
+except that sessions tagged before it disappeared stay hidden from a
+no-identity view until `--all-fleets` widens it, or `--fleet <tag>` /
 `CLAW_DRIVE_FLEET` names their tag. Renaming `CLAW_DRIVE_FLEET`, changing
 the grammar, or changing the default view are breaking changes.

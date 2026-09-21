@@ -154,7 +154,7 @@ describe("claw-drive send --all", () => {
     const r = await capture(() => cmdSend(["--all", "wrap up"]));
     expect(r.code).toBe(0);
     expect(r.out.map((l) => JSON.parse(l).session_id)).toEqual(["sess_free", "sess_own"]);
-    expect(r.err).toBe("");
+    expect(r.err).toBe("(1 live in other fleets not sent; --all-fleets broadcasts to them)");
   });
 
   it("exits 1 when any member refuses, still reporting every member", async () => {
@@ -170,6 +170,8 @@ describe("claw-drive send --all", () => {
     await session("sess_other", { fleet: "team-b" }, "accept");
     const wide = await capture(() => cmdSend(["--all", "go", "--all-fleets"]));
     expect(wide.out.map((l) => JSON.parse(l).session_id)).toEqual(["sess_other", "sess_own"]);
+    // A widened view hides nothing, so the hidden-live note has nothing to say.
+    expect(wide.err).toBe("");
     const asB = await capture(() => cmdSend(["--all", "go", "--fleet", "team-b"]));
     expect(asB.out.map((l) => JSON.parse(l).session_id)).toEqual(["sess_other"]);
   });
@@ -184,6 +186,16 @@ describe("claw-drive send --all", () => {
     const none = await capture(() => cmdSend(["--all", "go"]));
     expect(none.code).toBe(2);
     expect(none.err).toBe("no live sessions in view");
+  });
+
+  it("a non-empty view still counts the live sessions hidden in other fleets on stderr", async () => {
+    await session("sess_a", { fleet: "team-a" }, "accept");
+    await session("sess_b", { fleet: "team-b" }, "accept");
+    await session("sess_c", { fleet: "team-c" }, "accept");
+    const r = await capture(() => cmdSend(["--all", "hi"]));
+    expect(r.code).toBe(0);
+    expect(r.out.map((l) => (JSON.parse(l) as { session_id: string }).session_id)).toEqual(["sess_a"]);
+    expect(r.err).toBe("(2 live in other fleets not sent; --all-fleets broadcasts to them)");
   });
 
   it("usage errors exit 2 before any socket is touched", async () => {

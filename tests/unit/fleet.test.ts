@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   FLEET_TAG_RE,
   isValidFleetTag,
+  isTagged,
   resolveActingFleet,
   inFleetView,
   parseFleetFlags,
@@ -35,6 +36,16 @@ describe("isValidFleetTag / FLEET_TAG_RE", () => {
     expect(isValidFleetTag("a b")).toBe(false);
     expect(isValidFleetTag(undefined)).toBe(false);
     expect(isValidFleetTag(42)).toBe(false);
+  });
+});
+
+describe("isTagged — the one tag-presence test", () => {
+  it("is true only for a non-empty string", () => {
+    expect(isTagged("A")).toBe(true);
+    expect(isTagged("")).toBe(false);
+    expect(isTagged(undefined)).toBe(false);
+    expect(isTagged(null)).toBe(false);
+    expect(isTagged(42)).toBe(false);
   });
 });
 
@@ -105,6 +116,15 @@ describe("inFleetView — truth table", () => {
   it("a null state counts as untagged", () => {
     expect(inFleetView(null, own)).toBe(true);
   });
+
+  it("a hand-edited empty or null tag counts as untagged, in every view", () => {
+    const empty = { fleet: "" };
+    const nul = { fleet: null } as unknown as { fleet?: string };
+    expect(inFleetView(empty, own)).toBe(true);
+    expect(inFleetView(nul, own)).toBe(true);
+    expect(inFleetView(empty, none)).toBe(true);
+    expect(inFleetView(nul, none)).toBe(true);
+  });
 });
 
 describe("parseFleetFlags", () => {
@@ -163,6 +183,18 @@ describe("parseFleetFlags", () => {
       rest: ["--all", "--", "--fleet"],
       view: { acting: undefined, allFleets: false },
       flagsSeen: false,
+    });
+  });
+
+  it("--fleet given twice: the last one wins", () => {
+    expect(parseFleetFlags(["--fleet", "a", "--fleet", "b"], EMPTY)).toEqual({
+      ok: true, rest: [], view: { acting: "b", allFleets: false }, flagsSeen: true,
+    });
+  });
+
+  it("an invalid tag next to --all-fleets reports the mutual-exclusion error (checked before validation)", () => {
+    expect(parseFleetFlags(["--fleet", "a b", "--all-fleets"], EMPTY)).toEqual({
+      ok: false, error: "--fleet and --all-fleets are mutually exclusive",
     });
   });
 });

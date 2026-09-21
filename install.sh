@@ -368,10 +368,12 @@ main() {
   if [[ -n "$PROJECT" ]]; then
     echo "  cd $PROJECT"
     echo "  claude       # start a dev session; /mcp should list claw-drive"
+    echo "  # already in a Claude Code session? restart it (or run /mcp) — it keeps the MCP server it launched"
   else
     echo "  cd <your project>"
     echo "  # add claw-drive to that project's .mcp.json, or re-run:"
     echo "  #   $0 --project <path> --policy <path>/claw-drive-policy.json"
+    echo "  # already in a Claude Code session? restart it (or run /mcp) — it keeps the MCP server it launched"
   fi
   echo
 }

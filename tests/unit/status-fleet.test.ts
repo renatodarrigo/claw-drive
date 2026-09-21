@@ -84,6 +84,15 @@ describe("claw-drive status — fleet view", () => {
     expect(r.err).toBe("(1 session in other fleets hidden; --all-fleets shows them)");
   });
 
+  it("--fleet with --all-fleets, and an invalid --fleet tag, exit 2 with the parser's message", async () => {
+    const both = await run(["--fleet", "team-b", "--all-fleets"]);
+    expect(both.code).toBe(2);
+    expect(both.err).toBe("--fleet and --all-fleets are mutually exclusive");
+    const bad = await run(["--fleet", "a b"]);
+    expect(bad.code).toBe(2);
+    expect(bad.err).toMatch(/^invalid --fleet 'a b'/);
+  });
+
   it("--json carries fleet per row and hidden_in_other_fleets, with nothing on stderr", async () => {
     const r = await run(["--json"]);
     const body = JSON.parse(r.out) as { sessions: Array<{ session_id: string; fleet?: string }>; hidden_in_other_fleets?: number };
@@ -108,5 +117,17 @@ describe("claw-drive status — fleet view", () => {
     expect(r.out.split("\n")).toHaveLength(2);
     expect(r.out).toContain("sess_free");
     expect(r.err).toBe("(2 sessions in other fleets hidden; --all-fleets shows them)");
+  });
+
+  it("an explicit id whose state.json is corrupt says 'not found or unreadable'; an unknown id says 'not found'", async () => {
+    const dir = path.join(home, "sessions", "sess_corrupt00000001");
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(path.join(dir, "state.json"), "{nope");
+    const corrupt = await run(["sess_corrupt00000001"]);
+    expect(corrupt.code).toBe(1);
+    expect(corrupt.err).toBe("session not found or unreadable");
+    const unknown = await run(["sess_missing00000001"]);
+    expect(unknown.code).toBe(1);
+    expect(unknown.err).toBe("session not found");
   });
 });

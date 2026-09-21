@@ -57,6 +57,9 @@ brew install jq nmap</code></pre>
 cd claw-drive
 ./install.sh</code></pre>
 
+    <h3 id="upgrading">Upgrading</h3>
+    <p>Re-run the install one-liner. In a clone, run <code>git pull &amp;&amp; npm run build</code> — the installer rebuilds only when <code>src/index.ts</code> is newer than <code>dist/</code>, and a symlink-mode install serves the clone's own <code>dist/</code>. A Claude Code session keeps the <code>claw-drive mcp</code> server it launched at startup, so after an upgrade restart Claude Code (or run <code>/mcp</code>) before driving: until then the old server answers, with its old tool schemas. <code>claw-drive</code> calls from Bash use the new <code>dist/</code> as soon as it is built.</p>
+
     <h2>Installer flags</h2>
     <table>
       <thead><tr><th>Flag</th><th>Effect</th></tr></thead>

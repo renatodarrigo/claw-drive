@@ -1,6 +1,7 @@
 import { startSessionTailer, type SessionTailerHandle } from "./session-tailer.js";
 import { readState, isPidAlive } from "./state.js";
 import { statePath } from "./paths.js";
+import { isTagged } from "./fleet.js";
 import type { WatchFilterArgs } from "../cli/commands/watch.js";
 
 const DEFAULT_POLL_INTERVAL_MS = 1000;
@@ -131,7 +132,8 @@ export function startLineageTailer(opts: LineageTailerOptions): LineageTailerHan
       const st = await readState(statePath(id));
       aliasTag = st?.alias;
       generationTag = st?.generation;
-      fleetTag = st?.fleet;
+      const tag = st?.fleet;
+      fleetTag = isTagged(tag) ? tag : undefined;
     } catch {
       aliasTag = undefined;
       generationTag = undefined;

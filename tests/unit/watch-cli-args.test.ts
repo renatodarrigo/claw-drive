@@ -474,6 +474,21 @@ describe("parseWatchArgs — fleet flags (watch --all is a fleet surface)", () =
     expect(r2).toEqual({ ok: false, error: "--fleet/--all-fleets apply only to the fleet view" });
   });
 
+  it("the single-session form reports the fleet-flag error before the missing-id error", () => {
+    expect(parseWatchArgs(["--all-fleets"], EMPTY)).toEqual({
+      ok: false, error: "--fleet/--all-fleets apply only to the fleet view",
+    });
+    expect(parseWatchArgs(["--fleet", "a"], EMPTY)).toEqual({
+      ok: false, error: "--fleet/--all-fleets apply only to the fleet view",
+    });
+  });
+
+  it("the single-session form reports the fleet-flag error before a malformed-id error", () => {
+    expect(parseWatchArgs(["not a valid id", "--fleet", "a"], EMPTY)).toEqual({
+      ok: false, error: "--fleet/--all-fleets apply only to the fleet view",
+    });
+  });
+
   it("--fleet and --all-fleets together are rejected before anything else", () => {
     const r = parseWatchArgs(["--all", "--fleet", "a", "--all-fleets"], EMPTY);
     expect(r).toEqual({ ok: false, error: "--fleet and --all-fleets are mutually exclusive" });

@@ -93,8 +93,42 @@ describe("claw-drive sessions — fleet view", () => {
     expect(r.out).toBe("(no sessions)");
   });
 
-  it("flag errors exit 2", async () => {
-    expect((await run(["--fleet"])).code).toBe(2);
-    expect((await run(["--fleet", "a", "--all-fleets"])).code).toBe(2);
+  it("a plain file where the sessions directory should be still prints '(no sessions)'", async () => {
+    await fs.rm(path.join(home, "sessions"), { recursive: true, force: true });
+    await fs.writeFile(path.join(home, "sessions"), "");
+    expect((await run([])).out).toBe("(no sessions)");
+  });
+
+  it("flag errors exit 2 with the parser's message", async () => {
+    const missing = await run(["--fleet"]);
+    expect(missing.code).toBe(2);
+    expect(missing.err).toBe("--fleet requires a tag");
+    const both = await run(["--fleet", "a", "--all-fleets"]);
+    expect(both.code).toBe(2);
+    expect(both.err).toBe("--fleet and --all-fleets are mutually exclusive");
+    const bad = await run(["--fleet", "a b"]);
+    expect(bad.code).toBe(2);
+    expect(bad.err).toMatch(/^invalid --fleet 'a b'/);
+  });
+
+  it("--fleet team-b acts as that fleet: its row and the untagged one, own hidden", async () => {
+    await writeSession("sess_own", { fleet: "team-a" });
+    await writeSession("sess_other", { fleet: "team-b" });
+    await writeSession("sess_free");
+    const r = await run(["--fleet", "team-b"]);
+    expect(r.code).toBe(0);
+    const ids = r.out.split("\n").slice(1).map((l) => l.split("\t")[0].split(" ")[0]);
+    expect(ids).toEqual(["sess_free", "sess_other"]);
+    expect(r.err).toBe("(1 session in other fleets hidden; --all-fleets shows them)");
+  });
+
+  it("a hand-edited empty fleet reads as untagged: listed with no identity, '-' under --all-fleets", async () => {
+    await writeSession("sess_blank000000001", { fleet: "" });
+    delete process.env.CLAW_DRIVE_FLEET;
+    const plain = await run([]);
+    expect(plain.out).toContain("sess_blank000000001");
+    const widened = await run(["--all-fleets"]);
+    const row = widened.out.split("\n").find((l) => l.startsWith("sess_blank000000001"));
+    expect(row?.endsWith("\t-")).toBe(true);
   });
 });

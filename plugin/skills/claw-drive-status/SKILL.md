@@ -38,6 +38,7 @@ The user has invoked this skill to ask "what's happening across the driven sessi
    - Call out the noteworthy sessions by id (only those with pending decisions, errors, or NEEDS-* tokens). Use a short id form (first ~20 chars + `…`) so the chat doesn't get unwieldy.
    - Don't enumerate quiet sessions individually — group as a count at the bottom.
    - If `hidden_in_other_fleets` is present, close with one line: "N session(s) belong to other drivers' fleets — `claw-drive status --all-fleets` shows them."
+   - This also happens to a driver's own sessions after `/clear`: the MCP server keeps the session id it was launched with while `claw-drive` calls from Bash see the new one (observed on claude 2.1.261), so sessions started through `start_session` may be hidden from `claw-drive status`. Pass `--fleet <tag>` (the `fleet` that `start_session` echoed) or `--all-fleets`.
 
 7. **Single-session output** (session id was passed):
    - The user wants depth. Lead with `current_turn.last_assistant_text` (or `last_completed_turn.last_assistant_text` if no current turn) so they know what B is "saying right now."

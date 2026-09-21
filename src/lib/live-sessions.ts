@@ -18,11 +18,10 @@ export interface SessionRow {
   inView: boolean;
 }
 
-/** True iff the sessions root directory exists (surfaces distinguish "no directory" from "empty"). */
+/** True iff a directory exists at the sessions root (surfaces distinguish "no directory" from "empty"); a plain file at the path does not count. */
 export async function sessionsRootExists(): Promise<boolean> {
   try {
-    await fs.access(sessionsRoot());
-    return true;
+    return (await fs.stat(sessionsRoot())).isDirectory();
   } catch {
     return false;
   }

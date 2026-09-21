@@ -7,6 +7,8 @@
  * shows that fleet's sessions plus untagged ones. `--all-fleets` widens the
  * view to every session on the machine. `start` stamps the acting fleet on
  * the new session (see SessionState.fleet); lineage successors inherit it.
+ * A tag is present iff `isTagged` says so — a non-empty string; hand-edited
+ * garbage reads as untagged on every surface.
  *
  * Acting-fleet resolution, identical everywhere:
  *   1. explicit  — CLI `--fleet <tag>` / MCP `fleet` input
@@ -14,7 +16,9 @@
  *   3. observed  — CLAUDE_CODE_SESSION_ID (Claude Code exports its session
  *                  UUID to Bash subprocesses and stdio MCP servers; observed
  *                  on claude 2.1.258, not a documented guarantee — a
- *                  malformed or absent value simply yields no identity)
+ *                  malformed or absent value simply yields no identity; on
+ *                  2.1.261 it changes on /clear while a running MCP server
+ *                  keeps its launch-time value, and --resume keeps it)
  *   4. none      — the view is untagged sessions only
  *
  * Explicit ids and aliases are never scoped: only enumeration is.
@@ -35,6 +39,16 @@ export const FLEET_FLAGS_SINGLE_FORM_ERROR = "--fleet/--all-fleets apply only to
 
 export function isValidFleetTag(v: unknown): v is string {
   return typeof v === "string" && FLEET_TAG_RE.test(v);
+}
+
+/**
+ * The one tag-presence test every read site uses: a fleet tag is a non-empty
+ * string. Anything else — absent, empty, or null from a hand-edited state
+ * file — is untagged everywhere (in the view predicate, the tables, and the
+ * machine lines), never hidden-yet-rendered-as-untagged.
+ */
+export function isTagged(fleet: unknown): fleet is string {
+  return typeof fleet === "string" && fleet !== "";
 }
 
 export interface FleetView {
@@ -83,7 +97,7 @@ export function resolveActingFleet(
 export function inFleetView(state: { fleet?: string } | null, view: FleetView): boolean {
   if (view.allFleets) return true;
   const tag = state?.fleet;
-  if (tag === undefined) return true;
+  if (!isTagged(tag)) return true;
   return tag === view.acting;
 }
 
