@@ -341,9 +341,12 @@ export async function enforceBudget(ctx: RunnerContext, ev: Event): Promise<void
  * parseClaudeLine and emitted as Events to events.jsonl.
  *
  * The `currentTurnId` on ctx is stamped on parsed events so each event is
- * associated with the in-flight user turn (set by the send_turn handler in
- * Task 12). If no turn is in flight (e.g. during startup before any user
- * turn), events are stamped with turn_id "turn_unknown".
+ * associated with the in-flight user turn. It flips only where a turn is
+ * minted — send_turn and the new-turn path of provide_tool_output — and both
+ * refuse with TURN_IN_FLIGHT while ctx.turnInFlight is set, so the stamp can
+ * never flip under a running turn. If no turn is in flight (e.g. during
+ * startup before any user turn), events are stamped with turn_id
+ * "turn_unknown".
  */
 export async function runStdoutLoop(ctx: RunnerContext): Promise<void> {
   const stdout = ctx.b.stdout!;
@@ -671,13 +674,16 @@ async function turnAssistantText(sessionId: string, turnId: string): Promise<str
  * turn's own terminating output may still be in flight, and if it arrives
  * after currentTurnId has already flipped, it gets mis-stamped with attempt
  * 2's turn id: mis-resolving attempt 2's waiter with the wrong outcome, or
- * bleeding stray text into attempt 2's extracted transcript. Instead we grant
- * the INTERRUPTED turn a bounded grace period (on its own still-registered
- * waiter) to actually terminate before proceeding. If it never does (wedged),
- * we abort the rotation entirely rather than risk a second send_turn racing
- * the still-in-flight first one — returning null here, same as the
- * both-attempts-exhausted case, so the caller leaves B running (the guiding
- * invariant).
+ * bleeding stray text into attempt 2's extracted transcript. (send_turn
+ * refuses external sends throughout — ROTATION_IN_PROGRESS while the rotation
+ * owns the session, TURN_IN_FLIGHT whenever the latch is set; the grace below
+ * is what lets the choreography's own retry reach a clear latch.) Instead we
+ * grant the INTERRUPTED turn a bounded grace period (on its own
+ * still-registered waiter) to actually terminate before proceeding. If it
+ * never does (wedged), we abort the rotation entirely rather than risk a
+ * second send_turn racing the still-in-flight first one — returning null
+ * here, same as the both-attempts-exhausted case, so the caller leaves B
+ * running (the guiding invariant).
  *
  * `flags`, if given, is set to `{ wedged: true }` on the wedged-abort path
  * specifically (distinct from the genuine both-attempts-no-markers failure)
@@ -731,10 +737,11 @@ async function runHandoverTurn(
       ctx.rotationSendId = null;
     });
     if (!resp.ok) {
-      // The send refused (dead-B SESSION_EXITED surface) — no turn was
-      // written to B, so nothing can ever resolve this attempt's waiter
-      // except an exit-path flush that may not have seen it. Never race a
-      // waiter for a turn that was refused: drop it and fall through to the
+      // The send refused (dead-B SESSION_EXITED surface, or TURN_IN_FLIGHT —
+      // unreachable here, since the choreography only sends at a boundary) —
+      // no turn was written to B, so nothing can ever resolve this attempt's
+      // waiter except an exit-path flush that may not have seen it. Never race
+      // a waiter for a turn that was refused: drop it and fall through to the
       // selector below the loop, which reports the truthful reason.
       ctx.turnWaiters.delete(turnId);
       break;

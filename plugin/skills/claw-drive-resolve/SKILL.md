@@ -1,6 +1,6 @@
 ---
 name: claw-drive-resolve
-description: Resolve a paused tool call in a driven session. Usage — /claw-drive-resolve <call_id> <action> [--remember | --remember-as <json>] [--preview] [--reason <text>] [--stdout <text>] [--exit <n>]. Action is one of approve, reject, defer. --preview shows the rule --remember would derive without resolving; --remember-as commits an explicit rule. For defer-with-output (the human ran the command locally and is feeding the result back), pass --stdout and --exit to use provide_tool_output instead of resolve_tool_call.
+description: Resolve a paused tool call in a driven session. Usage — /claw-drive-resolve <call_id> <action> [--remember | --remember-as <json>] [--preview] [--reason <text>] [--stdout <text>] [--exit <n>]. Action is one of approve, reject, defer. --preview shows the rule --remember would derive without resolving; --remember-as commits an explicit rule. For defer-with-output (the human ran the command locally and is feeding the result back), pass --stdout and --exit to use provide_tool_output instead of claw-drive defer.
 ---
 
 # Claw-drive — resolve
@@ -18,7 +18,7 @@ The user has invoked this skill to resolve a tool call that's paused waiting for
    - `--preview` — read-only: show the rule `--remember` would derive (and the list it would join) without resolving the call or changing the policy. Use it to check scope before committing.
    - `--remember-as <json>` — append an explicit rule (a `Rule` object) instead of the auto-derived one — e.g. to tighten an over-broad Bash prefix. Mutually exclusive with `--remember`.
    - `--reason <text>` — recorded in the audit event, surfaced in `pending` listings.
-   - `--stdout <text>` and `--exit <n>` — for defer-with-output: the human ran the command locally and is feeding the result back to B. When these are present, use `provide_tool_output` instead of `resolve_tool_call`.
+   - `--stdout <text>` and `--exit <n>` — for defer-with-output: the human ran the command locally and is feeding the result back to B. When these are present, use `provide_tool_output` instead of `claw-drive defer`. The output reaches B through the paused hook or as the next turn; a `TURN_IN_FLIGHT` reply means B's turn is still running — retry at the turn boundary.
 
    If args are malformed, report usage and stop.
 
@@ -54,7 +54,9 @@ The user has invoked this skill to resolve a tool call that's paused waiting for
    }
    ```
 
-   **C. `defer` without stdout/exit:** Call MCP `resolve_tool_call` with action=defer (the runner emits a tool_decision_required and B remains paused until the human provides the output via case B). The `--remember` flag is honoured here — derives a defer rule.
+   The response's `via` says how it reached B: `"hook"` — the call was still paused in a running turn and the output is now that call's own result inside that turn; `"turn"` — the call was deferred earlier, or was stale (its turn had ended, its hook had timed out, or the composed output exceeded 64 KiB), and the output went in as a new turn. A `TURN_IN_FLIGHT` refusal means B's turn is still running: wait for its `turn_completed` in the Monitor (or `poll_turn`), then call again — the deferred record is kept.
+
+   **C. `defer` without stdout/exit:** run `claw-drive defer <call_id>` — MCP `resolve_tool_call` accepts only `approve` and `reject`. The hook is released with a `DEFERRED:` denial, B continues (usually ending its turn to wait for the output), and the output is provided later via case B, where it goes in as a new turn (`via: "turn"`). The `--remember` flag is honoured here — derives a defer rule.
 
 4. **Confirm the resolution.** The MCP response will include the resolved status. If the resolution failed (e.g., the call already resolved), report what happened.
 

@@ -122,7 +122,7 @@ claw-drive watch &lt;id&gt; --only tool_decision_required,turn_failed,session_st
     <p>When more than one driver runs on the machine, every listing is scoped to the driver's <em>fleet</em>: sessions it started (tagged with its Claude Code session id by default, or with an explicit <code>start --fleet &lt;tag&gt;</code>) plus untagged ones. Another driver's sessions stay out of <code>watch --all</code>, <code>status</code>, and the rest unless you pass <code>--all-fleets</code>, and a fresh driver session picks up an earlier fleet by acting as it with <code>--fleet &lt;tag&gt;</code>. See <a href="reference.html#fleets">Reference → Fleets</a>.</p>
     <p>To address the whole fleet at once, <code>send --all</code> broadcasts one user turn to every live session in the view and prints one JSONL line per session — the <code>turn_id</code> it got, or the refusal:</p>
     <pre><code class="language-bash">claw-drive send --all "Checkpoint your work and end the turn with [DONE]."</code></pre>
-    <p>Exit 0 means every session accepted the turn; 1 means at least one line reports a refusal (an exited B, a rotation in flight) or an unreachable member; 2 means the view holds no live session at all.</p>
+    <p>Exit 0 means every session accepted the turn; 1 means at least one line reports a refusal (an exited B, a rotation in flight, a turn still running) or an unreachable member; 2 means the view holds no live session at all.</p>
 
     <h3 id="watch-follow-lineage">Surviving rotation: <code>--follow-lineage</code></h3>
     <p>A single-session <code>watch</code> ends when its session does — including when the session <em>rotates</em> and a successor carries on. <code>watch &lt;session&gt; --follow-lineage</code> keeps the stream alive across the whole lineage: when the watched member gains a successor (a rotation, or a <code>recover</code> of a crashed member), the watcher hops to it and continues, until a member stops without a successor. Every emitted line carries the additive <code>session_id</code>/<code>alias</code>/<code>generation</code>/<code>fleet</code> fields — the same quartet <code>watch --all</code> emits, the last three present only when the session has them — so a hop is visible as the tag and generation change, and a rotation narrates itself through the predecessor's <code>session_rotated</code> event, a crash auto-respawn through <code>session_recovered</code>.</p>
@@ -141,14 +141,16 @@ claw-drive watch &lt;id&gt; --only tool_decision_required,turn_failed,session_st
 
     <p>Flow:</p>
     <ol>
-      <li>B tries a matching call. The PreToolUse hook denies it with a <code>DEFERRED:</code> message.</li>
-      <li>A <code>tool_decision_required</code> event fires. The monitor notifies A.</li>
+      <li>B tries a matching call. The PreToolUse hook pauses it.</li>
+      <li>A <code>tool_decision_required</code> event (<code>default_action: "defer"</code>) fires. The monitor notifies A.</li>
       <li>The human runs the command locally.</li>
       <li>A calls <code>provide_tool_output</code> (or <code>claw-drive provide-output</code>) with the result.</li>
-      <li>The runner formats the output as a user turn to B. B continues.</li>
+      <li>The runner releases the paused call with the output as its own result, inside the running turn (<code>via: "hook"</code>). B continues. If nobody answers in time, the hook releases B with a denial instead — the rule's <code>DEFERRED</code> default once <code>decision_timeout_seconds</code> passes, or the approver's own fail-secure deny after about 10 minutes, whichever comes first — B continues, usually ending its turn to wait, and the output goes in as the next turn.</li>
     </ol>
 
     <pre><code class="language-bash">claw-drive provide-output &lt;call_id&gt; --stdout "&lt;output&gt;" --exit 0</code></pre>
+
+    <p>The hook path needs the call still paused when you answer: its turn still running, its hook not timed out (about 10 minutes from the pause) and the composed output within 64 KiB. A call released earlier — by <code>claw-drive defer &lt;call_id&gt;</code>, which sends B a <code>DEFERRED:</code> denial, or by the decision timeout — and a paused call that has gone stale (its turn has ended, its hook has timed out, or the composed output exceeds 64 KiB) take the turn path: the output goes in as a new user turn at the next turn boundary (<code>via: "turn"</code>); while B's turn is still running, <code>provide_tool_output</code> is refused with <code>TURN_IN_FLIGHT</code> — retry when it completes.</p>
 
     <h2 id="claw-gate-pattern">CLAW-GATE: pausing mid-task for human input</h2>
     <p>When B needs a human decision <em>before</em> attempting a step, use the CLAW-GATE convention baked into the default policy. See <a href="policies.html#claw-gate">Policies → CLAW-GATE</a> for the mechanism. Example brief:</p>
@@ -164,7 +166,7 @@ claw-drive watch &lt;id&gt; --only tool_decision_required,turn_failed,session_st
 
     <pre><code class="language-bash">claw-drive interrupt &lt;session&gt; &lt;turn_id&gt;</code></pre>
 
-    <p>You can then <code>send_turn</code> a correction and continue.</p>
+    <p>You can then wait for the aborted turn's <code>turn_failed</code> and <code>send_turn</code> a correction; a send before that is refused with <code>TURN_IN_FLIGHT</code>.</p>
 
     <h2 id="rotation">Context rotation: handing off before the window fills</h2>
     <p>A long-lived B eventually fills its context window, and native auto-compact decides for you when that happens and what survives it. With a <code>rotation</code> block in the policy (<a href="policies.html#rotation">Policies → Context rotation</a>), the handoff point is the driver's choice instead: once B's tracked context reaches <code>threshold_tokens</code>, the runner emits <code>context_threshold_reached</code> — re-fired on every completed turn while above it — and <code>rotate</code> becomes available.</p>

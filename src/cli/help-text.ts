@@ -30,8 +30,10 @@ THE DRIVING LOOP
   2. watch    stream B's human-actionable events (approvals, completions,
               errors). Feed the start_session watch_command to Monitor.
   3. resolve  when a tool call pauses: approve / reject / defer it; for a review
-              gate, send B the go-ahead.
-  4. send     give B its next instruction as a user turn.
+              gate, answer with provide-output (it reaches B through the paused
+              hook, or as the next turn).
+  4. send     give B its next instruction as a user turn — at a turn boundary;
+              a send while a turn runs is refused with TURN_IN_FLIGHT.
   5. stop     reap B when the task is done.
   6. rotate   when context_threshold_reached fires: B writes a handover and a
               fresh successor session continues the task (alias follows).
@@ -69,9 +71,10 @@ FLEET
   when the two disagree. Listings show your fleet plus untagged sessions;
   --all-fleets widens, --fleet TAG acts as another fleet. 'watch --all' merges
   the fleet view's live sessions into one session_id-tagged stream with dynamic
-  membership; 'send --all' broadcasts a turn to them. Name sessions with
-  'start --name'. 'status' snapshots one session or the whole view: state,
-  current turn, pending decisions, recent errors.
+  membership; 'send --all' broadcasts a turn to them, a member mid-turn being
+  refused on its own line. Name sessions with 'start --name'. 'status'
+  snapshots one session or the whole view: state, current turn, pending
+  decisions, recent errors.
 `;
 
 const POINTERS = `LEARN MORE

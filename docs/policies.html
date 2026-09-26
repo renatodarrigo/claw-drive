@@ -104,7 +104,7 @@
     <p>In the scenario brief, tell B:</p>
     <blockquote class="callout">Before each risky step, run <code>echo 'CLAW-GATE: &lt;your question&gt;'</code> with the Bash tool and wait for my response.</blockquote>
 
-    <p>When B runs the echo, the defer rule fires. The monitor alerts A. The human answers. A calls <code>provide_tool_output</code> with the answer. B reads it and proceeds. No new primitive — same mechanism as a <code>sudo</code> defer.</p>
+    <p>When B runs the echo, the defer rule pauses the call and the monitor alerts A. The human answers. A calls <code>provide_tool_output</code> with the answer, and B reads it as the echo's own result in the same turn (<code>via: "hook"</code>). An answer that comes too late, or whose composed output exceeds 64 KiB, goes in as B's next turn instead — see <a href="driving-patterns.html#defer-round-trip">Driving patterns → Defer round-trip</a>. No new primitive — same mechanism as a <code>sudo</code> defer.</p>
 
     <h2 id="remember-as-policy">Learning from decisions: <code>remember_as_policy</code></h2>
     <p>When you approve, reject, or defer a call interactively, pass <code>remember_as_policy: true</code> to have claw-drive derive a rule and append it to the session's live policy.</p>

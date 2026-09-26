@@ -80,7 +80,7 @@
       <li><code>--preview</code> — read-only: show the rule <code>--remember</code> would derive (and the list it would join) without resolving the call or changing the policy.</li>
       <li><code>--remember-as &lt;json&gt;</code> — append an explicit <code>Rule</code> instead of the auto-derived one — e.g. to tighten an over-broad Bash prefix. Mutually exclusive with <code>--remember</code>.</li>
       <li><code>--reason &lt;text&gt;</code> — recorded in the audit event.</li>
-      <li><code>--stdout &lt;text&gt;</code> + <code>--exit &lt;n&gt;</code> — for the defer-with-output round-trip. The skill switches from <code>resolve_tool_call</code> to <code>provide_tool_output</code>.</li>
+      <li><code>--stdout &lt;text&gt;</code> + <code>--exit &lt;n&gt;</code> — for the defer-with-output round-trip. The skill switches from <code>claw-drive defer</code> to <code>provide_tool_output</code>; the output reaches B through the paused hook (<code>via: "hook"</code>) or as the next turn (<code>via: "turn"</code>).</li>
     </ul>
 
     <p>See <a href="driving-patterns.html#defer-round-trip">Driving patterns → Defer round-trip</a> for the full mechanism.</p>

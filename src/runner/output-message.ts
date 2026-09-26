@@ -2,8 +2,10 @@
  * The text B receives when the human ran a deferred tool call and fed its
  * output back through provide_tool_output. Shared by both delivery paths —
  * released through the paused approval hook as the call's own result (a call
- * still pending), or written to B's stdin as a new user turn (a call deferred
- * earlier) — so B reads the same words whichever way it arrives.
+ * still paused in a running turn, within the hook channel's limits), or
+ * written to B's stdin as a new user turn (a call deferred earlier, or a
+ * paused call that has gone stale) — so B reads the same words whichever way
+ * it arrives.
  *
  * Extracted (runner-args.ts precedent) so the wording is unit-testable
  * without spawning the runner.

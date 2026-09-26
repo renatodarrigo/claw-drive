@@ -179,6 +179,10 @@ Refuses with `SESSION_EXITED` if the session process has already exited, in whic
 Refuses with `ROTATION_IN_PROGRESS` while a rotation is in flight for the
 session — wait for `session_rotated` and send to the successor.
 
+Refuses with `TURN_IN_FLIGHT` while a turn is in flight for the session — wait
+for that turn's `turn_completed` or `turn_failed` and retry at the turn
+boundary.
+
 #### `poll_turn`
 
 Fetch events and derived status for a specific turn.
@@ -225,15 +229,27 @@ Approve or reject a paused tool call by `call_id`.
 
 #### `provide_tool_output`
 
-Provide the output of a deferred command run manually by the human. Injects
-the output as a new user turn; auto-resolves any still-pending approval as
-`"defer"`.
+Provide the output of a deferred command run manually by the human. If the
+call is still paused in the approval hook (paused for a decision, not yet
+resolved), the turn that paused it is still running, the call has been paused
+for less than 590 s (the runner's hook window, 5 s inside the approver hook's
+own 595 s timeout), and the composed output fits in 64 KiB, the output is
+released through the hook as that call's own result inside that turn and the
+pending approval auto-resolves as `"defer"`. Otherwise — the call was deferred
+earlier, or the paused call is stale (its turn has ended, its hook window has
+passed, or the composed output is larger than 64 KiB) — the output is injected
+as a new user turn at the next turn boundary.
 
 **Required inputs:** `session_id: string`, `call_id: string`
 
 **Optional inputs:** `stdout: string`, `stderr: string`, `exit_code: number`, `extra: string`
 
-**Response:** `{ ... }` (forwarded from runner)
+**Response:** `{ "turn_id": "<string>", "via": "hook" | "turn" }` — `turn_id` is the running turn for `"hook"` and the new turn for `"turn"`.
+
+Refuses with `TURN_IN_FLIGHT` on the new-turn path while a turn is in flight —
+wait for its `turn_completed` or `turn_failed` and retry; the deferred record
+is kept. A stale paused call is recorded as deferred with a reason naming the
+cause before it takes this path.
 
 Refuses with `SESSION_EXITED` if the session process has already exited, in which case use `recover_session` — the pending approval still auto-resolves as `defer` first, but the output's own follow-up turn never reaches B.
 
@@ -258,6 +274,9 @@ Session remains alive.
 **Required inputs:** `session_id: string`, `turn_id: string`
 
 **Response:** `{ "ok": true }`
+
+The aborted turn ends with `turn_failed`; `send_turn` before that is refused
+with `TURN_IN_FLIGHT`.
 
 #### `rotate_session`
 
