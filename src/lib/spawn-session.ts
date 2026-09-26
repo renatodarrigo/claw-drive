@@ -81,6 +81,15 @@ export const HOOK_TIMEOUT_SECONDS = 600;
  */
 export const HOOK_DELIVERY_WINDOW_MS = 590_000;
 
+/**
+ * The largest deny reason the hook channel was observed to carry intact
+ * (claude 2.1.283, 64 KiB). bin/claw-drive-approver hands the reason to jq as
+ * ONE command-line argument, which Linux caps at 128 KiB; past that the
+ * approver exits without an envelope and claude treats the hook as failed —
+ * which does not block the tool. Larger outputs take the turn path instead.
+ */
+export const HOOK_DELIVERY_MAX_BYTES = 65_536;
+
 export async function scaffoldSessionDir(input: ScaffoldInput): Promise<void> {
   const dir = sessionDir(input.sessionId);
   await fs.mkdir(dir, { recursive: true });

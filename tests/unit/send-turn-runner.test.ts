@@ -16,7 +16,7 @@ import { readEventsSince, type Event } from "../../src/lib/events.js";
 import { eventsPath } from "../../src/lib/paths.js";
 import { readFileSync } from "node:fs";
 import { composeOutputMessage } from "../../src/runner/output-message.js";
-import { HOOK_DELIVERY_WINDOW_MS } from "../../src/lib/spawn-session.js";
+import { HOOK_DELIVERY_MAX_BYTES, HOOK_DELIVERY_WINDOW_MS } from "../../src/lib/spawn-session.js";
 
 // v1.4.1 ledger finding: send_turn (and provide_tool_output, which pipes a
 // turn to B the same way) never checked whether B had already exited before
@@ -544,8 +544,10 @@ describe("provide_tool_output during a running turn (new-turn path)", () => {
 // the approver renders the runner's deny message as the structured envelope
 // and claude hands it to the model as the call's own tool_result (a 64 KB
 // message arrived intact on 2.1.283). No turn is minted, so nothing can
-// mis-stamp the running turn. The approver self-times-out at 595 s, so a
-// call paused longer is a ghost: it falls back to the new-turn path.
+// mis-stamp the running turn. A hook is answered only while its turn still
+// runs, the approver is still alive (it self-times-out at 595 s) and the
+// text fits the probed 64 KiB; anything else is stale and falls back to the
+// new-turn path.
 describe("provide_tool_output on a pending call delivers through the hook", () => {
   type Decision = { behavior: "allow" | "deny"; message?: string };
   const GATE_ARGS = { command: "echo 'CLAW-GATE: include the changelog?'" };
@@ -630,32 +632,76 @@ describe("provide_tool_output on a pending call delivers through the hook", () =
     expect(kindsAtRelease).toEqual(["tool_decision_resolved", "tool_output_provided"]);
   });
 
-  it("works with the latch clear too — a paused hook is the only precondition", async () => {
+  it("a pending entry whose turn has ended (latch clear) is stale: DEFERRED release, then the output goes in as a turn", async () => {
     const fake = makeFakeB();
     const ctx = await makeCtx(fake);
     const decisions: Decision[] = [];
     seedPending(ctx, "toolu_7", (d) => decisions.push(d));
-    const resp = await handleRequest(ctx, { id: "p10", op: "provide_tool_output", call_id: "toolu_7" });
-    expect(resp).toEqual({ id: "p10", ok: true, result: { turn_id: "turn_3", via: "hook" } });
-    expect(decisions).toHaveLength(1);
+    const resp = await handleRequest(ctx, { id: "p10", op: "provide_tool_output", call_id: "toolu_7", stdout: "late" });
+    expect(resp).toEqual({ id: "p10", ok: true, result: { turn_id: "turn_1", via: "turn" } });
+    expect(decisions).toEqual([{ behavior: "deny", message: "DEFERRED: human will run this command manually." }]);
+    const { events } = await readEventsSince(eventsPath(SID), 0);
+    expect(events.map((e) => e.kind)).toEqual(["tool_decision_resolved", "turn_started", "tool_output_provided"]);
+    expect(events[0]).toMatchObject({ reason: "auto-deferred by provide_tool_output (the paused turn has ended)" });
+    expect(fake.writes).toHaveLength(1);
+    expect(fake.writes[0]).toContain("late");
+    expect(ctx.deferredCalls.has("toolu_7")).toBe(false);
+  });
+
+  it("a pending entry from an earlier turn while a newer turn runs is stale: TURN_IN_FLIGHT, record kept with the turn-ended reason", async () => {
+    const fake = makeFakeB();
+    const ctx = await pendingCtx(fake);
+    ctx.currentTurnId = "turn_4";
+    ctx.state.turns = 4;
+    const decisions: Decision[] = [];
+    seedPending(ctx, "toolu_7", (d) => decisions.push(d)); // stamped turn_3
+    const resp = await handleRequest(ctx, { id: "p15", op: "provide_tool_output", call_id: "toolu_7", stdout: "x" });
+    expect(resp).toMatchObject({ ok: false, error: "TURN_IN_FLIGHT" });
+    expect(decisions).toEqual([{ behavior: "deny", message: "DEFERRED: human will run this command manually." }]);
+    expect(await eventKinds()).toEqual(["tool_decision_resolved"]);
+    expect(ctx.deferredCalls.get("toolu_7")).toMatchObject({ reason: "auto-deferred by provide_tool_output (the paused turn has ended)" });
+  });
+
+  function fill(n: number): string {
+    // The probe call below passes stdout: "" to size the fixed scaffolding,
+    // but composeOutputMessage substitutes the 7-byte "(empty)" placeholder
+    // for any falsy stdout — a substitution the real call below never hits,
+    // since its stdout is this function's (non-empty) return value. Add the
+    // placeholder's length back so the literal `n` argument lands exactly on
+    // the composed message's real byte length.
+    const EMPTY_PLACEHOLDER_LEN = "(empty)".length;
+    const base = Buffer.byteLength(
+      composeOutputMessage({ tool: "Bash", call_id: "toolu_7", args: GATE_ARGS, exit_code: 0, stdout: "", stderr: "", extra: "" })
+    );
+    return "x".repeat(n - base + EMPTY_PLACEHOLDER_LEN);
+  }
+
+  it("an output that composes to exactly HOOK_DELIVERY_MAX_BYTES still goes through the hook", async () => {
+    const fake = makeFakeB();
+    const ctx = await pendingCtx(fake);
+    const decisions: Decision[] = [];
+    seedPending(ctx, "toolu_7", (d) => decisions.push(d));
+    const resp = await handleRequest(ctx, { id: "p16", op: "provide_tool_output", call_id: "toolu_7", stdout: fill(HOOK_DELIVERY_MAX_BYTES), exit_code: 0 });
+    expect(resp).toEqual({ id: "p16", ok: true, result: { turn_id: "turn_3", via: "hook" } });
+    expect(Buffer.byteLength(decisions[0]!.message!)).toBe(HOOK_DELIVERY_MAX_BYTES);
+  });
+
+  it("an output one byte over HOOK_DELIVERY_MAX_BYTES is kept off the hook: DEFERRED release, record with the size reason, TURN_IN_FLIGHT until the boundary", async () => {
+    const fake = makeFakeB();
+    const ctx = await pendingCtx(fake);
+    const decisions: Decision[] = [];
+    seedPending(ctx, "toolu_7", (d) => decisions.push(d));
+    const resp = await handleRequest(ctx, { id: "p17", op: "provide_tool_output", call_id: "toolu_7", stdout: fill(HOOK_DELIVERY_MAX_BYTES + 1), exit_code: 0 });
+    expect(resp).toMatchObject({ ok: false, error: "TURN_IN_FLIGHT" });
+    expect(decisions).toEqual([{ behavior: "deny", message: "DEFERRED: human will run this command manually." }]);
+    const { events } = await readEventsSince(eventsPath(SID), 0);
+    expect(events.map((e) => e.kind)).toEqual(["tool_decision_resolved"]);
+    expect(events[0]).toMatchObject({ reason: "auto-deferred by provide_tool_output (output too large for the hook)" });
+    expect(ctx.deferredCalls.get("toolu_7")).toMatchObject({ reason: "auto-deferred by provide_tool_output (output too large for the hook)" });
     expect(fake.writes).toEqual([]);
   });
 
-  it("a ghost hook (paused longer than the approver's self-timeout) falls back to the new-turn path with an auto-defer record", async () => {
-    const fake = makeFakeB();
-    const ctx = await makeCtx(fake); // latch clear → the new-turn path is open
-    const decisions: Decision[] = [];
-    seedPending(ctx, "toolu_7", (d) => decisions.push(d), Date.now() - HOOK_DELIVERY_WINDOW_MS - 1);
-    const resp = await handleRequest(ctx, { id: "p13", op: "provide_tool_output", call_id: "toolu_7", stdout: "late" });
-    expect(resp).toEqual({ id: "p13", ok: true, result: { turn_id: "turn_1", via: "turn" } });
-    expect(await eventKinds()).toEqual(["tool_decision_resolved", "turn_started", "tool_output_provided"]);
-    expect(decisions).toEqual([{ behavior: "deny", message: "DEFERRED: human will run this command manually." }]);
-    expect(fake.writes).toHaveLength(1);
-    expect(fake.writes[0]).toContain("late");
-    expect(ctx.deferredCalls.has("toolu_7")).toBe(false); // consumed by the turn
-  });
-
-  it("a ghost hook with the latch set is refused TURN_IN_FLIGHT and keeps the auto-defer record for the retry", async () => {
+  it("a ghost hook (paused past the hook-delivery window) is refused TURN_IN_FLIGHT and keeps the auto-defer record for the retry", async () => {
     const fake = makeFakeB();
     const ctx = await pendingCtx(fake);
     seedPending(ctx, "toolu_7", () => {}, Date.now() - HOOK_DELIVERY_WINDOW_MS - 1);
@@ -666,9 +712,11 @@ describe("provide_tool_output on a pending call delivers through the hook", () =
     expect(ctx.deferredCalls.get("toolu_7")).toMatchObject({
       reason: "auto-deferred by provide_tool_output (approver hook timed out)",
     });
+    const { events } = await readEventsSince(eventsPath(SID), 0);
+    expect(events[0]).toMatchObject({ reason: "auto-deferred by provide_tool_output (approver hook timed out)" });
   });
 
-  it("a dead B keeps today's path: the call is recorded as deferred and the op refuses SESSION_EXITED", async () => {
+  it("a dead B takes the auto-defer path: the call is recorded as deferred and the op refuses SESSION_EXITED", async () => {
     const fake = makeFakeB();
     const ctx = await pendingCtx(fake, { bExited: true });
     const decisions: Decision[] = [];
@@ -678,6 +726,8 @@ describe("provide_tool_output on a pending call delivers through the hook", () =
     expect(decisions).toEqual([{ behavior: "deny", message: "DEFERRED: human will run this command manually." }]);
     expect(await eventKinds()).toEqual(["tool_decision_resolved"]);
     expect(ctx.deferredCalls.get("toolu_7")).toMatchObject({ reason: "auto-deferred by provide_tool_output" });
+    const { events } = await readEventsSince(eventsPath(SID), 0);
+    expect(events[0]).toMatchObject({ reason: "auto-deferred by provide_tool_output" });
   });
 
   it("a rotation refuses before touching the hook (existing posture)", async () => {

@@ -25,7 +25,7 @@ import { createBudgetTracker, budgetExceededReason, warnCostOf, maxCostOf, cross
 import { rotationConfigOf, isOverThreshold, checkRotateGate, effectiveMaxGenerations, INTERRUPT_GRACE_MS, shouldAttemptAutoRotation, autoOutcomeLatches, respawnConfigOf, checkRespawnGate, checkpointConfigOf } from "./context-tracker.js";
 import { buildHandoverInstruction, extractHandover, composeSuccessorBrief } from "../lib/handover.js";
 import { buildCrashDigest, buildDistillerPrompt, runDistiller, DIGESTIBLE_KINDS } from "../lib/distill.js";
-import { HOOK_DELIVERY_WINDOW_MS, newSessionId, readSessionMcpServers, scaffoldSessionDir, spawnRunnerDetached, waitForReady } from "../lib/spawn-session.js";
+import { HOOK_DELIVERY_MAX_BYTES, HOOK_DELIVERY_WINDOW_MS, newSessionId, readSessionMcpServers, scaffoldSessionDir, spawnRunnerDetached, waitForReady } from "../lib/spawn-session.js";
 import { recoverSession } from "../lib/recover.js";
 import type { ControlRequest, ControlResponse } from "../lib/socket-protocol.js";
 import { buildDecisionContext } from "../lib/decision-context.js";
@@ -1497,17 +1497,43 @@ export async function handleRequest(
       if (!deferred) {
         const pending = ctx.pendingApprovals.get(req.call_id);
         if (pending) {
-          const hookLive = !ctx.bExited && Date.now() - pending.paused_at < HOOK_DELIVERY_WINDOW_MS;
-          if (hookLive) {
+          const message = composeOutputMessage({
+            tool: pending.tool,
+            call_id: req.call_id,
+            args: pending.args,
+            exit_code,
+            stdout,
+            stderr,
+            extra,
+          });
+          // The hook can carry the output only while the turn that paused the
+          // call is still running (a turn ends only after its tool calls
+          // settle, so an ended turn — an interrupt, say — means claude has
+          // given the hook up), while the approver process is still alive
+          // (HOOK_DELIVERY_WINDOW_MS; it self-times-out at 595 s, so the last
+          // seconds before that are refused early), and while the text fits
+          // what the deny channel was observed to carry intact
+          // (HOOK_DELIVERY_MAX_BYTES). Anything else is stale: the reason
+          // names why, and the output travels as a turn instead.
+          let stale: string | null = null;
+          if (ctx.bExited) stale = "auto-deferred by provide_tool_output";
+          else if (!(ctx.turnInFlight && ctx.currentTurnId === pending.turn_id))
+            stale = "auto-deferred by provide_tool_output (the paused turn has ended)";
+          else if (Date.now() - pending.paused_at >= HOOK_DELIVERY_WINDOW_MS)
+            stale = "auto-deferred by provide_tool_output (approver hook timed out)";
+          else if (Buffer.byteLength(message) > HOOK_DELIVERY_MAX_BYTES)
+            stale = "auto-deferred by provide_tool_output (output too large for the hook)";
+          if (stale === null) {
             // HOOK DELIVERY: B is paused inside this call's approval hook, so
             // the human's output travels as the call's own result — the
             // approver renders our deny message as the structured envelope
             // and claude hands it to the model as the tool_result (a 64 KB
             // message arrived intact on 2.1.283; the fixed "PreToolUse:<tool>
-            // hook error: " prefix is the one the DEFERRED sentence wears
-            // today). No turn is minted, so nothing can mis-stamp the running
-            // turn. Both audit events land on disk BEFORE the hook is
-            // released, so B's continuation can never precede them.
+            // hook error: " prefix is the one every structured deny reason
+            // wears, the DEFERRED sentence included). No turn is minted, so
+            // nothing can mis-stamp the running turn. Both audit events land
+            // on disk BEFORE the hook is released, so B's continuation can
+            // never precede them.
             ctx.pendingApprovals.delete(req.call_id);
             await emitEvent(ctx, {
               kind: "tool_decision_resolved",
@@ -1525,35 +1551,21 @@ export async function handleRequest(
               stderr_len: stderr.length,
               exit_code,
             } as Omit<Event, "seq" | "at">);
-            pending.resolve({
-              behavior: "deny",
-              message: composeOutputMessage({
-                tool: pending.tool,
-                call_id: req.call_id,
-                args: pending.args,
-                exit_code,
-                stdout,
-                stderr,
-                extra,
-              }),
-            });
+            pending.resolve({ behavior: "deny", message });
             return { id: req.id, ok: true, result: { turn_id: pending.turn_id, via: "hook" } };
           }
-          // Dead B, or a ghost: the approver self-timed-out at 595 s and
-          // already denied B, while this entry lived on toward
-          // decision_timeout_seconds. Either way the hook cannot carry the
-          // output. Auto-defer and record as before; the new-turn path below
-          // decides (SESSION_EXITED / TURN_IN_FLIGHT / a turn).
-          const reason = ctx.bExited
-            ? "auto-deferred by provide_tool_output"
-            : "auto-deferred by provide_tool_output (approver hook timed out)";
+          // Stale: the hook cannot carry the output (see `stale` above). Release
+          // it with the DEFERRED sentence — harmless on a hook nobody waits on,
+          // and what B reads if the approver is still listening — record the
+          // call as deferred with the reason, and let the new-turn path below
+          // decide (SESSION_EXITED / TURN_IN_FLIGHT / a turn).
           ctx.pendingApprovals.delete(req.call_id);
           await emitEvent(ctx, {
             kind: "tool_decision_resolved",
             turn_id: pending.turn_id,
             call_id: req.call_id,
             action: "defer",
-            reason,
+            reason: stale,
             resolved_by: "user_mcp_auto",
           } as Omit<Event, "seq" | "at">);
           pending.resolve({
@@ -1566,7 +1578,7 @@ export async function handleRequest(
             tool: pending.tool,
             args: pending.args,
             deferred_at: new Date().toISOString(),
-            reason,
+            reason: stale,
           };
           ctx.deferredCalls.set(req.call_id, deferred);
         }
@@ -1584,8 +1596,9 @@ export async function handleRequest(
       if (ctx.bExited) {
         // Deliberate order: CALL_NOT_FOUND and the auto-defer block above
         // always run before this check, so an unknown call_id keeps its
-        // diagnostic and a still-pending call's decision record settles the
-        // same way on a dead session as on a live one — not an oversight.
+        // diagnostic and a still-pending call on a dead session is recorded
+        // as deferred before this refusal (a live one is answered through
+        // its hook, or recorded as stale, above) — not an oversight.
         //
         // Same phantom-emission hole as send_turn, same guard: this op pipes
         // its composed message to B exactly like send_turn does (turn_started
