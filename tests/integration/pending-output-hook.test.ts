@@ -31,8 +31,9 @@ describe("pending call output through the hook (integration)", () => {
   it("provide-output on a still-paused call delivers the output as the call's own result inside turn_1", async () => {
     const sess = await makeTmpSession();
     cleanup = sess.cleanup;
-    // Escalate everything: B's echo pauses in the hook instead of being auto-deferred.
-    const policy = { auto_approve: [], auto_defer: [], auto_reject: [], escalate_default: true, decision_timeout_seconds: 120 };
+    // Escalate everything (no rules): B's echo pauses in the hook with an approve default, and provide-output answers it there.
+    // 30 s: short enough that a stray or retried tool call self-approves inside the scenario's 60 s / 90 s windows instead of stalling B for the full timeout.
+    const policy = { auto_approve: [], auto_defer: [], auto_reject: [], escalate_default: true, decision_timeout_seconds: 30 };
     const policyPath = `${sess.clawDriveRoot}/policy.json`;
     await fs.writeFile(policyPath, JSON.stringify(policy));
 
