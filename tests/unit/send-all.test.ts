@@ -20,7 +20,7 @@ const servers: net.Server[] = [];
 const ENV_KEYS = ["CLAW_DRIVE_HOME", "CLAW_DRIVE_FLEET", "CLAUDE_CODE_SESSION_ID"] as const;
 const saved: Partial<Record<(typeof ENV_KEYS)[number], string | undefined>> = {};
 
-type Behavior = "accept" | "refuse-exited" | "hang" | "no-socket";
+type Behavior = "accept" | "refuse-exited" | "refuse-in-flight" | "hang" | "no-socket";
 
 async function session(id: string, over: Record<string, unknown>, behavior: Behavior): Promise<void> {
   await fs.mkdir(sessionDir(id), { recursive: true });
@@ -40,6 +40,12 @@ async function session(id: string, over: Record<string, unknown>, behavior: Beha
       return Promise.resolve({
         id: req.id, ok: false, error: "SESSION_EXITED",
         message: "session process has exited; turn cannot start — use recover",
+      });
+    }
+    if (behavior === "refuse-in-flight") {
+      return Promise.resolve({
+        id: req.id, ok: false, error: "TURN_IN_FLIGHT",
+        message: "turn_4 is in flight; a turn starts only at a turn boundary — wait for its turn_completed or turn_failed and retry",
       });
     }
     return Promise.resolve({ id: req.id, ok: true, result: { turn_id: "turn_5" } });
@@ -103,6 +109,19 @@ describe("sendToFleet", () => {
     expect(Object.keys(lines[1])).toEqual(["session_id", "ok", "error", "message"]);
   });
 
+  it("a member mid-turn is its own TURN_IN_FLIGHT line; the others still get their turn_id", async () => {
+    await session("sess_a_ok", { fleet: "team-a" }, "accept");
+    await session("sess_b_busy", { fleet: "team-a", alias: "builder" }, "refuse-in-flight");
+    const lines = await sendToFleet(await inView(), "wrap up");
+    expect(lines).toEqual([
+      { session_id: "sess_a_ok", fleet: "team-a", ok: true, turn_id: "turn_5" },
+      {
+        session_id: "sess_b_busy", alias: "builder", fleet: "team-a", ok: false, error: "TURN_IN_FLIGHT",
+        message: "turn_4 is in flight; a turn starts only at a turn boundary — wait for its turn_completed or turn_failed and retry",
+      },
+    ]);
+  });
+
   it("a member that never answers becomes SESSION_UNREACHABLE at the timeout", async () => {
     // The only member hangs, so a scheduler stall can delay this test but
     // never flip it — the line is a timeout either way.
@@ -163,6 +182,21 @@ describe("claw-drive send --all", () => {
     const r = await capture(() => cmdSend(["--all", "wrap up"]));
     expect(r.code).toBe(1);
     expect(r.out.map((l) => JSON.parse(l).ok)).toEqual([true, false]);
+  });
+
+  it("exits 1 when a member is mid-turn: its refusal line, the others' turn_ids, and a silent stderr", async () => {
+    await session("sess_a", { fleet: "team-a" }, "accept");
+    await session("sess_b", { fleet: "team-a" }, "refuse-in-flight");
+    const r = await capture(() => cmdSend(["--all", "wrap up"]));
+    expect(r.code).toBe(1);
+    expect(r.out.map((l) => JSON.parse(l))).toEqual([
+      { session_id: "sess_a", fleet: "team-a", ok: true, turn_id: "turn_5" },
+      {
+        session_id: "sess_b", fleet: "team-a", ok: false, error: "TURN_IN_FLIGHT",
+        message: "turn_4 is in flight; a turn starts only at a turn boundary — wait for its turn_completed or turn_failed and retry",
+      },
+    ]);
+    expect(r.err).toBe("");
   });
 
   it("--all-fleets broadcasts box-wide; --fleet acts as another fleet", async () => {
