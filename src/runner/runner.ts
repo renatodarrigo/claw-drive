@@ -1158,6 +1158,28 @@ export async function handleRequest(
             "a rotation is in flight for this session; wait for session_rotated and send to the successor",
         };
       }
+      if (ctx.turnInFlight) {
+        // A turn is running. Every stdout line is stamped with currentTurnId
+        // at parse time, so flipping it now would label the rest of the
+        // running turn — its tool results, its text, its terminating result —
+        // as this new turn (reproduced on claude 2.1.280, which merges a
+        // mid-turn user line into the running turn instead of queueing it).
+        // Refuse in rotate's TURN_IN_FLIGHT posture: plain error, no event, no
+        // state change; the latch clears in afterEventBookkeeping on the
+        // running turn's turn_completed / turn_failed. Checked after the
+        // dead-B and rotation guards: a mid-turn death leaves the latch stuck
+        // (the retry advice would be unfollowable), and a rotation's handover
+        // turn is in flight by design (ROTATION_IN_PROGRESS carries the
+        // hint). The sanctioned handover send is not exempt — the
+        // choreography only sends at a boundary, and refusing beats
+        // mis-stamping.
+        return {
+          id: req.id,
+          ok: false,
+          error: "TURN_IN_FLIGHT",
+          message: `${ctx.currentTurnId ?? "a turn"} is in flight; a turn starts only at a turn boundary — wait for its turn_completed or turn_failed and retry`,
+        };
+      }
       const turnId = `turn_${ctx.state.turns + 1}`;
       ctx.state.turns += 1;
       ctx.currentTurnId = turnId;

@@ -8,10 +8,11 @@ import {
   handleRequest,
   observeBExit,
   attachBStdinErrorAbsorber,
+  afterEventBookkeeping,
   type RunnerContext,
 } from "../../src/runner/runner.js";
 import type { SessionState } from "../../src/lib/state.js";
-import { readEventsSince } from "../../src/lib/events.js";
+import { readEventsSince, type Event } from "../../src/lib/events.js";
 import { eventsPath } from "../../src/lib/paths.js";
 
 // v1.4.1 ledger finding: send_turn (and provide_tool_output, which pipes a
@@ -381,6 +382,97 @@ describe("provide_tool_output during rotation (twin of the send guard)", () => {
     expect(resp).toMatchObject({ ok: true, result: { turn_id: "turn_1" } });
     expect(fake.writes).toHaveLength(1);
     expect(ctx.deferredCalls.has("toolu_r4")).toBe(false);
+  });
+});
+
+// Every stdout line is stamped with ctx.currentTurnId at parse time, so a
+// send that flips the id while a turn runs relabels the rest of that turn
+// (reproduced on claude 2.1.280, which merges a mid-turn user line into the
+// running turn). send_turn now reads the latch afterEventBookkeeping
+// maintains — rotate's TURN_IN_FLIGHT posture: plain error, no event.
+describe("send during a running turn", () => {
+  const IN_FLIGHT_3 =
+    "turn_3 is in flight; a turn starts only at a turn boundary — wait for its turn_completed or turn_failed and retry";
+
+  async function inFlightCtx(fake: FakeB, over: Partial<RunnerContext> = {}): Promise<RunnerContext> {
+    const ctx = await makeCtx(fake, { turnInFlight: true, currentTurnId: "turn_3", ...over });
+    ctx.state.turns = 3;
+    return ctx;
+  }
+
+  const completed = (turn: string): Event =>
+    ({ seq: 9, at: new Date().toISOString(), kind: "turn_completed", turn_id: turn, stop_reason: "success" }) as Event;
+  const failed = (turn: string): Event =>
+    ({ seq: 9, at: new Date().toISOString(), kind: "turn_failed", turn_id: turn, error: "error_during_execution" }) as Event;
+
+  it("refuses TURN_IN_FLIGHT naming the running turn: no event, no stdin write, turns not bumped, stamp unchanged", async () => {
+    const fake = makeFakeB();
+    const ctx = await inFlightCtx(fake);
+    const resp = await handleRequest(ctx, { id: "s1", op: "send_turn", message: "next" });
+    expect(resp).toEqual({ id: "s1", ok: false, error: "TURN_IN_FLIGHT", message: IN_FLIGHT_3 });
+    expect(await eventKinds()).toEqual([]);
+    expect(fake.writes).toEqual([]);
+    expect(ctx.state.turns).toBe(3);
+    expect(ctx.currentTurnId).toBe("turn_3");
+    expect(ctx.turnInFlight).toBe(true);
+  });
+
+  it("admits the same send once turn_completed clears the latch through the real bookkeeping", async () => {
+    const fake = makeFakeB();
+    const ctx = await inFlightCtx(fake);
+    await afterEventBookkeeping(ctx, completed("turn_3"));
+    const resp = await handleRequest(ctx, { id: "s2", op: "send_turn", message: "next" });
+    expect(resp).toMatchObject({ id: "s2", ok: true, result: { turn_id: "turn_4" } });
+    expect(await eventKinds()).toEqual(["turn_started"]);
+    expect(fake.writes).toHaveLength(1);
+  });
+
+  it("admits after turn_failed likewise — the interrupt window closes on the aborted turn's result", async () => {
+    const fake = makeFakeB();
+    const ctx = await inFlightCtx(fake);
+    await afterEventBookkeeping(ctx, failed("turn_3"));
+    const resp = await handleRequest(ctx, { id: "s3", op: "send_turn", message: "next" });
+    expect(resp).toMatchObject({ ok: true, result: { turn_id: "turn_4" } });
+  });
+
+  it("two consecutive sends: the second is refused until the first turn completes (the start --brief then send case)", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake);
+    const first = await handleRequest(ctx, { id: "boot", op: "send_turn", message: "the brief" });
+    expect(first).toMatchObject({ ok: true, result: { turn_id: "turn_1" } });
+    const second = await handleRequest(ctx, { id: "s6", op: "send_turn", message: "next" });
+    expect(second).toMatchObject({ ok: false, error: "TURN_IN_FLIGHT" });
+    expect((second as { message: string }).message).toContain("turn_1 is in flight");
+    await afterEventBookkeeping(ctx, completed("turn_1"));
+    const third = await handleRequest(ctx, { id: "s7", op: "send_turn", message: "next" });
+    expect(third).toMatchObject({ ok: true, result: { turn_id: "turn_2" } });
+    expect(fake.writes).toHaveLength(2);
+  });
+
+  it("a dead B wins over the latch: SESSION_EXITED, not TURN_IN_FLIGHT", async () => {
+    const fake = makeFakeB();
+    const ctx = await inFlightCtx(fake, { bExited: true });
+    const resp = await handleRequest(ctx, { id: "s4", op: "send_turn", message: "next" });
+    expect(resp).toMatchObject({ ok: false, error: "SESSION_EXITED" });
+  });
+
+  it("a rotation wins over the latch: ROTATION_IN_PROGRESS carries the successor hint", async () => {
+    const fake = makeFakeB();
+    const ctx = await inFlightCtx(fake, { rotating: true });
+    const resp = await handleRequest(ctx, { id: "s5", op: "send_turn", message: "next" });
+    expect(resp).toMatchObject({ ok: false, error: "ROTATION_IN_PROGRESS" });
+  });
+
+  it("the rotation's sanctioned handover send is admitted with the latch clear and refused with it set", async () => {
+    const fake = makeFakeB();
+    const clear = await makeCtx(fake, { rotating: true, rotationSendId: "handover_1" });
+    const admitted = await handleRequest(clear, { id: "handover_1", op: "send_turn", message: "handover" });
+    expect(admitted).toMatchObject({ ok: true, result: { turn_id: "turn_1" } });
+    const fake2 = makeFakeB();
+    const set = await inFlightCtx(fake2, { rotating: true, rotationSendId: "handover_2" });
+    const refused = await handleRequest(set, { id: "handover_2", op: "send_turn", message: "handover" });
+    expect(refused).toMatchObject({ ok: false, error: "TURN_IN_FLIGHT" });
+    expect(fake2.writes).toEqual([]);
   });
 });
 
