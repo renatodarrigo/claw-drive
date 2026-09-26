@@ -25,7 +25,7 @@ import { createBudgetTracker, budgetExceededReason, warnCostOf, maxCostOf, cross
 import { rotationConfigOf, isOverThreshold, checkRotateGate, effectiveMaxGenerations, INTERRUPT_GRACE_MS, shouldAttemptAutoRotation, autoOutcomeLatches, respawnConfigOf, checkRespawnGate, checkpointConfigOf } from "./context-tracker.js";
 import { buildHandoverInstruction, extractHandover, composeSuccessorBrief } from "../lib/handover.js";
 import { buildCrashDigest, buildDistillerPrompt, runDistiller, DIGESTIBLE_KINDS } from "../lib/distill.js";
-import { newSessionId, readSessionMcpServers, scaffoldSessionDir, spawnRunnerDetached, waitForReady } from "../lib/spawn-session.js";
+import { HOOK_DELIVERY_WINDOW_MS, newSessionId, readSessionMcpServers, scaffoldSessionDir, spawnRunnerDetached, waitForReady } from "../lib/spawn-session.js";
 import { recoverSession } from "../lib/recover.js";
 import type { ControlRequest, ControlResponse } from "../lib/socket-protocol.js";
 import { buildDecisionContext } from "../lib/decision-context.js";
@@ -186,6 +186,8 @@ interface PendingApproval {
   tool: string;
   args: Record<string, unknown>;
   default_action: DecisionAction;
+  /** Date.now() at registration — bounds hook delivery (HOOK_DELIVERY_WINDOW_MS). */
+  paused_at: number;
   resolve: (decision: { behavior: "allow" | "deny"; message?: string }) => void;
 }
 
@@ -1301,6 +1303,7 @@ export async function handleRequest(
           tool,
           args,
           default_action: decision.default_action,
+          paused_at: Date.now(),
           resolve: (dec) => {
             scheduled.clear();
             resolve({ id: req.id, ok: true, result: dec });
@@ -1484,19 +1487,73 @@ export async function handleRequest(
             "a rotation is in flight for this session; wait for session_rotated, then send the output to the successor as a normal turn",
         };
       }
+      const stdout = req.stdout ?? "";
+      const stderr = req.stderr ?? "";
+      const exit_code = typeof req.exit_code === "number" ? req.exit_code : null;
+      const extra = req.extra ?? "";
+
       let deferred = ctx.deferredCalls.get(req.call_id);
 
-      // If still pending (not yet resolved), auto-resolve as defer.
       if (!deferred) {
         const pending = ctx.pendingApprovals.get(req.call_id);
         if (pending) {
+          const hookLive = !ctx.bExited && Date.now() - pending.paused_at < HOOK_DELIVERY_WINDOW_MS;
+          if (hookLive) {
+            // HOOK DELIVERY: B is paused inside this call's approval hook, so
+            // the human's output travels as the call's own result — the
+            // approver renders our deny message as the structured envelope
+            // and claude hands it to the model as the tool_result (a 64 KB
+            // message arrived intact on 2.1.283; the fixed "PreToolUse:<tool>
+            // hook error: " prefix is the one the DEFERRED sentence wears
+            // today). No turn is minted, so nothing can mis-stamp the running
+            // turn. Both audit events land on disk BEFORE the hook is
+            // released, so B's continuation can never precede them.
+            ctx.pendingApprovals.delete(req.call_id);
+            await emitEvent(ctx, {
+              kind: "tool_decision_resolved",
+              turn_id: pending.turn_id,
+              call_id: req.call_id,
+              action: "defer",
+              reason: "auto-deferred by provide_tool_output",
+              resolved_by: "user_mcp_auto",
+            } as Omit<Event, "seq" | "at">);
+            await emitEvent(ctx, {
+              kind: "tool_output_provided",
+              turn_id: pending.turn_id,
+              call_id: req.call_id,
+              stdout_len: stdout.length,
+              stderr_len: stderr.length,
+              exit_code,
+            } as Omit<Event, "seq" | "at">);
+            pending.resolve({
+              behavior: "deny",
+              message: composeOutputMessage({
+                tool: pending.tool,
+                call_id: req.call_id,
+                args: pending.args,
+                exit_code,
+                stdout,
+                stderr,
+                extra,
+              }),
+            });
+            return { id: req.id, ok: true, result: { turn_id: pending.turn_id, via: "hook" } };
+          }
+          // Dead B, or a ghost: the approver self-timed-out at 595 s and
+          // already denied B, while this entry lived on toward
+          // decision_timeout_seconds. Either way the hook cannot carry the
+          // output. Auto-defer and record as before; the new-turn path below
+          // decides (SESSION_EXITED / TURN_IN_FLIGHT / a turn).
+          const reason = ctx.bExited
+            ? "auto-deferred by provide_tool_output"
+            : "auto-deferred by provide_tool_output (approver hook timed out)";
           ctx.pendingApprovals.delete(req.call_id);
           await emitEvent(ctx, {
             kind: "tool_decision_resolved",
             turn_id: pending.turn_id,
             call_id: req.call_id,
             action: "defer",
-            reason: "auto-deferred by provide_tool_output",
+            reason,
             resolved_by: "user_mcp_auto",
           } as Omit<Event, "seq" | "at">);
           pending.resolve({
@@ -1507,9 +1564,9 @@ export async function handleRequest(
             call_id: req.call_id,
             turn_id: pending.turn_id,
             tool: pending.tool,
-            args: pending.args as Record<string, unknown>,
+            args: pending.args,
             deferred_at: new Date().toISOString(),
-            reason: "auto-deferred by provide_tool_output",
+            reason,
           };
           ctx.deferredCalls.set(req.call_id, deferred);
         }
@@ -1555,11 +1612,6 @@ export async function handleRequest(
           message: `${ctx.currentTurnId ?? "a turn"} is in flight; the output turn starts only at a turn boundary — wait for its turn_completed or turn_failed and retry provide_tool_output (the deferred record is kept)`,
         };
       }
-
-      const stdout = req.stdout ?? "";
-      const stderr = req.stderr ?? "";
-      const exit_code = typeof req.exit_code === "number" ? req.exit_code : null;
-      const extra = req.extra ?? "";
 
       const userMessage = composeOutputMessage({
         tool: deferred.tool,
