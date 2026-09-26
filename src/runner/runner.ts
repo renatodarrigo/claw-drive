@@ -1963,9 +1963,10 @@ export async function runRunner(sessionId: string): Promise<void> {
   // fleet broadcast) connected first, its send would take turn_1 and the brief
   // would be refused and dropped — the response below is not inspected.
   // Sending the brief before any client can connect makes it every session's
-  // first turn by construction. B cannot need the socket (its approval hook)
-  // before it has answered this turn, so the socket still opens well ahead
-  // of any tool call.
+  // first turn by construction.
+  // B needs the socket only for its approval hook, which first fires on a
+  // tool call — at least one model round trip after this write — so the
+  // socket, opened just below, listens well ahead of any tool call.
   const brief = (ctx.state as unknown as { scenario_brief?: string }).scenario_brief;
   if (typeof brief === "string" && brief.length > 0) {
     await handleRequest(ctx, {
