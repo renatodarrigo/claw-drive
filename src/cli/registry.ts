@@ -40,7 +40,7 @@ export const COMMANDS: readonly CommandEntry[] = [
     usage: "send <session|--all> \"<message>\" [--fleet TAG] [--all-fleets]",
     handler: cmdSend },
   { name: "interrupt", group: "lifecycle",
-    summary: "SIGINT the current turn; the session stays alive and the turn ends with turn_failed.",
+    summary: "SIGINT the current turn; the session stays alive and the turn ends with a terminal event, normally turn_failed.",
     usage: "interrupt <session> <turn>",
     handler: cmdInterrupt },
   { name: "stop", group: "lifecycle",

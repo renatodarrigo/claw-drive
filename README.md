@@ -308,7 +308,7 @@ Some commands can't run inside B (sudo, interactive logins, anything needing aut
 
 When B attempts a matching call, the approver hook pauses it and a `tool_decision_required` event (`default_action: "defer"`) surfaces to the monitor; the human runs the command locally. Once they have the output, call `claw-drive provide-output <call_id> --stdout "<output>" --exit 0` (or the `provide_tool_output` MCP tool). While the call is still paused — its turn still running, its hook not timed out (about 10 minutes from the pause) and the composed output within 64 KiB — the output reaches B through the hook as that call's own result inside the same turn (`via: "hook"`), and B continues.
 
-Otherwise the output takes the turn path: it goes in as a new user turn at the next turn boundary (`via: "turn"`; `TURN_IN_FLIGHT` while B is still finishing its turn — retry when it completes). That covers a call you released earlier with `claw-drive defer <call_id>`, which sends B a `DEFERRED:` denial, and a paused call that has gone stale (its turn has ended, its hook has timed out, or the composed output exceeds 64 KiB). It is also the fallback when nobody answers in time: the hook releases B with a denial — the rule's `DEFERRED` default once `decision_timeout_seconds` passes, or the approver's own fail-secure deny after about 10 minutes, whichever comes first — and B continues, usually ending its turn to wait.
+Otherwise the output takes the turn path: it goes in as a new user turn at the next turn boundary (`via: "turn"`; `TURN_IN_FLIGHT` while B is still finishing its turn — retry when it completes). That covers a call you released earlier with `claw-drive defer <call_id>`, which sends B a `DEFERRED:` denial, and a paused call that has gone stale (its turn has ended, its hook has timed out, or the composed output exceeds 64 KiB). It is also the fallback when nobody answers in time: the hook releases B with a denial — the rule's `DEFERRED` default once `decision_timeout_seconds` passes, or the approver's own fail-secure deny after about 10 minutes, whichever comes first. B continues without the command's output — typically it reports the gate and ends its turn — and the output then goes in as the next turn.
 
 ### Review gates (B pauses for human OK mid-task)
 
@@ -322,7 +322,7 @@ Use the `CLAW-GATE:` convention — baked into the default policy template:
 
 In the scenario brief, tell B: *"Before each risky step, run `echo 'CLAW-GATE: <your question>'` with the Bash tool and wait for my response."*
 
-B's echo fires the hook → the defer rule pauses the call → monitor alerts A → human answers → A calls `provide_tool_output` with the answer as stdout → B reads the answer as the echo's own result and proceeds in the same turn (`via: "hook"`). No new primitive; same flow as sudo. If nobody answers in time, the hook releases B with a denial (the `DEFERRED` default once `decision_timeout_seconds` passes, or the approver's own fail-secure deny after about 10 minutes, whichever comes first), B continues — usually ending its turn to wait — and the answer goes in as the next turn; so does an answer whose composed output exceeds 64 KiB.
+B's echo fires the hook → the defer rule pauses the call → monitor alerts A → human answers → A calls `provide_tool_output` with the answer as stdout → B reads the answer as the echo's own result and proceeds in the same turn (`via: "hook"`). No new primitive; same flow as sudo. If nobody answers in time, the hook releases B with a denial (the `DEFERRED` default once `decision_timeout_seconds` passes, or the approver's own fail-secure deny after about 10 minutes, whichever comes first). B continues without the command's output — typically it reports the gate and ends its turn — and the output then goes in as the next turn; so does an answer whose composed output exceeds 64 KiB.
 
 ## MCP tools
 
@@ -336,7 +336,7 @@ B's echo fires the hook → the defer rule pauses the call → monitor alerts A 
 | `list_sessions` | List live + orphaned sessions in the fleet view; optional `fleet` / `all_fleets`. Rows carry `fleet` when set; `hidden_in_other_fleets` counts what the view hid. |
 | `resolve_tool_call` | Approve/reject a paused tool call found in the fleet view (`fleet` / `all_fleets` widen the scan); optionally remember as policy, preview the derived rule, or append an explicit one |
 | `update_policy` | Replace a session's policy |
-| `interrupt_turn` | SIGINT B to cancel the current turn; the turn ends with `turn_failed`, and a send before that is refused with `TURN_IN_FLIGHT` |
+| `interrupt_turn` | SIGINT B to cancel the current turn; the turn ends with a terminal event, normally `turn_failed`, and a send before that is refused with `TURN_IN_FLIGHT` |
 | `provide_tool_output` | Feed a human-run command's output back to B: through the paused hook as the call's own result while the call is still pending, its turn still running, its hook not timed out and its composed output within 64 KiB (`via: "hook"`), or as a new turn at the next boundary otherwise — a call deferred earlier, or a paused call whose turn has ended, whose hook timed out, or whose composed output exceeds 64 KiB (`via: "turn"`; refused with `TURN_IN_FLIGHT` mid-turn) |
 | `rotate_session` | Rotate a session at its context threshold: B writes a structured handover, a successor spawns in the same cwd/policy with the handover embedded in its first turn, the alias transfers, and the predecessor stops. LONG-RUNNING (up to ~20 min worst case). |
 | `recover_session` | Continue a DEAD session from its `crash-handover.md` (or a freshly distilled one) by spawning a successor with the lineage stamped and the alias re-claimed if free. |
@@ -361,7 +361,7 @@ B's echo fires the hook → the defer rule pauses the call → monitor alerts A 
 | `stop <session>` | Reap B |
 | `rotate <session>` | Rotate a session at its context threshold. See [Context rotation & crash recovery](#context-rotation--crash-recovery). |
 | `recover <session_id> [--no-start] [--model M]` | Continue a dead session from its crash-handover, distilling one from `events.jsonl` if needed. Canonical id only — aliases resolve among live sessions only. |
-| `interrupt <session> <turn>` | SIGINT B; the turn ends with `turn_failed` |
+| `interrupt <session> <turn>` | SIGINT B; the turn ends with a terminal event, normally `turn_failed` |
 | `policy <session> [--set FILE] [--show]` | View/replace a session's policy |
 | `policy-test '<command>' [flags]` | Diagnose a tool call against a policy. Three output formats (default human, `--explain`, `--json`); multi-tool via `--tool TOOL --arg KEY=VALUE`; `--policy starter\|permissive\|bypass\|<file>`; `--exit-on reject\|defer\|approve\|escalate` for CI gating. |
 | `prune [--older-than 24h] [--force] [--fleet TAG] [--all-fleets]` | Remove dead sessions in the fleet view older than cutoff. `--force` also removes a dead session whose crash-handover hasn't been consumed yet. A run with no fleet identity — cron, a plain shell — prunes untagged sessions only, so a machine-wide sweep needs `--all-fleets`. |

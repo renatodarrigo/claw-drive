@@ -60,7 +60,7 @@ export const MCP_TOOL_DEFS: McpToolDef[] = [
     name: "send_turn",
     description:
       "Send a user turn to a live session. Non-blocking; returns a turn_id the caller can poll. " +
-      "Refuses with TURN_IN_FLIGHT while a turn is running — wait for that turn's turn_completed or turn_failed (poll_turn, watch) and retry at the turn boundary.",
+      "Refuses with TURN_IN_FLIGHT while a turn is running — wait for that turn's turn_completed or turn_failed (poll_turn) and retry at the turn boundary.",
     inputSchema: {
       type: "object",
       properties: {
@@ -182,7 +182,7 @@ export const MCP_TOOL_DEFS: McpToolDef[] = [
     name: "interrupt_turn",
     description:
       "Send SIGINT to the driven Claude session to interrupt the current turn. Session remains alive. " +
-      "The aborted turn ends with turn_failed; a send before that is refused with TURN_IN_FLIGHT.",
+      "The aborted turn ends with a terminal event, normally turn_failed; a send before that is refused with TURN_IN_FLIGHT.",
     inputSchema: {
       type: "object",
       properties: {

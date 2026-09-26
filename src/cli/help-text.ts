@@ -21,8 +21,8 @@ MENTAL MODEL
                  does the actual work.
   Runner         the per-session process that supervises B, applies the policy,
                  and appends events to the session's log.
-  Approver hook  the gate B's tool calls pass through; auto_approve/auto_reject
-                 resolve here, escalate/auto_defer pause for you.
+  Approver hook  the gate B's tool calls pass through; auto_approve resolves
+                 here, auto_reject/escalate/auto_defer pause for you.
   Events flow A <- B. Consume them with 'watch' (for the Monitor tool) or 'tail'.
 
 THE DRIVING LOOP
@@ -46,10 +46,10 @@ THE DRIVING LOOP
 POLICY & SAFETY
   Each session runs under a policy of ordered rules. Rule verbs:
     auto_approve   let the call run, no human.
-    auto_reject    deny it, no human.
+    auto_reject    pause with a reject default; the human can still approve it.
     escalate       pause and ask you.
-    auto_defer     deny in B and hand the command to the human to run locally;
-                   feed the result back with provide-output.
+    auto_defer     pause for the human to run the command locally; feed the
+                   result back with provide-output (timeout default: defer).
   Templates: starter (conservative), permissive (adds common dev CLIs), bypass
   (approve everything — sandboxes only). A session started with no policy
   runs under bypass, so pass one. A session budget / circuit-breaker caps

@@ -344,9 +344,8 @@ export async function enforceBudget(ctx: RunnerContext, ev: Event): Promise<void
  * associated with the in-flight user turn. It flips only where a turn is
  * minted — send_turn and the new-turn path of provide_tool_output — and both
  * refuse with TURN_IN_FLIGHT while ctx.turnInFlight is set, so the stamp can
- * never flip under a running turn. If no turn is in flight (e.g. during
- * startup before any user turn), events are stamped with turn_id
- * "turn_unknown".
+ * never flip under a running turn. Before the first turn is minted (e.g.
+ * during startup), events are stamped with turn_id "turn_unknown".
  */
 export async function runStdoutLoop(ctx: RunnerContext): Promise<void> {
   const stdout = ctx.b.stdout!;

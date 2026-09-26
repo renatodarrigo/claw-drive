@@ -69,4 +69,4 @@ The user has invoked this skill to kick off a driven session. This is the standa
 
 - Register the MCP server. Run `/claw-drive-init` first.
 - Decide approvals on the user's behalf. Surface them via the Monitor and let the user direct.
-- Continue the session after the first turn. Subsequent turns are driven by user instruction in this Claude Code session ("send another turn telling B to …") and land at a turn boundary — a send while B's turn is running is refused with `TURN_IN_FLIGHT`; wait for the turn's completion in the Monitor and send again.
+- Continue the session after the first turn. Subsequent turns are driven by user instruction in this Claude Code session ("send another turn telling B to …") and land at a turn boundary — a send while B's turn is running is refused with `TURN_IN_FLIGHT`; wait for the turn to end — `poll_turn` shows it even when the Monitor's sentinel filter hides a turn that ends without a token — and send again.

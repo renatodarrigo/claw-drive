@@ -275,8 +275,8 @@ Session remains alive.
 
 **Response:** `{ "ok": true }`
 
-The aborted turn ends with `turn_failed`; `send_turn` before that is refused
-with `TURN_IN_FLIGHT`.
+The aborted turn ends with a terminal event, normally `turn_failed`;
+`send_turn` before that is refused with `TURN_IN_FLIGHT`.
 
 #### `rotate_session`
 

@@ -145,7 +145,7 @@ claw-drive watch &lt;id&gt; --only tool_decision_required,turn_failed,session_st
       <li>A <code>tool_decision_required</code> event (<code>default_action: "defer"</code>) fires. The monitor notifies A.</li>
       <li>The human runs the command locally.</li>
       <li>A calls <code>provide_tool_output</code> (or <code>claw-drive provide-output</code>) with the result.</li>
-      <li>The runner releases the paused call with the output as its own result, inside the running turn (<code>via: "hook"</code>). B continues. If nobody answers in time, the hook releases B with a denial instead — the rule's <code>DEFERRED</code> default once <code>decision_timeout_seconds</code> passes, or the approver's own fail-secure deny after about 10 minutes, whichever comes first — B continues, usually ending its turn to wait, and the output goes in as the next turn.</li>
+      <li>The runner releases the paused call with the output as its own result, inside the running turn (<code>via: "hook"</code>). B continues. If nobody answers in time, the hook releases B with a denial instead — the rule's <code>DEFERRED</code> default once <code>decision_timeout_seconds</code> passes, or the approver's own fail-secure deny after about 10 minutes, whichever comes first. B continues without the command's output — typically it reports the gate and ends its turn — and the output then goes in as the next turn.</li>
     </ol>
 
     <pre><code class="language-bash">claw-drive provide-output &lt;call_id&gt; --stdout "&lt;output&gt;" --exit 0</code></pre>
@@ -166,7 +166,7 @@ claw-drive watch &lt;id&gt; --only tool_decision_required,turn_failed,session_st
 
     <pre><code class="language-bash">claw-drive interrupt &lt;session&gt; &lt;turn_id&gt;</code></pre>
 
-    <p>You can then wait for the aborted turn's <code>turn_failed</code> and <code>send_turn</code> a correction; a send before that is refused with <code>TURN_IN_FLIGHT</code>.</p>
+    <p>You can then wait for the aborted turn's terminal event, normally <code>turn_failed</code>, and <code>send_turn</code> a correction; a send before that is refused with <code>TURN_IN_FLIGHT</code>.</p>
 
     <h2 id="rotation">Context rotation: handing off before the window fills</h2>
     <p>A long-lived B eventually fills its context window, and native auto-compact decides for you when that happens and what survives it. With a <code>rotation</code> block in the policy (<a href="policies.html#rotation">Policies → Context rotation</a>), the handoff point is the driver's choice instead: once B's tracked context reaches <code>threshold_tokens</code>, the runner emits <code>context_threshold_reached</code> — re-fired on every completed turn while above it — and <code>rotate</code> becomes available.</p>
