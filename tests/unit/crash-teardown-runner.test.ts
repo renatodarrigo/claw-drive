@@ -7,11 +7,12 @@ import type { ChildProcess } from "node:child_process";
 import {
   handleRequest,
   handleUnexpectedBExit,
+  afterEventBookkeeping,
   type RunnerContext,
 } from "../../src/runner/runner.js";
 import type { SessionState } from "../../src/lib/state.js";
 import { readState } from "../../src/lib/state.js";
-import { readEventsSince } from "../../src/lib/events.js";
+import { readEventsSince, type Event } from "../../src/lib/events.js";
 import { eventsPath, statePath, crashHandoverPath } from "../../src/lib/paths.js";
 import { newSessionIdOf } from "../helpers/control-response.js";
 
@@ -437,9 +438,16 @@ describe("handleUnexpectedBExit — crash during rotate (dogfood gen-2)", () => 
       // Attempt 1 times out (600s) → the runner SIGINTs B…
       await vi.advanceTimersByTimeAsync(600_000);
       await drainUntil(() => kills.some(([, sig]) => sig === "SIGINT"));
-      // …and the interrupted turn terminates late, within the grace window.
-      const waiter = ctx.turnWaiters.get("turn_1")!;
-      waiter("failed");
+      // …and the interrupted turn terminates late, within the grace window —
+      // resolved through the real bookkeeping (latch cleared, waiter fired),
+      // the same as B's real turn_failed.
+      await afterEventBookkeeping(ctx, {
+        seq: 0,
+        at: new Date().toISOString(),
+        kind: "turn_failed",
+        turn_id: "turn_1",
+        error: "interrupted",
+      } as Event);
       // Attempt 2 must NOT go out immediately — a just-SIGINT'd claude can
       // exit on its next stdin message. 500ms of real time is far more than
       // an immediate send would need to surface.
@@ -448,8 +456,13 @@ describe("handleUnexpectedBExit — crash during rotate (dogfood gen-2)", () => 
       await vi.advanceTimersByTimeAsync(15_000);
       await drainUntil(() => fake.writes.length === 2);
       // Fail attempt 2's turn too: the rotation ends cleanly, no dangling op.
-      const waiter2 = ctx.turnWaiters.get("turn_2")!;
-      waiter2("failed");
+      await afterEventBookkeeping(ctx, {
+        seq: 0,
+        at: new Date().toISOString(),
+        kind: "turn_failed",
+        turn_id: "turn_2",
+        error: "interrupted",
+      } as Event);
       const resp = await rotate;
       expect(resp).toMatchObject({ ok: false, error: "ROTATION_FAILED" });
     } finally {
@@ -482,9 +495,15 @@ describe("handleUnexpectedBExit — crash during rotate (dogfood gen-2)", () => 
       const rotate = handleRequest(ctx, { id: "r1", op: "rotate" });
       await drainUntil(() => fake.writes.length === 1); // attempt 1 sent
       // Attempt 1 fails outright (no timeout) — the loop advances straight
-      // to attempt 2's send.
-      const waiter1 = ctx.turnWaiters.get("turn_1")!;
-      waiter1("failed");
+      // to attempt 2's send. Resolved through the real bookkeeping (latch
+      // cleared, waiter fired), the same as B's real turn_failed.
+      await afterEventBookkeeping(ctx, {
+        seq: 0,
+        at: new Date().toISOString(),
+        kind: "turn_failed",
+        turn_id: "turn_1",
+        error: "interrupted",
+      } as Event);
       await drainUntil(() => fake.writes.length === 2); // attempt 2 sent
       // Attempt 2 times out (600s) → SIGINT.
       await vi.advanceTimersByTimeAsync(600_000);
@@ -492,8 +511,13 @@ describe("handleUnexpectedBExit — crash during rotate (dogfood gen-2)", () => 
       // B acknowledges the interrupt within its own grace period — turn_2
       // resolves, so this is NOT the wedged path; attempt 2's OWN 15s
       // settle begins.
-      const waiter2 = ctx.turnWaiters.get("turn_2")!;
-      waiter2("failed");
+      await afterEventBookkeeping(ctx, {
+        seq: 0,
+        at: new Date().toISOString(),
+        kind: "turn_failed",
+        turn_id: "turn_2",
+        error: "interrupted",
+      } as Event);
       await drainUntil(() => !ctx.turnWaiters.has("turn_2"));
       // B dies inside attempt 2's OWN settle window — a genuine crash, not
       // caused by the interrupt or a stop. Drives the real crash
@@ -538,13 +562,25 @@ describe("handleUnexpectedBExit — crash during rotate (dogfood gen-2)", () => 
       const ctx = await makeCtx(fake);
       const rotate = handleRequest(ctx, { id: "r1", op: "rotate" });
       await drainUntil(() => fake.writes.length === 1);
-      const waiter1 = ctx.turnWaiters.get("turn_1")!;
-      waiter1("failed");
+      // Resolved through the real bookkeeping (latch cleared, waiter fired),
+      // the same as B's real turn_failed.
+      await afterEventBookkeeping(ctx, {
+        seq: 0,
+        at: new Date().toISOString(),
+        kind: "turn_failed",
+        turn_id: "turn_1",
+        error: "interrupted",
+      } as Event);
       await drainUntil(() => fake.writes.length === 2);
       await vi.advanceTimersByTimeAsync(600_000);
       await drainUntil(() => kills.some(([, sig]) => sig === "SIGINT"));
-      const waiter2 = ctx.turnWaiters.get("turn_2")!;
-      waiter2("failed");
+      await afterEventBookkeeping(ctx, {
+        seq: 0,
+        at: new Date().toISOString(),
+        kind: "turn_failed",
+        turn_id: "turn_2",
+        error: "interrupted",
+      } as Event);
       await drainUntil(() => !ctx.turnWaiters.has("turn_2"));
       // A stop lands inside attempt 2's OWN settle window — no crash, so
       // stopping (not a death) owns the exit.
