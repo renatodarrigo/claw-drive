@@ -30,6 +30,7 @@ import { recoverSession } from "../lib/recover.js";
 import type { ControlRequest, ControlResponse } from "../lib/socket-protocol.js";
 import { buildDecisionContext } from "../lib/decision-context.js";
 import { installRunnerLogCapture } from "../lib/runner-log.js";
+import { composeOutputMessage } from "./output-message.js";
 
 /** CD-8: the most recent assistant_text in `turnId`, scanning the session's events back-to-front. */
 async function findPriorAssistantText(sessionId: string, turnId: string): Promise<string | undefined> {
@@ -1524,14 +1525,15 @@ export async function handleRequest(
       const exit_code = typeof req.exit_code === "number" ? req.exit_code : null;
       const extra = req.extra ?? "";
 
-      const userMessage =
-        `[claw-drive] The deferred \`${deferred.tool}\` call (call_id: ${deferred.call_id}) was executed by the human.\n\n` +
-        `Original args: ${JSON.stringify(deferred.args)}\n\n` +
-        `Exit code: ${exit_code === null ? "(not provided)" : String(exit_code)}\n\n` +
-        `Stdout:\n${stdout || "(empty)"}\n\n` +
-        `Stderr:\n${stderr || "(empty)"}\n\n` +
-        `Notes: ${extra || "(none)"}\n\n` +
-        `Please continue from where you left off, using this as the tool's output.`;
+      const userMessage = composeOutputMessage({
+        tool: deferred.tool,
+        call_id: deferred.call_id,
+        args: deferred.args,
+        exit_code,
+        stdout,
+        stderr,
+        extra,
+      });
 
       // Compose the user turn and pipe it to B's stdin (same path as send_turn).
       const turnId = `turn_${ctx.state.turns + 1}`;
