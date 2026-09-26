@@ -1542,6 +1542,20 @@ export async function handleRequest(
         };
       }
 
+      if (ctx.turnInFlight) {
+        // The hook that paused this call was released earlier (defer,
+        // auto-defer, or timeout), so the output can only travel as a new
+        // user turn — and a new turn mid-turn mis-stamps the running one (see
+        // send_turn's gate). Refuse in the same posture; the deferred record
+        // stays for the retry at the boundary.
+        return {
+          id: req.id,
+          ok: false,
+          error: "TURN_IN_FLIGHT",
+          message: `${ctx.currentTurnId ?? "a turn"} is in flight; the output turn starts only at a turn boundary — wait for its turn_completed or turn_failed and retry provide_tool_output (the deferred record is kept)`,
+        };
+      }
+
       const stdout = req.stdout ?? "";
       const stderr = req.stderr ?? "";
       const exit_code = typeof req.exit_code === "number" ? req.exit_code : null;
@@ -1601,7 +1615,7 @@ export async function handleRequest(
 
       ctx.deferredCalls.delete(req.call_id);
 
-      return { id: req.id, ok: true, result: { turn_id: turnId } };
+      return { id: req.id, ok: true, result: { turn_id: turnId, via: "turn" } };
     }
 
     default: {

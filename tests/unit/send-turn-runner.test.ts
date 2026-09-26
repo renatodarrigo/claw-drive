@@ -251,7 +251,7 @@ describe("provide_tool_output op — dead-B guard (twin of send_turn's)", () => 
       stdout: "done",
       exit_code: 0,
     });
-    expect(resp).toMatchObject({ id: "p4", ok: true, result: { turn_id: "turn_1" } });
+    expect(resp).toEqual({ id: "p4", ok: true, result: { turn_id: "turn_1", via: "turn" } });
     const kinds = await eventKinds();
     expect(kinds).toContain("turn_started");
     expect(kinds).toContain("tool_output_provided");
@@ -473,6 +473,65 @@ describe("send during a running turn", () => {
     const refused = await handleRequest(set, { id: "handover_2", op: "send_turn", message: "handover" });
     expect(refused).toMatchObject({ ok: false, error: "TURN_IN_FLIGHT" });
     expect(fake2.writes).toEqual([]);
+  });
+});
+
+// The twin: a call deferred earlier had its hook released long ago, so its
+// output can only travel as a new user turn — and a new turn mid-turn
+// mis-stamps the running one exactly like send_turn. Same gate, same posture;
+// the deferred record survives for the retry at the boundary.
+describe("provide_tool_output during a running turn (new-turn path)", () => {
+  const OUTPUT_IN_FLIGHT_3 =
+    "turn_3 is in flight; the output turn starts only at a turn boundary — wait for its turn_completed or turn_failed and retry provide_tool_output (the deferred record is kept)";
+  const PROVIDE = { id: "p1", op: "provide_tool_output" as const, call_id: "toolu_3", stdout: "done", exit_code: 0 };
+
+  async function inFlightCtx(fake: FakeB, over: Partial<RunnerContext> = {}): Promise<RunnerContext> {
+    const ctx = await makeCtx(fake, { turnInFlight: true, currentTurnId: "turn_3", ...over });
+    ctx.state.turns = 3;
+    return ctx;
+  }
+
+  it("refuses TURN_IN_FLIGHT: no turn_started, no tool_output_provided, no stdin write, record kept", async () => {
+    const fake = makeFakeB();
+    const ctx = await inFlightCtx(fake);
+    seedDeferred(ctx, "toolu_3");
+    const resp = await handleRequest(ctx, PROVIDE);
+    expect(resp).toEqual({ id: "p1", ok: false, error: "TURN_IN_FLIGHT", message: OUTPUT_IN_FLIGHT_3 });
+    expect(await eventKinds()).toEqual([]);
+    expect(fake.writes).toEqual([]);
+    expect(ctx.deferredCalls.has("toolu_3")).toBe(true);
+    expect(ctx.state.turns).toBe(3);
+  });
+
+  it("the same call succeeds once turn_completed clears the latch, and says via: turn", async () => {
+    const fake = makeFakeB();
+    const ctx = await inFlightCtx(fake);
+    seedDeferred(ctx, "toolu_3");
+    await afterEventBookkeeping(
+      ctx,
+      { seq: 9, at: new Date().toISOString(), kind: "turn_completed", turn_id: "turn_3", stop_reason: "success" } as Event
+    );
+    const resp = await handleRequest(ctx, PROVIDE);
+    expect(resp).toEqual({ id: "p1", ok: true, result: { turn_id: "turn_4", via: "turn" } });
+    expect(await eventKinds()).toEqual(["turn_started", "tool_output_provided"]);
+    expect(fake.writes).toHaveLength(1);
+    expect(ctx.deferredCalls.has("toolu_3")).toBe(false);
+  });
+
+  it("an unknown call keeps CALL_NOT_FOUND with the latch set", async () => {
+    const fake = makeFakeB();
+    const ctx = await inFlightCtx(fake);
+    const resp = await handleRequest(ctx, { ...PROVIDE, call_id: "toolu_nope" });
+    expect(resp).toMatchObject({ ok: false, error: "CALL_NOT_FOUND" });
+  });
+
+  it("a dead B wins over the latch on the new-turn path", async () => {
+    const fake = makeFakeB();
+    const ctx = await inFlightCtx(fake, { bExited: true });
+    seedDeferred(ctx, "toolu_3");
+    const resp = await handleRequest(ctx, PROVIDE);
+    expect(resp).toMatchObject({ ok: false, error: "SESSION_EXITED" });
+    expect(ctx.deferredCalls.has("toolu_3")).toBe(true);
   });
 });
 
