@@ -10,7 +10,7 @@ afterEach(async () => {
 });
 
 describe("defer flow (integration)", () => {
-  it("auto_defer → provide-output → B continues", async () => {
+  it("auto_defer pauses → defer releases → provide-output at the boundary → B continues", async () => {
     const sess = await makeTmpSession();
     cleanup = sess.cleanup;
 
@@ -63,7 +63,35 @@ describe("defer flow (integration)", () => {
     }
     expect(deferredCall, "expected tool_decision_required with default_action=defer").not.toBeNull();
 
-    // Provide the output — B should continue after seeing it
+    // The call is paused for a decision (an auto_defer match escalates with a
+    // defer default). Release it explicitly: the hook gets the DEFERRED
+    // denial, B continues and — told to wait for a follow-up turn — ends
+    // turn_1. The output turn can only start at that boundary (a send
+    // mid-turn is refused).
+    const released = await runCliBlocking(sess.binPath, sess.env, [
+      "defer",
+      deferredCall.call_id,
+      "--reason",
+      "the test harness runs it locally",
+    ]);
+    expect(released.code, released.stderr).toBe(0);
+
+    const boundaryDeadline = Date.now() + 90_000;
+    let firstDone = false;
+    while (Date.now() < boundaryDeadline && !firstDone) {
+      const tail = await runCliBlocking(sess.binPath, sess.env, ["tail", sessionId]);
+      firstDone = tail.stdout
+        .split("\n")
+        .filter(Boolean)
+        .some((l) => {
+          const ev = JSON.parse(l);
+          return ev.kind === "turn_completed" && ev.turn_id === "turn_1";
+        });
+      if (!firstDone) await new Promise((r) => setTimeout(r, 500));
+    }
+    expect(firstDone, "expected turn_1 to complete after the DEFERRED denial").toBe(true);
+
+    // Provide the output — it goes in as turn_2 and B continues.
     const po = await runCliBlocking(sess.binPath, sess.env, [
       "provide-output",
       deferredCall.call_id,
@@ -77,28 +105,25 @@ describe("defer flow (integration)", () => {
     expect(po.code, po.stderr).toBe(0);
     const poResult = JSON.parse(po.stdout.trim());
     expect(poResult.ok).toBe(true);
-    expect(poResult.result.turn_id).toMatch(/^turn_/);
+    expect(poResult.result).toEqual({ turn_id: "turn_2", via: "turn" });
 
-    // Wait for turn_completed in the follow-up turn (turn_2).
-    // The defer flow produces exactly ONE turn_completed: turn_1 is interrupted
-    // when the Bash tool is denied (DEFERRED), and turn_2 is the injected
-    // continuation turn. We need tool_output_provided + at least 1 turn_completed.
+    // Two completions, each stamped on its own turn, plus the audit event.
     const completeDeadline = Date.now() + 90_000;
-    let completedCount = 0;
+    let completedTurns: string[] = [];
     let sawOutputProvided = false;
-    while (Date.now() < completeDeadline && (!sawOutputProvided || completedCount < 1)) {
+    while (Date.now() < completeDeadline && (!sawOutputProvided || completedTurns.length < 2)) {
       const tail = await runCliBlocking(sess.binPath, sess.env, ["tail", sessionId]);
-      completedCount = 0;
+      completedTurns = [];
       sawOutputProvided = false;
       for (const l of tail.stdout.split("\n").filter(Boolean)) {
         const ev = JSON.parse(l);
-        if (ev.kind === "turn_completed") completedCount++;
+        if (ev.kind === "turn_completed") completedTurns.push(ev.turn_id);
         if (ev.kind === "tool_output_provided") sawOutputProvided = true;
       }
-      if (!sawOutputProvided || completedCount < 1) await new Promise((r) => setTimeout(r, 500));
+      if (!sawOutputProvided || completedTurns.length < 2) await new Promise((r) => setTimeout(r, 500));
     }
     expect(sawOutputProvided, "expected tool_output_provided event").toBe(true);
-    expect(completedCount, "expected B to complete the follow-up turn").toBeGreaterThanOrEqual(1);
+    expect(completedTurns, "expected turn_1 and turn_2 to complete on their own ids").toEqual(["turn_1", "turn_2"]);
 
     await runCliBlocking(sess.binPath, sess.env, ["stop", sessionId]);
   }, 300_000);
