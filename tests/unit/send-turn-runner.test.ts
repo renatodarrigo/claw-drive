@@ -239,6 +239,12 @@ describe("provide_tool_output op — dead-B guard (twin of send_turn's)", () => 
     const kinds = await eventKinds();
     expect(kinds).toContain("tool_decision_resolved"); // pre-existing bookkeeping, untouched by this guard
     expect(kinds).not.toContain("turn_started");
+    // Precedence: a dead B wins over the latch being clear (which would
+    // otherwise read as "the paused turn has ended") — the plain reason.
+    const { events } = await readEventsSince(eventsPath(SID), 0);
+    expect(events.find((e) => e.kind === "tool_decision_resolved")).toMatchObject({
+      reason: "auto-deferred by provide_tool_output",
+    });
     expect(fake.writes).toEqual([]);
     expect(ctx.pendingApprovals.has("toolu_2")).toBe(false);
     expect(ctx.deferredCalls.has("toolu_2")).toBe(true);
@@ -714,6 +720,25 @@ describe("provide_tool_output on a pending call delivers through the hook", () =
     });
     const { events } = await readEventsSince(eventsPath(SID), 0);
     expect(events[0]).toMatchObject({ reason: "auto-deferred by provide_tool_output (approver hook timed out)" });
+  });
+
+  it("precedence: with the latch clear a past-window entry is reported as turn-ended, not as a ghost", async () => {
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake);
+    seedPending(ctx, "toolu_7", () => {}, Date.now() - HOOK_DELIVERY_WINDOW_MS - 1);
+    const resp = await handleRequest(ctx, { id: "p18", op: "provide_tool_output", call_id: "toolu_7", stdout: "x" });
+    expect(resp).toEqual({ id: "p18", ok: true, result: { turn_id: "turn_1", via: "turn" } });
+    const { events } = await readEventsSince(eventsPath(SID), 0);
+    expect(events[0]).toMatchObject({ kind: "tool_decision_resolved", reason: "auto-deferred by provide_tool_output (the paused turn has ended)" });
+  });
+
+  it("precedence: a past-window entry with an oversized output is reported as a ghost, not as too large", async () => {
+    const fake = makeFakeB();
+    const ctx = await pendingCtx(fake);
+    seedPending(ctx, "toolu_7", () => {}, Date.now() - HOOK_DELIVERY_WINDOW_MS - 1);
+    const resp = await handleRequest(ctx, { id: "p19", op: "provide_tool_output", call_id: "toolu_7", stdout: fill(HOOK_DELIVERY_MAX_BYTES + 1), exit_code: 0 });
+    expect(resp).toMatchObject({ ok: false, error: "TURN_IN_FLIGHT" });
+    expect(ctx.deferredCalls.get("toolu_7")).toMatchObject({ reason: "auto-deferred by provide_tool_output (approver hook timed out)" });
   });
 
   it("a dead B takes the auto-defer path: the call is recorded as deferred and the op refuses SESSION_EXITED", async () => {

@@ -1513,8 +1513,9 @@ export async function handleRequest(
           // (HOOK_DELIVERY_WINDOW_MS; it self-times-out at 595 s, so the last
           // seconds before that are refused early), and while the text fits
           // what the deny channel was observed to carry intact
-          // (HOOK_DELIVERY_MAX_BYTES). Anything else is stale: the reason
-          // names why, and the output travels as a turn instead.
+          // (HOOK_DELIVERY_MAX_BYTES), and only while B itself is alive. Anything
+          // else is stale: the call is auto-deferred with a reason naming the cause
+          // (a dead B's is the plain one) and the new-turn path below decides.
           let stale: string | null = null;
           if (ctx.bExited) stale = "auto-deferred by provide_tool_output";
           else if (!(ctx.turnInFlight && ctx.currentTurnId === pending.turn_id))
