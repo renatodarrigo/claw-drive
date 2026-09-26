@@ -1957,6 +1957,24 @@ export async function runRunner(sessionId: string): Promise<void> {
   });
   void stdoutDone;
 
+  // Queue the scenario brief as the first turn BEFORE the socket opens. The
+  // in-flight gate on send_turn refuses a second turn while one runs, so if a
+  // client that already knows this session's id (a rotation's successor, a
+  // fleet broadcast) connected first, its send would take turn_1 and the brief
+  // would be refused and dropped — the response below is not inspected.
+  // Sending the brief before any client can connect makes it every session's
+  // first turn by construction. B cannot need the socket (its approval hook)
+  // before it has answered this turn, so the socket still opens well ahead
+  // of any tool call.
+  const brief = (ctx.state as unknown as { scenario_brief?: string }).scenario_brief;
+  if (typeof brief === "string" && brief.length > 0) {
+    await handleRequest(ctx, {
+      id: "boot",
+      op: "send_turn",
+      message: brief,
+    });
+  }
+
   // Start the socket server BEFORE touching the ready marker. Callers poll for
   // the marker and will send_turn immediately on appearance — if the socket
   // isn't listening yet the first send race-fails with ECONNREFUSED. Fixed
@@ -1967,16 +1985,6 @@ export async function runRunner(sessionId: string): Promise<void> {
 
   // Touch ready marker — MCP's start_session polls for this
   await fs.writeFile(readyMarkerPath(sessionId), new Date().toISOString());
-
-  // If scenario_brief was supplied at session-start, queue it as the first turn
-  const brief = (ctx.state as unknown as { scenario_brief?: string }).scenario_brief;
-  if (typeof brief === "string" && brief.length > 0) {
-    await handleRequest(ctx, {
-      id: "boot",
-      op: "send_turn",
-      message: brief,
-    });
-  }
 
   await new Promise<void>((resolve) => {
     process.on("SIGTERM", makeSignalHandler(ctx, "SIGTERM"));
