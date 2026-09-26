@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- **A send while a turn is running is refused.** `send_turn` and `claw-drive send` return `TURN_IN_FLIGHT` naming the running turn; retry after its `turn_completed` or `turn_failed`. `send --all` reports a busy member on its own line and exits 1. The same gate covers `provide_tool_output` for a call that was deferred earlier.
+- **Output for a call still paused in the approval hook is delivered through the hook.** `provide_tool_output` releases the paused call with the human's output as that call's own result inside the running turn, so no new turn is minted; the response carries `via: "hook"`, or `via: "turn"` when the output went in as a new turn at the boundary. A call paused longer than the approver's self-timeout is treated as deferred and takes the turn path.
+
+### Fixed
+
+- **Events of a running turn are no longer attributed to the next turn.** A send or a deferred call's output arriving mid-turn flipped the parse-time turn stamp, so the rest of the running turn — its tool results, its text, its terminating result — was logged as the next turn, which `poll_turn`, `status` and `watch` then reported (reproduced on claude 2.1.280, which merges a mid-turn user message into the running turn rather than queueing it).
+
 ## [1.10.1] — 2026-09-21
 
 ### Fixed
