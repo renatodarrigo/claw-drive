@@ -388,7 +388,7 @@ describe("provide_tool_output during rotation (twin of the send guard)", () => {
 // Every stdout line is stamped with ctx.currentTurnId at parse time, so a
 // send that flips the id while a turn runs relabels the rest of that turn
 // (reproduced on claude 2.1.280, which merges a mid-turn user line into the
-// running turn). send_turn now reads the latch afterEventBookkeeping
+// running turn). send_turn reads the latch afterEventBookkeeping
 // maintains — rotate's TURN_IN_FLIGHT posture: plain error, no event.
 describe("send during a running turn", () => {
   const IN_FLIGHT_3 =
