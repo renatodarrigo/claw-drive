@@ -17,6 +17,7 @@ import { eventsPath } from "../../src/lib/paths.js";
 import { readFileSync } from "node:fs";
 import { composeOutputMessage } from "../../src/runner/output-message.js";
 import { HOOK_DELIVERY_MAX_BYTES, HOOK_DELIVERY_WINDOW_MS } from "../../src/lib/spawn-session.js";
+import type { ControlResponse } from "../../src/lib/socket-protocol.js";
 
 // v1.4.1 ledger finding: send_turn (and provide_tool_output, which pipes a
 // turn to B the same way) never checked whether B had already exited before
@@ -149,6 +150,45 @@ function seedDeferred(ctx: RunnerContext, callId: string): void {
     deferred_at: new Date().toISOString(),
     reason: "human will run this manually",
   });
+}
+
+/**
+ * Register a REAL pending approval through the approve_tool op — the request
+ * bin/claw-drive-approver sends — under a policy that escalates the call
+ * (set ctx.state.policy first). approve_tool awaits the escalation context
+ * and the tool_decision_required append before it registers the entry, so
+ * the helper waits for the entry with setImmediate polling (keep setImmediate
+ * real under fake timers). Returns the still-pending approve_tool promise
+ * inside an object — an async function that returned the bare promise would
+ * adopt it and await its settlement, a deadlock here. It settles when the
+ * hook is released, with the decision the approver renders.
+ */
+async function registerPending(
+  ctx: RunnerContext,
+  callId: string,
+  command: string
+): Promise<{ approvePromise: Promise<ControlResponse> }> {
+  let settled = false;
+  const approvePromise = handleRequest(ctx, {
+    id: `h_${callId}`,
+    op: "approve_tool",
+    pretooluse: {
+      session_id: "claude-sess",
+      cwd: ctx.state.cwd,
+      permission_mode: "default",
+      hook_event_name: "PreToolUse",
+      tool_name: "Bash",
+      tool_input: { command },
+      tool_use_id: callId,
+    },
+  }).finally(() => {
+    settled = true;
+  });
+  while (!ctx.pendingApprovals.has(callId)) {
+    if (settled) throw new Error(`approve_tool for ${callId} settled without pausing the call — the policy did not escalate it`);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  return { approvePromise };
 }
 
 describe("send_turn op — dead-B guard", () => {
@@ -879,6 +919,64 @@ describe("provide_tool_output on a pending call delivers through the hook", () =
     expect(resp).toMatchObject({ ok: false, error: "ROTATION_IN_PROGRESS" });
     expect(decisions).toEqual([]);
     expect(ctx.pendingApprovals.has("toolu_7")).toBe(true);
+  });
+});
+
+describe("a real approve_tool registration answered through the hook", () => {
+  const GATE_COMMAND = "echo 'CLAW-GATE: include the changelog?'";
+  const ESCALATING_POLICY = { auto_defer: [{ tool: "Bash", bash_command_matches: "^echo 'CLAW-GATE" }] };
+
+  async function gatedCtx(fake: FakeB): Promise<RunnerContext> {
+    const ctx = await makeCtx(fake, { turnInFlight: true, currentTurnId: "turn_3" });
+    ctx.state.turns = 3;
+    ctx.state.policy = ESCALATING_POLICY;
+    return ctx;
+  }
+
+  it("approve_tool stamps paused_at in milliseconds and pauses the call in the running turn", async () => {
+    const fake = makeFakeB();
+    const ctx = await gatedCtx(fake);
+    const before = Date.now();
+    const { approvePromise } = await registerPending(ctx, "toolu_real", GATE_COMMAND);
+    const entry = ctx.pendingApprovals.get("toolu_real")!;
+    expect(entry).toMatchObject({
+      call_id: "toolu_real", turn_id: "turn_3", tool: "Bash", args: { command: GATE_COMMAND }, default_action: "defer",
+    });
+    // The hook window is measured in milliseconds against this stamp; a
+    // seconds stamp would sit ~1.7e12 ms in the past and make every call a
+    // ghost while the seeded tests stayed green.
+    expect(entry.paused_at).toBeGreaterThanOrEqual(before);
+    expect(Date.now() - entry.paused_at).toBeLessThan(1000);
+    expect(await eventKinds()).toEqual(["tool_decision_required"]);
+    // Release the hook so the promise settles and no decision timer outlives the test.
+    entry.resolve({ behavior: "deny", message: "test teardown" });
+    expect(await approvePromise).toEqual({ id: "h_toolu_real", ok: true, result: { behavior: "deny", message: "test teardown" } });
+  });
+
+  it("provide_tool_output answers the registered call through the hook: the approver receives the composed output as the deny reason", async () => {
+    const fake = makeFakeB();
+    const ctx = await gatedCtx(fake);
+    const { approvePromise } = await registerPending(ctx, "toolu_real", GATE_COMMAND);
+    const resp = await handleRequest(ctx, {
+      id: "p30", op: "provide_tool_output", call_id: "toolu_real",
+      stdout: "yes, include it", exit_code: 0, extra: "answered by the human",
+    });
+    expect(resp).toEqual({ id: "p30", ok: true, result: { turn_id: "turn_3", via: "hook" } });
+    expect(await approvePromise).toEqual({
+      id: "h_toolu_real",
+      ok: true,
+      result: {
+        behavior: "deny",
+        message: composeOutputMessage({
+          tool: "Bash", call_id: "toolu_real", args: { command: GATE_COMMAND },
+          exit_code: 0, stdout: "yes, include it", stderr: "", extra: "answered by the human",
+        }),
+      },
+    });
+    expect(await eventKinds()).toEqual(["tool_decision_required", "tool_decision_resolved", "tool_output_provided"]);
+    expect(ctx.pendingApprovals.has("toolu_real")).toBe(false);
+    expect(ctx.deferredCalls.has("toolu_real")).toBe(false);
+    expect(fake.writes).toEqual([]);
   });
 });
 
