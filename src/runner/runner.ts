@@ -1514,18 +1514,25 @@ export async function handleRequest(
           });
           // The hook can carry the output only while the turn that paused the
           // call is still running (a turn ends only after its tool calls
-          // settle, so an ended turn — an interrupt, say — means claude has
-          // given the hook up), while the approver process is still alive
-          // (HOOK_DELIVERY_WINDOW_MS; it self-times-out at 595 s, so the last
-          // seconds before that are refused early), and while the text fits
-          // what the deny channel was observed to carry intact
-          // (HOOK_DELIVERY_MAX_BYTES), and only while B itself is alive. Anything
-          // else is stale: the call is auto-deferred with a reason naming the cause
-          // (a dead B's is the plain one) and the new-turn path below decides.
+          // settle, so an ended turn means claude has given the hook up) and
+          // was not interrupted since the pause (after a SIGINT the latch stays
+          // set until the aborted turn's terminal event lands, but claude is
+          // abandoning the hook with the turn — ctx.lastInterruptAt, stamped
+          // by interrupt_turn and cleared only by a completed turn, is compared
+          // with the pause: an older stamp belongs to an earlier turn), while
+          // the approver process is still alive (HOOK_DELIVERY_WINDOW_MS; it
+          // self-times-out at 595 s, so the last seconds before that are
+          // refused early), and while the text fits what the deny channel was
+          // observed to carry intact (HOOK_DELIVERY_MAX_BYTES), and only while
+          // B itself is alive. Anything else is stale: the call is auto-deferred
+          // with a reason naming the cause (a dead B's is the plain one) and
+          // the new-turn path below decides.
           let stale: string | null = null;
           if (ctx.bExited) stale = "auto-deferred by provide_tool_output";
           else if (!(ctx.turnInFlight && ctx.currentTurnId === pending.turn_id))
             stale = "auto-deferred by provide_tool_output (the paused turn has ended)";
+          else if (ctx.lastInterruptAt !== null && ctx.lastInterruptAt >= pending.paused_at)
+            stale = "auto-deferred by provide_tool_output (the paused turn was interrupted)";
           else if (Date.now() - pending.paused_at >= HOOK_DELIVERY_WINDOW_MS)
             stale = "auto-deferred by provide_tool_output (approver hook timed out)";
           else if (Buffer.byteLength(message) > HOOK_DELIVERY_MAX_BYTES)
