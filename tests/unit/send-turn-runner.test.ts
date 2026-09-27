@@ -472,6 +472,7 @@ describe("send during a running turn", () => {
     const ctx = await inFlightCtx(fake, { rotating: true });
     const resp = await handleRequest(ctx, { id: "s5", op: "send_turn", message: "next" });
     expect(resp).toMatchObject({ ok: false, error: "ROTATION_IN_PROGRESS" });
+    expect((resp as { message: string }).message).toContain("send to the successor");
   });
 
   it("the rotation's sanctioned handover send is admitted with the latch clear and refused with it set", async () => {
@@ -487,7 +488,7 @@ describe("send during a running turn", () => {
   });
 });
 
-// The twin: a call deferred earlier had its hook released long ago, so its
+// The twin: a call deferred earlier had its hook released earlier, so its
 // output can only travel as a new user turn — and a new turn mid-turn
 // mis-stamps the running one exactly like send_turn. Same gate, same posture;
 // the deferred record survives for the retry at the boundary.
@@ -512,6 +513,8 @@ describe("provide_tool_output during a running turn (new-turn path)", () => {
     expect(fake.writes).toEqual([]);
     expect(ctx.deferredCalls.has("toolu_3")).toBe(true);
     expect(ctx.state.turns).toBe(3);
+    expect(ctx.currentTurnId).toBe("turn_3");
+    expect(ctx.turnInFlight).toBe(true);
   });
 
   it("the same call succeeds once turn_completed clears the latch, and says via: turn", async () => {

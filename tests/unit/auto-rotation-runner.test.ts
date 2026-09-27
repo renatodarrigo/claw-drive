@@ -559,13 +559,14 @@ describe("policy-epoch guard on the latch", () => {
     // attempt test pins that this machinery latches WITHOUT an update; this
     // pins that a stale epoch suppresses it.
     rmSync(sessionDir(SID), { recursive: true, force: true });
-    // Not the shared completeHandoverTurn helper: resolving turn_1 through the
-    // real bookkeeping here would itself throw ENOENT (state.json's directory
-    // is already gone, and lastContextTokens is set from the boundary calls
-    // above), pre-empting the crash this test means to land at attempt 2's OWN
-    // turn_started emit inside performRotation's promise chain. Fallback
-    // mirrors the bookkeeping's order instead: latch cleared first, then the
-    // waiter.
+    // Not the shared completeHandoverTurn helper: the real bookkeeping fires
+    // turn_1's waiter before its first await, so the crash this test means to
+    // land at attempt 2's OWN turn_started emit inside performRotation's
+    // promise chain would still happen — but the bookkeeping would then throw
+    // ENOENT from its writeState (state.json's directory is already gone, and
+    // lastContextTokens is set from the boundary calls above), failing this
+    // test's own await. Fallback mirrors the bookkeeping's order instead:
+    // latch cleared first, then the waiter.
     await settleUntil(() => ctx.turnWaiters.has("turn_1"));
     ctx.turnInFlight = false;
     const waiter = ctx.turnWaiters.get("turn_1")!;
