@@ -183,6 +183,10 @@ Refuses with `TURN_IN_FLIGHT` while a turn is in flight for the session — wait
 for that turn's `turn_completed` or `turn_failed` and retry at the turn
 boundary.
 
+A turn that never ends — B alive but silent — holds the refusal;
+`interrupt_turn` normally forces its terminal event, otherwise `stop_session`
+is the way out.
+
 #### `poll_turn`
 
 Fetch events and derived status for a specific turn.

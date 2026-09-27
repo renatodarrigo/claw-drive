@@ -22,7 +22,7 @@ MENTAL MODEL
   Runner         the per-session process that supervises B, applies the policy,
                  and appends events to the session's log.
   Approver hook  the gate B's tool calls pass through; auto_approve resolves
-                 here, auto_reject/escalate/auto_defer pause for you.
+                 here, auto_reject/auto_defer/escalate_default pause for you.
   Events flow A <- B. Consume them with 'watch' (for the Monitor tool) or 'tail'.
 
 THE DRIVING LOOP
@@ -44,18 +44,22 @@ THE DRIVING LOOP
   sentinel.
 
 POLICY & SAFETY
-  Each session runs under a policy of ordered rules. Rule verbs:
+  Each session runs under a policy of ordered rule lists:
     auto_approve   let the call run, no human.
     auto_reject    pause with a reject default; the human can still approve it.
-    escalate       pause and ask you.
     auto_defer     pause for the human to run the command locally; feed the
                    result back with provide-output (timeout default: defer).
+    escalate_default (true by default) pauses anything no list matched and
+                   asks you.
   Templates: starter (conservative), permissive (adds common dev CLIs), bypass
   (approve everything — sandboxes only). A session started with no policy
   runs under bypass, so pass one. A session budget / circuit-breaker caps
-  spend and trips on repeated failures. Unresolved decisions fail secure after
-  decision_timeout_seconds (default 3600). Lint a policy with 'policy lint';
-  dry-run a command against one with 'policy-test'.
+  spend and trips on repeated failures. A decision nobody resolves is denied
+  in B by the approver hook's own fail-secure timeout (about 10 minutes); a
+  shorter decision_timeout_seconds (default 3600) releases the call with the
+  rule's default instead — approve for a plain escalation, reject or defer for
+  auto_reject / auto_defer. Lint a policy with 'policy lint'; dry-run a
+  command against one with 'policy-test'.
   A rotation block bounds context per session: at threshold_tokens the runner
   emits context_threshold_reached (re-fires each completed turn while above)
   and 'rotate' becomes available; max_generations (default 10) caps the

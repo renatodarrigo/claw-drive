@@ -5,11 +5,14 @@
 ### Changed
 
 - **A send while a turn is running is refused.** `send_turn` and `claw-drive send` return `TURN_IN_FLIGHT` naming the running turn; retry after its `turn_completed` or `turn_failed`. `send --all` reports a busy member on its own line and exits 1. The same gate covers `provide_tool_output` for a call that was deferred earlier.
-- **Output for a call still paused in the approval hook is delivered through the hook.** `provide_tool_output` releases the paused call with the human's output as that call's own result inside the running turn, so no new turn is minted; the response carries `via: "hook"`, or `via: "turn"` when the output went in as a new turn at the boundary. A call paused longer than the approver's self-timeout is treated as deferred and takes the turn path.
+- **Output for a call still paused in the approval hook is delivered through the hook.** `provide_tool_output` releases the paused call with the human's output as that call's own result inside the running turn, so no new turn is minted; the response carries `via: "hook"`, or `via: "turn"` when the output went in as a new turn at the boundary. A paused call whose turn has ended, whose hook has outlived the approver's timeout, or whose composed output exceeds 64 KiB is recorded as deferred with a reason naming the cause and takes the turn path.
+- **A session's opening brief is always its first turn.** The runner queues the brief before opening the session's control socket, so a send that races a fresh session — a rotation's successor, a fleet broadcast — is refused with `TURN_IN_FLIGHT` rather than merged into the brief's turn.
 
 ### Fixed
 
 - **Events of a running turn are no longer attributed to the next turn.** A send or a deferred call's output arriving mid-turn flipped the parse-time turn stamp, so the rest of the running turn — its tool results, its text, its terminating result — was logged as the next turn, which `poll_turn`, `status` and `watch` then reported (reproduced on claude 2.1.280, which merges a mid-turn user message into the running turn rather than queueing it).
+- **The resolve skill's defer flow called an action the server refuses.** `/claw-drive-resolve <call_id> defer` told the driver to call MCP `resolve_tool_call` with `action: "defer"`, which the server rejects (it accepts `approve` and `reject` only); the skill runs `claw-drive defer` instead, its `provide_tool_output` example carries the required `session_id` and names the `extra` field correctly, and a call already deferred is no longer turned away before its output can be provided.
+- **Help text described `auto_reject` and `auto_defer` matches as immediate denials.** Both pause the call for a decision with a reject or defer default that applies only at the decision timeout; the policy rule list and the timeout sentence in `claw-drive --help` now say so, and the timeout sentence names the approver hook's own fail-secure deny.
 
 ## [1.10.1] — 2026-09-21
 

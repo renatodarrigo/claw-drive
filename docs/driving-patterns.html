@@ -168,6 +168,8 @@ claw-drive watch &lt;id&gt; --only tool_decision_required,turn_failed,session_st
 
     <p>You can then wait for the aborted turn's terminal event, normally <code>turn_failed</code>, and <code>send_turn</code> a correction; a send before that is refused with <code>TURN_IN_FLIGHT</code>.</p>
 
+    <p>If no terminal event ever arrives, the session keeps refusing sends; stop it.</p>
+
     <h2 id="rotation">Context rotation: handing off before the window fills</h2>
     <p>A long-lived B eventually fills its context window, and native auto-compact decides for you when that happens and what survives it. With a <code>rotation</code> block in the policy (<a href="policies.html#rotation">Policies → Context rotation</a>), the handoff point is the driver's choice instead: once B's tracked context reaches <code>threshold_tokens</code>, the runner emits <code>context_threshold_reached</code> — re-fired on every completed turn while above it — and <code>rotate</code> becomes available.</p>
 

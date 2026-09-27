@@ -51,7 +51,7 @@ The user has invoked this skill to kick off a driven session. This is the standa
 
 6. **Start the Monitor.** Decide the watch_command:
    - If `--verbose` was passed, append ` --no-token-filter` to the watch_command. Monitor will stream all actionable kinds without the sentinel-aware filter (pairs with `wrapper: false` from step 5 so neither side of the contract is engaged).
-   - Otherwise, use the watch_command from step 5 unchanged. The watch parser is sentinel-aware by default: `tool_decision_required`, timeout-resolved decisions, `turn_failed`, `error`, `session_stopped`, and is-error `tool_call_result` always surface; `turn_completed` surfaces only when Session B's last message ends with `[NEEDS-INPUT]` (human is needed) or `[DONE]` (task complete). `tool_output_provided` always surfaces.
+   - Otherwise, use the watch_command from step 5 unchanged. The watch parser is sentinel-aware by default: `tool_decision_required`, timeout-resolved decisions, `turn_failed`, `error`, `session_stopped`, and is-error `tool_call_result` always surface; `turn_completed` surfaces only when Session B's last message ends with `[NEEDS-INPUT]` (human is needed) or `[DONE]` (task complete) — or, through the silent-miss backstop, when a token-less final line ends in `?` (`suspected_needs_input`). `tool_output_provided` always surfaces.
 
    Then call Claude Code's `Monitor` tool with the (possibly modified) watch_command.
 
@@ -63,7 +63,7 @@ The user has invoked this skill to kick off a driven session. This is the standa
    - To resolve a paused call: `/claw-drive-resolve <call_id> <approve|reject|defer> [--remember]`
    - To stop: tell me "stop session `<id>`" or call `claw-drive stop <id>` from a shell.
 
-8. **Wait for notifications.** Do not poll; let the Monitor tool deliver events. Surface `tool_decision_required` events to the user immediately with the relevant context (the tool, the args, the policy match if any).
+8. **Wait for notifications.** Do not poll for events; let the Monitor deliver them (`poll_turn` is for checking that a turn has ended before the next send). Surface `tool_decision_required` events to the user immediately with the relevant context (the tool, the args, the policy match if any).
 
 ## What this skill does NOT do
 
