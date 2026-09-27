@@ -59,7 +59,8 @@ export const MCP_TOOL_DEFS: McpToolDef[] = [
   {
     name: "send_turn",
     description:
-      "Send a user turn to a live session. Non-blocking; returns a turn_id the caller can poll.",
+      "Send a user turn to a live session. Non-blocking; returns a turn_id the caller can poll. " +
+      "Refuses with TURN_IN_FLIGHT while a turn is running — wait for that turn's turn_completed or turn_failed (poll_turn) and retry at the turn boundary.",
     inputSchema: {
       type: "object",
       properties: {
@@ -150,8 +151,8 @@ export const MCP_TOOL_DEFS: McpToolDef[] = [
     name: "provide_tool_output",
     description:
       "Provide the output of a deferred command that the human ran manually. " +
-      "Injects the output as a new user turn into the driven session B, so B can continue. " +
-      "Auto-resolves any still-pending approval as `defer` if needed.",
+      "If the call is still paused in the approval hook (paused for a decision, not yet resolved), its turn is still running, its hook has not timed out and the composed output fits in 64 KiB, the output is delivered to B as that call's own result inside that turn — the call auto-resolves as `defer` and the response says via: \"hook\". " +
+      "Otherwise — the call was deferred earlier, or the paused call is stale (its turn has ended, the approver hook timed out, or the composed output exceeds 64 KiB) — the output is sent as a new user turn at the next turn boundary (via: \"turn\"); refused with TURN_IN_FLIGHT while a turn is running — retry after its turn_completed or turn_failed.",
     inputSchema: {
       type: "object",
       properties: {
@@ -180,7 +181,8 @@ export const MCP_TOOL_DEFS: McpToolDef[] = [
   {
     name: "interrupt_turn",
     description:
-      "Send SIGINT to the driven Claude session to interrupt the current turn. Session remains alive.",
+      "Send SIGINT to the driven Claude session to interrupt the current turn. Session remains alive. " +
+      "The aborted turn ends with a terminal event, normally turn_failed; a send before that is refused with TURN_IN_FLIGHT.",
     inputSchema: {
       type: "object",
       properties: {

@@ -69,6 +69,27 @@ export interface ScaffoldInput {
   };
 }
 
+/** claude's PreToolUse hook ceiling, written into every session's settings (seconds). */
+export const HOOK_TIMEOUT_SECONDS = 600;
+
+/**
+ * How long after a call pauses the runner may still answer it THROUGH the
+ * approval hook. bin/claw-drive-approver self-times-out at 595 s (under the
+ * 600 s ceiling above) and exits with a deny, while the runner's pending entry
+ * lives on until decision_timeout_seconds — a hook release after that goes
+ * nowhere. 590 s leaves a 5 s margin under the approver's own clock.
+ */
+export const HOOK_DELIVERY_WINDOW_MS = 590_000;
+
+/**
+ * The largest deny reason the hook channel was observed to carry intact
+ * (claude 2.1.283, 64 KiB). bin/claw-drive-approver hands the reason to jq as
+ * ONE command-line argument, which Linux caps at 128 KiB; past that the
+ * approver exits without an envelope and claude treats the hook as failed —
+ * which does not block the tool. Larger outputs take the turn path instead.
+ */
+export const HOOK_DELIVERY_MAX_BYTES = 65_536;
+
 export async function scaffoldSessionDir(input: ScaffoldInput): Promise<void> {
   const dir = sessionDir(input.sessionId);
   await fs.mkdir(dir, { recursive: true });
@@ -82,7 +103,7 @@ export async function scaffoldSessionDir(input: ScaffoldInput): Promise<void> {
   const settings = {
     hooks: {
       PreToolUse: [
-        { matcher: "*", hooks: [{ type: "command", command: approverCmd, timeout: 600 }] },
+        { matcher: "*", hooks: [{ type: "command", command: approverCmd, timeout: HOOK_TIMEOUT_SECONDS }] },
       ],
     },
   };

@@ -21,8 +21,8 @@ MENTAL MODEL
                  does the actual work.
   Runner         the per-session process that supervises B, applies the policy,
                  and appends events to the session's log.
-  Approver hook  the gate B's tool calls pass through; auto_approve/auto_reject
-                 resolve here, escalate/auto_defer pause for you.
+  Approver hook  the gate B's tool calls pass through; auto_approve resolves
+                 here, auto_reject/auto_defer/escalate_default pause for you.
   Events flow A <- B. Consume them with 'watch' (for the Monitor tool) or 'tail'.
 
 THE DRIVING LOOP
@@ -30,8 +30,10 @@ THE DRIVING LOOP
   2. watch    stream B's human-actionable events (approvals, completions,
               errors). Feed the start_session watch_command to Monitor.
   3. resolve  when a tool call pauses: approve / reject / defer it; for a review
-              gate, send B the go-ahead.
-  4. send     give B its next instruction as a user turn.
+              gate, answer with provide-output (it reaches B through the paused
+              hook, or as the next turn).
+  4. send     give B its next instruction as a user turn — at a turn boundary;
+              a send while a turn runs is refused with TURN_IN_FLIGHT.
   5. stop     reap B when the task is done.
   6. rotate   when context_threshold_reached fires: B writes a handover and a
               fresh successor session continues the task (alias follows).
@@ -42,18 +44,22 @@ THE DRIVING LOOP
   sentinel.
 
 POLICY & SAFETY
-  Each session runs under a policy of ordered rules. Rule verbs:
+  Each session runs under a policy of ordered rule lists:
     auto_approve   let the call run, no human.
-    auto_reject    deny it, no human.
-    escalate       pause and ask you.
-    auto_defer     deny in B and hand the command to the human to run locally;
-                   feed the result back with provide-output.
+    auto_reject    pause with a reject default; the human can still approve it.
+    auto_defer     pause for the human to run the command locally; feed the
+                   result back with provide-output (timeout default: defer).
+    escalate_default (true by default) pauses anything no list matched and
+                   asks you.
   Templates: starter (conservative), permissive (adds common dev CLIs), bypass
   (approve everything — sandboxes only). A session started with no policy
   runs under bypass, so pass one. A session budget / circuit-breaker caps
-  spend and trips on repeated failures. Unresolved decisions fail secure after
-  decision_timeout_seconds (default 3600). Lint a policy with 'policy lint';
-  dry-run a command against one with 'policy-test'.
+  spend and trips on repeated failures. A decision nobody resolves is denied
+  in B by the approver hook's own fail-secure timeout (about 10 minutes); a
+  shorter decision_timeout_seconds (default 3600) releases the call with the
+  rule's default instead — approve for a plain escalation, reject or defer for
+  auto_reject / auto_defer. Lint a policy with 'policy lint'; dry-run a
+  command against one with 'policy-test'.
   A rotation block bounds context per session: at threshold_tokens the runner
   emits context_threshold_reached (re-fires each completed turn while above)
   and 'rotate' becomes available; max_generations (default 10) caps the
@@ -69,9 +75,10 @@ FLEET
   when the two disagree. Listings show your fleet plus untagged sessions;
   --all-fleets widens, --fleet TAG acts as another fleet. 'watch --all' merges
   the fleet view's live sessions into one session_id-tagged stream with dynamic
-  membership; 'send --all' broadcasts a turn to them. Name sessions with
-  'start --name'. 'status' snapshots one session or the whole view: state,
-  current turn, pending decisions, recent errors.
+  membership; 'send --all' broadcasts a turn to them, a member mid-turn being
+  refused on its own line. Name sessions with 'start --name'. 'status'
+  snapshots one session or the whole view: state, current turn, pending
+  decisions, recent errors.
 `;
 
 const POINTERS = `LEARN MORE

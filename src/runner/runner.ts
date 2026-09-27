@@ -25,11 +25,12 @@ import { createBudgetTracker, budgetExceededReason, warnCostOf, maxCostOf, cross
 import { rotationConfigOf, isOverThreshold, checkRotateGate, effectiveMaxGenerations, INTERRUPT_GRACE_MS, shouldAttemptAutoRotation, autoOutcomeLatches, respawnConfigOf, checkRespawnGate, checkpointConfigOf } from "./context-tracker.js";
 import { buildHandoverInstruction, extractHandover, composeSuccessorBrief } from "../lib/handover.js";
 import { buildCrashDigest, buildDistillerPrompt, runDistiller, DIGESTIBLE_KINDS } from "../lib/distill.js";
-import { newSessionId, readSessionMcpServers, scaffoldSessionDir, spawnRunnerDetached, waitForReady } from "../lib/spawn-session.js";
+import { HOOK_DELIVERY_MAX_BYTES, HOOK_DELIVERY_WINDOW_MS, newSessionId, readSessionMcpServers, scaffoldSessionDir, spawnRunnerDetached, waitForReady } from "../lib/spawn-session.js";
 import { recoverSession } from "../lib/recover.js";
 import type { ControlRequest, ControlResponse } from "../lib/socket-protocol.js";
 import { buildDecisionContext } from "../lib/decision-context.js";
 import { installRunnerLogCapture } from "../lib/runner-log.js";
+import { composeOutputMessage } from "./output-message.js";
 
 /** CD-8: the most recent assistant_text in `turnId`, scanning the session's events back-to-front. */
 async function findPriorAssistantText(sessionId: string, turnId: string): Promise<string | undefined> {
@@ -185,6 +186,8 @@ interface PendingApproval {
   tool: string;
   args: Record<string, unknown>;
   default_action: DecisionAction;
+  /** Date.now() at registration — bounds hook delivery (HOOK_DELIVERY_WINDOW_MS). */
+  paused_at: number;
   resolve: (decision: { behavior: "allow" | "deny"; message?: string }) => void;
 }
 
@@ -338,9 +341,11 @@ export async function enforceBudget(ctx: RunnerContext, ev: Event): Promise<void
  * parseClaudeLine and emitted as Events to events.jsonl.
  *
  * The `currentTurnId` on ctx is stamped on parsed events so each event is
- * associated with the in-flight user turn (set by the send_turn handler in
- * Task 12). If no turn is in flight (e.g. during startup before any user
- * turn), events are stamped with turn_id "turn_unknown".
+ * associated with the in-flight user turn. It flips only where a turn is
+ * minted — send_turn and the new-turn path of provide_tool_output — and both
+ * refuse with TURN_IN_FLIGHT while ctx.turnInFlight is set, so the stamp can
+ * never flip under a running turn. Before the first turn is minted (e.g.
+ * during startup), events are stamped with turn_id "turn_unknown".
  */
 export async function runStdoutLoop(ctx: RunnerContext): Promise<void> {
   const stdout = ctx.b.stdout!;
@@ -668,13 +673,16 @@ async function turnAssistantText(sessionId: string, turnId: string): Promise<str
  * turn's own terminating output may still be in flight, and if it arrives
  * after currentTurnId has already flipped, it gets mis-stamped with attempt
  * 2's turn id: mis-resolving attempt 2's waiter with the wrong outcome, or
- * bleeding stray text into attempt 2's extracted transcript. Instead we grant
- * the INTERRUPTED turn a bounded grace period (on its own still-registered
- * waiter) to actually terminate before proceeding. If it never does (wedged),
- * we abort the rotation entirely rather than risk a second send_turn racing
- * the still-in-flight first one — returning null here, same as the
- * both-attempts-exhausted case, so the caller leaves B running (the guiding
- * invariant).
+ * bleeding stray text into attempt 2's extracted transcript. (send_turn
+ * refuses external sends throughout — ROTATION_IN_PROGRESS while the rotation
+ * owns the session, TURN_IN_FLIGHT whenever the latch is set; the grace below
+ * is what lets the choreography's own retry reach a clear latch.) Instead we
+ * grant the INTERRUPTED turn a bounded grace period (on its own
+ * still-registered waiter) to actually terminate before proceeding. If it
+ * never does (wedged), we abort the rotation entirely rather than risk a
+ * second send_turn racing the still-in-flight first one — returning null
+ * here, same as the both-attempts-exhausted case, so the caller leaves B
+ * running (the guiding invariant).
  *
  * `flags`, if given, is set to `{ wedged: true }` on the wedged-abort path
  * specifically (distinct from the genuine both-attempts-no-markers failure)
@@ -728,10 +736,11 @@ async function runHandoverTurn(
       ctx.rotationSendId = null;
     });
     if (!resp.ok) {
-      // The send refused (dead-B SESSION_EXITED surface) — no turn was
-      // written to B, so nothing can ever resolve this attempt's waiter
-      // except an exit-path flush that may not have seen it. Never race a
-      // waiter for a turn that was refused: drop it and fall through to the
+      // The send refused (dead-B SESSION_EXITED surface, or TURN_IN_FLIGHT —
+      // unreachable here, since the choreography only sends at a boundary) —
+      // no turn was written to B, so nothing can ever resolve this attempt's
+      // waiter except an exit-path flush that may not have seen it. Never race
+      // a waiter for a turn that was refused: drop it and fall through to the
       // selector below the loop, which reports the truthful reason.
       ctx.turnWaiters.delete(turnId);
       break;
@@ -1157,6 +1166,28 @@ export async function handleRequest(
             "a rotation is in flight for this session; wait for session_rotated and send to the successor",
         };
       }
+      if (ctx.turnInFlight) {
+        // A turn is running. Every stdout line is stamped with currentTurnId
+        // at parse time, so flipping it now would label the rest of the
+        // running turn — its tool results, its text, its terminating result —
+        // as this new turn (reproduced on claude 2.1.280, which merges a
+        // mid-turn user line into the running turn instead of queueing it).
+        // Refuse in rotate's TURN_IN_FLIGHT posture: plain error, no event, no
+        // state change; the latch clears in afterEventBookkeeping on the
+        // running turn's turn_completed / turn_failed. Checked after the
+        // dead-B and rotation guards: a mid-turn death leaves the latch stuck
+        // (the retry advice would be unfollowable), and a rotation's handover
+        // turn is in flight by design (ROTATION_IN_PROGRESS carries the
+        // hint). The sanctioned handover send is not exempt — the
+        // choreography only sends at a boundary, and refusing beats
+        // mis-stamping.
+        return {
+          id: req.id,
+          ok: false,
+          error: "TURN_IN_FLIGHT",
+          message: `${ctx.currentTurnId ?? "a turn"} is in flight; a turn starts only at a turn boundary — wait for its turn_completed or turn_failed and retry`,
+        };
+      }
       const turnId = `turn_${ctx.state.turns + 1}`;
       ctx.state.turns += 1;
       ctx.currentTurnId = turnId;
@@ -1278,6 +1309,7 @@ export async function handleRequest(
           tool,
           args,
           default_action: decision.default_action,
+          paused_at: Date.now(),
           resolve: (dec) => {
             scheduled.clear();
             resolve({ id: req.id, ok: true, result: dec });
@@ -1461,19 +1493,86 @@ export async function handleRequest(
             "a rotation is in flight for this session; wait for session_rotated, then send the output to the successor as a normal turn",
         };
       }
+      const stdout = req.stdout ?? "";
+      const stderr = req.stderr ?? "";
+      const exit_code = typeof req.exit_code === "number" ? req.exit_code : null;
+      const extra = req.extra ?? "";
+
       let deferred = ctx.deferredCalls.get(req.call_id);
 
-      // If still pending (not yet resolved), auto-resolve as defer.
       if (!deferred) {
         const pending = ctx.pendingApprovals.get(req.call_id);
         if (pending) {
+          const message = composeOutputMessage({
+            tool: pending.tool,
+            call_id: req.call_id,
+            args: pending.args,
+            exit_code,
+            stdout,
+            stderr,
+            extra,
+          });
+          // The hook can carry the output only while the turn that paused the
+          // call is still running (a turn ends only after its tool calls
+          // settle, so an ended turn — an interrupt, say — means claude has
+          // given the hook up), while the approver process is still alive
+          // (HOOK_DELIVERY_WINDOW_MS; it self-times-out at 595 s, so the last
+          // seconds before that are refused early), and while the text fits
+          // what the deny channel was observed to carry intact
+          // (HOOK_DELIVERY_MAX_BYTES), and only while B itself is alive. Anything
+          // else is stale: the call is auto-deferred with a reason naming the cause
+          // (a dead B's is the plain one) and the new-turn path below decides.
+          let stale: string | null = null;
+          if (ctx.bExited) stale = "auto-deferred by provide_tool_output";
+          else if (!(ctx.turnInFlight && ctx.currentTurnId === pending.turn_id))
+            stale = "auto-deferred by provide_tool_output (the paused turn has ended)";
+          else if (Date.now() - pending.paused_at >= HOOK_DELIVERY_WINDOW_MS)
+            stale = "auto-deferred by provide_tool_output (approver hook timed out)";
+          else if (Buffer.byteLength(message) > HOOK_DELIVERY_MAX_BYTES)
+            stale = "auto-deferred by provide_tool_output (output too large for the hook)";
+          if (stale === null) {
+            // HOOK DELIVERY: B is paused inside this call's approval hook, so
+            // the human's output travels as the call's own result — the
+            // approver renders our deny message as the structured envelope
+            // and claude hands it to the model as the tool_result (a 64 KB
+            // message arrived intact on 2.1.283; the fixed "PreToolUse:<tool>
+            // hook error: " prefix is the one every structured deny reason
+            // wears, the DEFERRED sentence included). No turn is minted, so
+            // nothing can mis-stamp the running turn. Both audit events land
+            // on disk BEFORE the hook is released, so B's continuation can
+            // never precede them.
+            ctx.pendingApprovals.delete(req.call_id);
+            await emitEvent(ctx, {
+              kind: "tool_decision_resolved",
+              turn_id: pending.turn_id,
+              call_id: req.call_id,
+              action: "defer",
+              reason: "auto-deferred by provide_tool_output",
+              resolved_by: "user_mcp_auto",
+            } as Omit<Event, "seq" | "at">);
+            await emitEvent(ctx, {
+              kind: "tool_output_provided",
+              turn_id: pending.turn_id,
+              call_id: req.call_id,
+              stdout_len: stdout.length,
+              stderr_len: stderr.length,
+              exit_code,
+            } as Omit<Event, "seq" | "at">);
+            pending.resolve({ behavior: "deny", message });
+            return { id: req.id, ok: true, result: { turn_id: pending.turn_id, via: "hook" } };
+          }
+          // Stale: the hook cannot carry the output (see `stale` above). Release
+          // it with the DEFERRED sentence — harmless on a hook nobody waits on,
+          // and what B reads if the approver is still listening — record the
+          // call as deferred with the reason, and let the new-turn path below
+          // decide (SESSION_EXITED / TURN_IN_FLIGHT / a turn).
           ctx.pendingApprovals.delete(req.call_id);
           await emitEvent(ctx, {
             kind: "tool_decision_resolved",
             turn_id: pending.turn_id,
             call_id: req.call_id,
             action: "defer",
-            reason: "auto-deferred by provide_tool_output",
+            reason: stale,
             resolved_by: "user_mcp_auto",
           } as Omit<Event, "seq" | "at">);
           pending.resolve({
@@ -1484,9 +1583,9 @@ export async function handleRequest(
             call_id: req.call_id,
             turn_id: pending.turn_id,
             tool: pending.tool,
-            args: pending.args as Record<string, unknown>,
+            args: pending.args,
             deferred_at: new Date().toISOString(),
-            reason: "auto-deferred by provide_tool_output",
+            reason: stale,
           };
           ctx.deferredCalls.set(req.call_id, deferred);
         }
@@ -1504,8 +1603,9 @@ export async function handleRequest(
       if (ctx.bExited) {
         // Deliberate order: CALL_NOT_FOUND and the auto-defer block above
         // always run before this check, so an unknown call_id keeps its
-        // diagnostic and a still-pending call's decision record settles the
-        // same way on a dead session as on a live one — not an oversight.
+        // diagnostic and a still-pending call on a dead session is recorded
+        // as deferred before this refusal (a live one is answered through
+        // its hook, or recorded as stale, above) — not an oversight.
         //
         // Same phantom-emission hole as send_turn, same guard: this op pipes
         // its composed message to B exactly like send_turn does (turn_started
@@ -1519,19 +1619,29 @@ export async function handleRequest(
         };
       }
 
-      const stdout = req.stdout ?? "";
-      const stderr = req.stderr ?? "";
-      const exit_code = typeof req.exit_code === "number" ? req.exit_code : null;
-      const extra = req.extra ?? "";
+      if (ctx.turnInFlight) {
+        // The hook that paused this call was released earlier (defer,
+        // auto-defer, or timeout), so the output can only travel as a new
+        // user turn — and a new turn mid-turn mis-stamps the running one (see
+        // send_turn's gate). Refuse in the same posture; the deferred record
+        // stays for the retry at the boundary.
+        return {
+          id: req.id,
+          ok: false,
+          error: "TURN_IN_FLIGHT",
+          message: `${ctx.currentTurnId ?? "a turn"} is in flight; the output turn starts only at a turn boundary — wait for its turn_completed or turn_failed and retry provide_tool_output (the deferred record is kept)`,
+        };
+      }
 
-      const userMessage =
-        `[claw-drive] The deferred \`${deferred.tool}\` call (call_id: ${deferred.call_id}) was executed by the human.\n\n` +
-        `Original args: ${JSON.stringify(deferred.args)}\n\n` +
-        `Exit code: ${exit_code === null ? "(not provided)" : String(exit_code)}\n\n` +
-        `Stdout:\n${stdout || "(empty)"}\n\n` +
-        `Stderr:\n${stderr || "(empty)"}\n\n` +
-        `Notes: ${extra || "(none)"}\n\n` +
-        `Please continue from where you left off, using this as the tool's output.`;
+      const userMessage = composeOutputMessage({
+        tool: deferred.tool,
+        call_id: deferred.call_id,
+        args: deferred.args,
+        exit_code,
+        stdout,
+        stderr,
+        extra,
+      });
 
       // Compose the user turn and pipe it to B's stdin (same path as send_turn).
       const turnId = `turn_${ctx.state.turns + 1}`;
@@ -1577,7 +1687,7 @@ export async function handleRequest(
 
       ctx.deferredCalls.delete(req.call_id);
 
-      return { id: req.id, ok: true, result: { turn_id: turnId } };
+      return { id: req.id, ok: true, result: { turn_id: turnId, via: "turn" } };
     }
 
     default: {
@@ -1933,6 +2043,25 @@ export async function runRunner(sessionId: string): Promise<void> {
   });
   void stdoutDone;
 
+  // Queue the scenario brief as the first turn BEFORE the socket opens. The
+  // in-flight gate on send_turn refuses a second turn while one runs, so if a
+  // client that already knows this session's id (a rotation's successor, a
+  // fleet broadcast) connected first, its send would take turn_1 and the brief
+  // would be refused and dropped — the response below is not inspected.
+  // Sending the brief before any client can connect makes it every session's
+  // first turn by construction.
+  // B needs the socket only for its approval hook, which first fires on a
+  // tool call — at least one model round trip after this write — so the
+  // socket, opened just below, listens well ahead of any tool call.
+  const brief = (ctx.state as unknown as { scenario_brief?: string }).scenario_brief;
+  if (typeof brief === "string" && brief.length > 0) {
+    await handleRequest(ctx, {
+      id: "boot",
+      op: "send_turn",
+      message: brief,
+    });
+  }
+
   // Start the socket server BEFORE touching the ready marker. Callers poll for
   // the marker and will send_turn immediately on appearance — if the socket
   // isn't listening yet the first send race-fails with ECONNREFUSED. Fixed
@@ -1943,16 +2072,6 @@ export async function runRunner(sessionId: string): Promise<void> {
 
   // Touch ready marker — MCP's start_session polls for this
   await fs.writeFile(readyMarkerPath(sessionId), new Date().toISOString());
-
-  // If scenario_brief was supplied at session-start, queue it as the first turn
-  const brief = (ctx.state as unknown as { scenario_brief?: string }).scenario_brief;
-  if (typeof brief === "string" && brief.length > 0) {
-    await handleRequest(ctx, {
-      id: "boot",
-      op: "send_turn",
-      message: brief,
-    });
-  }
 
   await new Promise<void>((resolve) => {
     process.on("SIGTERM", makeSignalHandler(ctx, "SIGTERM"));

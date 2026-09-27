@@ -122,13 +122,13 @@ async function appendAssistantHandover(turnId: string): Promise<void> {
 }
 
 /** Complete the next handover attempt: wait for its waiter, optionally plant
- * the handover block, then resolve the turn — observed-output all the way. */
+ * the handover block, then resolve the turn through the real bookkeeping —
+ * latch cleared, waiter deleted and fired — the same as B's real
+ * turn_completed, observed-output all the way. */
 async function completeHandoverTurn(ctx: RunnerContext, turnId: string, withHandover: boolean): Promise<void> {
   await settleUntil(() => ctx.turnWaiters.has(turnId));
   if (withHandover) await appendAssistantHandover(turnId);
-  const waiter = ctx.turnWaiters.get(turnId)!;
-  ctx.turnWaiters.delete(turnId);
-  waiter("completed");
+  await afterEventBookkeeping(ctx, turnCompleted(turnId));
 }
 
 async function makeCtx(fake: FakeB, statePatch?: Partial<SessionState>): Promise<RunnerContext> {
@@ -559,7 +559,19 @@ describe("policy-epoch guard on the latch", () => {
     // attempt test pins that this machinery latches WITHOUT an update; this
     // pins that a stale epoch suppresses it.
     rmSync(sessionDir(SID), { recursive: true, force: true });
-    await completeHandoverTurn(ctx, "turn_1", false);
+    // Not the shared completeHandoverTurn helper: the real bookkeeping fires
+    // turn_1's waiter before its first await, so the crash this test means to
+    // land at attempt 2's OWN turn_started emit inside performRotation's
+    // promise chain would still happen — but the bookkeeping would then throw
+    // ENOENT from its writeState (state.json's directory is already gone, and
+    // lastContextTokens is set from the boundary calls above), failing this
+    // test's own await. Fallback mirrors the bookkeeping's order instead:
+    // latch cleared first, then the waiter.
+    await settleUntil(() => ctx.turnWaiters.has("turn_1"));
+    ctx.turnInFlight = false;
+    const waiter = ctx.turnWaiters.get("turn_1")!;
+    ctx.turnWaiters.delete("turn_1");
+    waiter("completed");
     await settleUntil(() => !ctx.rotating);
     await settle();
     expect(ctx.autoRotateLatched).toBe(false);

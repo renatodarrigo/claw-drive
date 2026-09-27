@@ -236,6 +236,7 @@ the `init` event lists each server with `{"name":"...","status":"connected"|"pen
 - **Permission mode**: `--permission-mode=bypassPermissions` works as expected, no prompts.
 - **`--mcp-config` format**: standard `{ "mcpServers": {...} }` confirmed.
 - **Multiple assistant events per turn**: confirmed (spec assumed one).
+- **Multi-turn input after the first turn** (observed 2026-09-22 on claude 2.1.280): a second `user` line written to stdin while a turn is running is merged into that turn — delivered to the model at its next call and answered inside the same `result`; nothing is queued into a new prompt cycle and nothing is dropped. See "A second `user` line mid-turn" below.
 
 ### Still open
 
@@ -247,9 +248,6 @@ the `init` event lists each server with `{"name":"...","status":"connected"|"pen
   but not confirmed.
 - **Error result shape**: `subtype` of error cases (e.g. `error_max_turns`,
   `error_api`, etc.) not observed. Should probe with intentional failures.
-- **Multi-turn input after first turn**: how to send a second user message in
-  `--max-turns > 1` mode was not probed (only tool results mid-turn were seen).
-  May require a second line on stdin or may not be possible in pipe mode.
 
 ### Session id in the child environment (observed 2026-09-02 on claude 2.1.258; `/clear` and `--resume` probed 2026-09-09 on 2.1.261)
 
@@ -272,6 +270,24 @@ changes), so after a `/clear` the driver's MCP tools and its Bash-spawned
 is the documented way to get a fresh one). `claude -p` sessions export
 their own id, so a driven session that runs claw-drive itself acts as its
 own fleet. Observed behavior, not a guarantee.
+
+### A second `user` line mid-turn (observed 2026-09-22 on claude 2.1.280)
+
+Probe: a driven session ran a 25-second loop-shaped Bash wait
+(`i=0; until [ "$i" -ge 25 ]; do sleep 1; i=$((i+1)); done`) and a second
+stream-json `user` line was written to stdin five seconds in.
+
+- The second message was **merged into the running turn**: the model saw it at
+  its next call, after the tool result, and answered both messages in one
+  assistant text (`first done` / `second done`) followed by a single `result`.
+  No second `result` arrived within a further 140 s; nothing was dropped.
+- This mirrors interactive Claude Code, where a message typed mid-turn is
+  delivered at the next model call. A driver that writes to stdin mid-turn
+  therefore changes the running turn's answer; claw-drive refuses `send_turn`
+  while a turn is in flight (`TURN_IN_FLIGHT`) instead of relying on any
+  queueing.
+- 2.1.280's Bash tool blocks a standalone `sleep N` ("Blocked: standalone
+  sleep …"); loop-shaped waits run.
 
 ## Full flag list (relevant subset)
 
@@ -440,6 +456,19 @@ Both paths populate `permission_denials` in the result event.
 PreToolUse.** The correct field is `hookSpecificOutput.permissionDecision` with
 values `allow`, `deny`, `ask`, or `defer`. Exit code 2 alone (without JSON) is
 the simplest block path.
+
+### Deny-reason size and prefix (observed 2026-09-26 on claude 2.1.283)
+
+Through claw-drive's shipped path — runner socket → `bin/claw-drive-approver`
+(structured `permissionDecision: "deny"` envelope, exit 2) → claude — a
+`permissionDecisionReason` of 8 KB and of 64 KB reached the model
+byte-for-byte: the `tool_result` content was the fixed prefix
+`PreToolUse:Bash hook error: ` followed by the reason (quotes, backslashes,
+tabs, non-ASCII, braces and backticks intact across 1170 lines). 2.1.283 adds
+that prefix to a structured deny reason; the model reads past it. Above 64 KB
+is unprobed (the probe's CLI argument limit). claw-drive's
+`provide_tool_output` relies on this channel to deliver a human-run command's
+output to a call still paused in the hook.
 
 ### Hook event stream behavior
 

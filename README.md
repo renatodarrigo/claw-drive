@@ -202,7 +202,7 @@ Several drivers can use claw-drive on one machine at once — two Claude Code se
 - **The view:** `status`, `sessions`, `pending`, `watch --all`, `prune`, `send --all`, the approve/reject/defer and provide-output scans, and the MCP `list_sessions` / `resolve_tool_call` scans show the acting fleet's sessions **plus untagged ones**. Other drivers' sessions are hidden; the human tables say how many on stderr, and `status --json` / `list_sessions` report `hidden_in_other_fleets`. A shell with no fleet identity of its own — a plain terminal, a cron job — sees only untagged sessions until it passes `--fleet <tag>` or `--all-fleets`, or sets `CLAW_DRIVE_FLEET`.
 - **Widening:** `--all-fleets` (CLI) / `all_fleets: true` (MCP) shows every fleet on the machine, and the `status` / `sessions` tables gain a FLEET column. `--fleet <tag>` acts as another fleet — how a fresh driver session picks up a fleet an earlier one started. (Machine outputs — `pending` and `watch --all` lines, `status --json`, `list_sessions` rows — carry `fleet` on any tagged session, widened or not.)
 - **Not scoped:** an explicit `sess_…` id or an alias always resolves, whatever fleet holds it. Aliases stay unique across the whole machine.
-- **Broadcast:** `claw-drive send --all "<message>"` sends one user turn to every live session in the view and prints one JSONL line per session (`session_id`, `alias`/`fleet` when set, `ok`, then `turn_id` or the refusal). Exit 0 when every send succeeded, 1 when any failed, 2 when the view holds no live session. A stderr line counts the live sessions the view hid in other fleets, whether or not anything was sent.
+- **Broadcast:** `claw-drive send --all "<message>"` sends one user turn to every live session in the view and prints one JSONL line per session (`session_id`, `alias`/`fleet` when set, `ok`, then `turn_id` or the refusal — a member mid-turn reports `TURN_IN_FLIGHT` on its own line). Exit 0 when every send succeeded, 1 when any failed, 2 when the view holds no live session. A stderr line counts the live sessions the view hid in other fleets, whether or not anything was sent.
 
 ```bash
 export CLAW_DRIVE_FLEET=review-crew     # every command below acts as this fleet
@@ -306,7 +306,9 @@ Some commands can't run inside B (sudo, interactive logins, anything needing aut
 ]
 ```
 
-When B attempts a matching call, the approver hook denies it with a `DEFERRED:` message, a `tool_decision_required` event surfaces to the monitor, and the human runs the command locally. Once they have the output, call `claw-drive provide-output <call_id> --stdout "<output>" --exit 0` (or the `provide_tool_output` MCP tool). The runner formats the output as a user turn to B and B continues.
+When B attempts a matching call, the approver hook pauses it and a `tool_decision_required` event (`default_action: "defer"`) surfaces to the monitor; the human runs the command locally. Once they have the output, call `claw-drive provide-output <call_id> --stdout "<output>" --exit 0` (or the `provide_tool_output` MCP tool). While the call is still paused — its turn still running, its hook not timed out (about 10 minutes from the pause) and the composed output within 64 KiB — the output reaches B through the hook as that call's own result inside the same turn (`via: "hook"`), and B continues.
+
+Otherwise the output takes the turn path: it goes in as a new user turn at the next turn boundary (`via: "turn"`; `TURN_IN_FLIGHT` while B is still finishing its turn — retry when it completes). That covers a call you released earlier with `claw-drive defer <call_id>`, which sends B a `DEFERRED:` denial, and a paused call that has gone stale (its turn has ended, its hook has timed out, or the composed output exceeds 64 KiB). It is also the fallback when nobody answers in time: the hook releases B with a denial — the rule's `DEFERRED` default once `decision_timeout_seconds` passes, or the approver's own fail-secure deny after about 10 minutes, whichever comes first. B continues without the command's output — typically it reports the gate and ends its turn — and the output then goes in as the next turn.
 
 ### Review gates (B pauses for human OK mid-task)
 
@@ -320,7 +322,7 @@ Use the `CLAW-GATE:` convention — baked into the default policy template:
 
 In the scenario brief, tell B: *"Before each risky step, run `echo 'CLAW-GATE: <your question>'` with the Bash tool and wait for my response."*
 
-B's echo fires the hook → policy defers → monitor alerts A → human answers → A calls `provide_tool_output` with the answer as stdout → B reads it and proceeds. No new primitive; same flow as sudo.
+B's echo fires the hook → the defer rule pauses the call → monitor alerts A → human answers → A calls `provide_tool_output` with the answer as stdout → B reads the answer as the echo's own result and proceeds in the same turn (`via: "hook"`). No new primitive; same flow as sudo. If nobody answers in time, the hook releases B with a denial (the `DEFERRED` default once `decision_timeout_seconds` passes, or the approver's own fail-secure deny after about 10 minutes, whichever comes first). B continues without the command's output — typically it reports the gate and ends its turn — and the output then goes in as the next turn; so does an answer whose composed output exceeds 64 KiB.
 
 ## MCP tools
 
@@ -328,14 +330,14 @@ B's echo fires the hook → policy defers → monitor alerts A → human answers
 |---|---|
 | `start_session` | Start a driven session; returns `{session_id, watch_command, notification_contract, fleet?}`. `watch_command` is a ready-made Monitor payload; `notification_contract` describes the session's sentinel vocabulary, watch flags, and idle threshold so drivers can stay forward-compatible. Optional `wrapper: false` opts out of injecting the sentinel-token contract into B's system prompt. Optional `fleet` tags the session (default: the server's acting fleet); the response echoes the tag stamped. |
 | `stop_session` | Reap B; keep session dir for inspection |
-| `send_turn` | Non-blocking; returns `turn_id` |
+| `send_turn` | Non-blocking; returns `turn_id`. Refused with `TURN_IN_FLIGHT` while a turn is running — retry at the turn boundary |
 | `poll_turn` | Fetch events + status for a turn (optional long-poll) |
 | `poll_session` | Tail all events for a session |
 | `list_sessions` | List live + orphaned sessions in the fleet view; optional `fleet` / `all_fleets`. Rows carry `fleet` when set; `hidden_in_other_fleets` counts what the view hid. |
 | `resolve_tool_call` | Approve/reject a paused tool call found in the fleet view (`fleet` / `all_fleets` widen the scan); optionally remember as policy, preview the derived rule, or append an explicit one |
 | `update_policy` | Replace a session's policy |
-| `interrupt_turn` | SIGINT B to cancel the current turn |
-| `provide_tool_output` | Inject human-run command output back into B's conversation; auto-resolves pending defer if needed |
+| `interrupt_turn` | SIGINT B to cancel the current turn; the turn ends with a terminal event, normally `turn_failed`, and a send before that is refused with `TURN_IN_FLIGHT` |
+| `provide_tool_output` | Feed a human-run command's output back to B: through the paused hook as the call's own result while the call is still pending, its turn still running, its hook not timed out and its composed output within 64 KiB (`via: "hook"`), or as a new turn at the next boundary otherwise — a call deferred earlier, or a paused call whose turn has ended, whose hook timed out, or whose composed output exceeds 64 KiB (`via: "turn"`; refused with `TURN_IN_FLIGHT` mid-turn) |
 | `rotate_session` | Rotate a session at its context threshold: B writes a structured handover, a successor spawns in the same cwd/policy with the handover embedded in its first turn, the alias transfers, and the predecessor stops. LONG-RUNNING (up to ~20 min worst case). |
 | `recover_session` | Continue a DEAD session from its `crash-handover.md` (or a freshly distilled one) by spawning a successor with the lineage stamped and the alias re-claimed if free. |
 
@@ -353,19 +355,19 @@ B's echo fires the hook → policy defers → monitor alerts A → human answers
 | `approve <call_id> [--reason R] [--remember] [--fleet TAG] [--all-fleets]` | Approve a paused call found in the fleet view. `--remember` derives a rule and appends to `auto_approve`. |
 | `reject <call_id> [--reason R] [--remember] [--fleet TAG] [--all-fleets]` | Reject a paused call found in the fleet view. `--remember` appends to `auto_reject`. |
 | `defer <call_id> [--reason R] [--remember] [--fleet TAG] [--all-fleets]` | Defer a paused call found in the fleet view to the human. `--remember` appends to `auto_defer`. |
-| `send <session> "<msg>"` | Send a user turn. A bare `--` ends flag parsing for a message that is literally `--all`, `--fleet`, or `--all-fleets`. |
-| `send --all "<msg>" [--fleet TAG] [--all-fleets]` | Broadcast a user turn to every live session in the fleet view: one JSONL line per session with `turn_id` or the refusal; exit 0 all sent, 1 any failed, 2 empty view; a stderr line counts live sessions hidden in other fleets. See [Fleets](#fleets-one-drivers-sessions). |
+| `send <session> "<msg>"` | Send a user turn at a turn boundary (a send while a turn runs is refused with `TURN_IN_FLIGHT`). A bare `--` ends flag parsing for a message that is literally `--all`, `--fleet`, or `--all-fleets`. |
+| `send --all "<msg>" [--fleet TAG] [--all-fleets]` | Broadcast a user turn to every live session in the fleet view: one JSONL line per session with `turn_id` or the refusal (a member mid-turn reports `TURN_IN_FLIGHT` on its own line); exit 0 all sent, 1 any failed, 2 empty view; a stderr line counts live sessions hidden in other fleets. See [Fleets](#fleets-one-drivers-sessions). |
 | `start --cwd PATH [--policy FILE] [--brief FILE] [--name ALIAS] [--no-wrapper] [--fleet TAG]` | Start a session. `--name` gives it a reusable alias (see [Session aliases](#session-aliases-start---name)); `--no-wrapper` starts B without the sentinel-token wrapper (pair with `watch --no-token-filter`); `--fleet` tags it for driver scoping (see [Fleets](#fleets-one-drivers-sessions)). |
 | `stop <session>` | Reap B |
 | `rotate <session>` | Rotate a session at its context threshold. See [Context rotation & crash recovery](#context-rotation--crash-recovery). |
 | `recover <session_id> [--no-start] [--model M]` | Continue a dead session from its crash-handover, distilling one from `events.jsonl` if needed. Canonical id only — aliases resolve among live sessions only. |
-| `interrupt <session> <turn>` | SIGINT B |
+| `interrupt <session> <turn>` | SIGINT B; the turn ends with a terminal event, normally `turn_failed` |
 | `policy <session> [--set FILE] [--show]` | View/replace a session's policy |
 | `policy-test '<command>' [flags]` | Diagnose a tool call against a policy. Three output formats (default human, `--explain`, `--json`); multi-tool via `--tool TOOL --arg KEY=VALUE`; `--policy starter\|permissive\|bypass\|<file>`; `--exit-on reject\|defer\|approve\|escalate` for CI gating. |
 | `prune [--older-than 24h] [--force] [--fleet TAG] [--all-fleets]` | Remove dead sessions in the fleet view older than cutoff. `--force` also removes a dead session whose crash-handover hasn't been consumed yet. A run with no fleet identity — cron, a plain shell — prunes untagged sessions only, so a machine-wide sweep needs `--all-fleets`. |
 | `watch <session> [--since N \| --replay] [--only KIND[,KIND]... \| --decision-only] [--no-token-filter] [--idle-after SECONDS] [--follow-lineage] [--no-suspected-needs-input]` | Stream noteworthy events as JSONL. Used by Monitor flows. Sentinel filter is on by default (`turn_completed` surfaces only when the trailing `[TOKEN]` is present). `--no-token-filter` disables the sentinel filter entirely. `--decision-only` and `--only` are kind-level subset filters that compose with the sentinel filter. `--idle-after SECONDS` (default `600`, `0` disables) emits a synthetic `idle` event when no surfaced event has been seen for that long. The silent-miss backstop surfaces a no-token `turn_completed` whose final line ends in `?` with an additive `suspected_needs_input` marker; `--no-suspected-needs-input` disables it. `--follow-lineage` keeps the stream alive across the lineage — on rotation or recovery the watcher hops to the successor, until a member stops without one. |
 | `watch --all [same flags except --follow-lineage] [--fleet TAG] [--all-fleets]` | Merge every live session in the fleet view into one JSONL stream, each line tagged with an additive `session_id` (plus `alias`, `generation`, `fleet` when set). Dynamic membership (sessions spawned later join via a periodic rescan); runs until SIGINT. All single-session filters apply per session. `status` (no arg) is the point-in-time fleet-snapshot companion. |
-| `provide-output <call_id> [--stdout S] [--stderr S] [--exit N] [--extra S] [--from-file PATH] [--fleet TAG] [--all-fleets]` | Relay human-run command output to a deferred call found in the fleet view |
+| `provide-output <call_id> [--stdout S] [--stderr S] [--exit N] [--extra S] [--from-file PATH] [--fleet TAG] [--all-fleets]` | Relay human-run command output to a deferred call found in the fleet view — through the paused hook if the call is still pending in a running turn and its hook has not timed out (composed output up to 64 KiB), as a new turn at the boundary otherwise |
 
 ### Decision context (rationale + diff)
 

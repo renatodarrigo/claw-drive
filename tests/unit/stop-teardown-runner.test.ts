@@ -4,9 +4,9 @@ import * as path from "node:path";
 import * as os from "node:os";
 import { EventEmitter } from "node:events";
 import type { ChildProcess } from "node:child_process";
-import { handleRequest, makeSignalHandler, observeBExit, teardownSession, type RunnerContext } from "../../src/runner/runner.js";
+import { handleRequest, makeSignalHandler, observeBExit, teardownSession, afterEventBookkeeping, type RunnerContext } from "../../src/runner/runner.js";
 import { readState, type SessionState } from "../../src/lib/state.js";
-import { readEventsSince } from "../../src/lib/events.js";
+import { readEventsSince, type Event } from "../../src/lib/events.js";
 import { eventsPath, statePath } from "../../src/lib/paths.js";
 import { waitForReady } from "../../src/lib/spawn-session.js";
 import { newSessionIdOf } from "../helpers/control-response.js";
@@ -421,8 +421,17 @@ describe("stop_session mid-rotation (session-scoped stop)", () => {
     await handleRequest(ctx, { id: "s1", op: "stop_session" });
     await settle();
     // Attempt 1 FAILS (no handover text) → the loop re-enters and must
-    // abort at the top on ctx.stopping, without a second send_turn.
-    ctx.turnWaiters.get("turn_1")!("failed");
+    // abort at the top on ctx.stopping, without a second send_turn. Resolved
+    // through the real bookkeeping (latch cleared, waiter fired) — a
+    // regression of the loop-top stopping check would otherwise be masked by
+    // TURN_IN_FLIGHT refusing attempt 2 for the wrong reason.
+    await afterEventBookkeeping(ctx, {
+      seq: 0,
+      at: new Date().toISOString(),
+      kind: "turn_failed",
+      turn_id: "turn_1",
+      error: "interrupted",
+    } as Event);
     const resp = await rotP;
     expect(resp).toMatchObject({ ok: false, error: "ROTATION_FAILED" });
     const evs = (await readEventsSince(eventsPath(SID), 0)).events;
