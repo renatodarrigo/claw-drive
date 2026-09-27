@@ -178,6 +178,18 @@ else
   fail "Edit decision never fired (no pending Edit within 75s)"
 fi
 
+# The rejection lands inside B's first turn, which is still running: a send
+# before that turn's terminal event is refused with TURN_IN_FLIGHT. Wait for
+# the boundary, rejecting any retry B makes in the meantime so the turn ends.
+info "waiting for the Edit turn to end (up to 75s)"
+DEADLINE=$(( $(date +%s) + 75 ))
+while [[ $(date +%s) -lt $DEADLINE ]]; do
+  "$BIN" tail "$SESS_CTX" 2>/dev/null | grep -qE '"kind":"turn_(completed|failed)"' && break
+  RETRY_ID=$("$BIN" pending "$SESS_CTX" 2>/dev/null | grep -oE '"call_id":"[^"]+"' | head -1 | sed 's/"call_id":"//; s/"//' || true)
+  [[ -n "$RETRY_ID" ]] && "$BIN" reject "$RETRY_ID" --reason "e2e" >/dev/null 2>&1 || true
+  sleep 2
+done
+
 # --- Bash: expect a rationale but NO diff (non-file tool) ---
 info "sending a Bash turn that should escalate"
 "$BIN" send "$SESS_CTX" "Run the bash command: echo context-check" >/dev/null
