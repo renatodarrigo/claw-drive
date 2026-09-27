@@ -107,6 +107,7 @@ async function makeCtx(fake: FakeB): Promise<RunnerContext> {
     crashTeardownEngaged: false,
     tearingDown: false,
     lastInterruptAt: null,
+    interruptedTurnId: null,
     rotationSettled: null,
     rotationSendId: null,
     autoRotateLatched: false,

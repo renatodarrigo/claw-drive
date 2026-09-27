@@ -107,6 +107,7 @@ async function makeCtx(fake: FakeB, overrides?: Partial<RunnerContext>): Promise
     crashTeardownEngaged: false,
     tearingDown: false,
     lastInterruptAt: null,
+    interruptedTurnId: null,
     rotationSettled: null,
     rotationSendId: null,
     autoRotateLatched: false,
@@ -773,15 +774,23 @@ describe("provide_tool_output on a pending call delivers through the hook", () =
     expect(fake.writes).toEqual([]);
   });
 
-  it("an interrupt stamp older than the pause leaves the hook path open", async () => {
-    // Only a completed turn clears the stamp: a turn that failed earlier keeps
-    // it, and a call paused in a later turn must still be answered through
-    // its hook.
+  it("an interrupt that hit an earlier turn leaves a later turn's paused call on the hook path", async () => {
+    // turn_2 is interrupted and fails; only a completed turn clears the
+    // stamp, so it survives into turn_3 — whose paused call must still be
+    // answered through its hook.
     const fake = makeFakeB();
-    const ctx = await pendingCtx(fake);
+    const ctx = await makeCtx(fake, { turnInFlight: true, currentTurnId: "turn_2" });
+    ctx.state.turns = 2;
     await interruptTurn(ctx);
+    await afterEventBookkeeping(
+      ctx,
+      { seq: 9, at: new Date().toISOString(), kind: "turn_failed", turn_id: "turn_2", error: "error_during_execution" } as Event
+    );
+    expect(ctx.lastInterruptAt).not.toBeNull();
+    const started = await handleRequest(ctx, { id: "s3", op: "send_turn", message: "carry on" });
+    expect(started).toEqual({ id: "s3", ok: true, result: { turn_id: "turn_3" } });
     const decisions: Decision[] = [];
-    seedPending(ctx, "toolu_7", (d) => decisions.push(d), ctx.lastInterruptAt! + 1);
+    seedPending(ctx, "toolu_7", (d) => decisions.push(d));
     const resp = await handleRequest(ctx, { id: "p21", op: "provide_tool_output", call_id: "toolu_7", stdout: "x" });
     expect(resp).toEqual({ id: "p21", ok: true, result: { turn_id: "turn_3", via: "hook" } });
     expect(decisions).toHaveLength(1);
@@ -789,11 +798,14 @@ describe("provide_tool_output on a pending call delivers through the hook", () =
     expect(ctx.deferredCalls.has("toolu_7")).toBe(false);
   });
 
-  it("an interrupt in the same millisecond as the pause counts as after it", async () => {
+  it("a call that registers after the interrupt, in the interrupted turn, is stale too", async () => {
+    // The hook claude launched before the SIGINT can reach approve_tool after
+    // it: the registration lands after the stamp, but the call belongs to
+    // the turn claude is abandoning.
     const fake = makeFakeB();
     const ctx = await pendingCtx(fake);
     await interruptTurn(ctx);
-    seedPending(ctx, "toolu_7", () => {}, ctx.lastInterruptAt!);
+    seedPending(ctx, "toolu_7", () => {}, ctx.lastInterruptAt! + 1);
     const resp = await handleRequest(ctx, { id: "p22", op: "provide_tool_output", call_id: "toolu_7", stdout: "x" });
     expect(resp).toMatchObject({ ok: false, error: "TURN_IN_FLIGHT" });
     expect(ctx.deferredCalls.get("toolu_7")).toMatchObject({ reason: "auto-deferred by provide_tool_output (the paused turn was interrupted)" });
@@ -819,17 +831,29 @@ describe("provide_tool_output on a pending call delivers through the hook", () =
     expect(ctx.deferredCalls.get("toolu_7")).toMatchObject({ reason: "auto-deferred by provide_tool_output (the paused turn was interrupted)" });
   });
 
-  it("precedence: with the latch clear an interrupted entry is reported as turn-ended, not as interrupted", async () => {
-    // The aborted turn's terminal event has landed (latch clear); the stamp is
-    // still set. The turn-ended reason wins and the output goes in as a turn.
+  it("precedence: once the interrupted turn's terminal event lands, its call is reported as turn-ended, not as interrupted", async () => {
     const fake = makeFakeB();
-    const ctx = await makeCtx(fake);
+    const ctx = await pendingCtx(fake);
     seedPending(ctx, "toolu_7", () => {}, Date.now() - 50);
     await interruptTurn(ctx);
+    await afterEventBookkeeping(
+      ctx,
+      { seq: 9, at: new Date().toISOString(), kind: "turn_failed", turn_id: "turn_3", error: "error_during_execution" } as Event
+    );
     const resp = await handleRequest(ctx, { id: "p25", op: "provide_tool_output", call_id: "toolu_7", stdout: "x" });
-    expect(resp).toEqual({ id: "p25", ok: true, result: { turn_id: "turn_1", via: "turn" } });
+    expect(resp).toEqual({ id: "p25", ok: true, result: { turn_id: "turn_4", via: "turn" } });
     const { events } = await readEventsSince(eventsPath(SID), 0);
     expect(events[0]).toMatchObject({ kind: "tool_decision_resolved", reason: "auto-deferred by provide_tool_output (the paused turn has ended)" });
+  });
+
+  it("precedence: a dead B beats the interrupted reason", async () => {
+    const fake = makeFakeB();
+    const ctx = await pendingCtx(fake, { bExited: true });
+    seedPending(ctx, "toolu_7", () => {}, Date.now() - 50);
+    await interruptTurn(ctx);
+    const resp = await handleRequest(ctx, { id: "p26", op: "provide_tool_output", call_id: "toolu_7", stdout: "x" });
+    expect(resp).toMatchObject({ ok: false, error: "SESSION_EXITED" });
+    expect(ctx.deferredCalls.get("toolu_7")).toMatchObject({ reason: "auto-deferred by provide_tool_output" });
   });
 
   it("a dead B takes the auto-defer path: the call is recorded as deferred and the op refuses SESSION_EXITED", async () => {

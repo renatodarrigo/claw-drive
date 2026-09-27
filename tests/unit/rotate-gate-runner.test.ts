@@ -41,6 +41,7 @@ function fakeCtx(overrides: Partial<RunnerContext> & { policy?: SessionState["po
     crashTeardownEngaged: false,
     tearingDown: false,
     lastInterruptAt: null,
+    interruptedTurnId: null,
     rotationSettled: null,
     rotationSendId: null,
     autoRotateLatched: false,

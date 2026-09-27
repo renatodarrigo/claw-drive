@@ -173,6 +173,7 @@ async function makeCtx(fake: FakeB, statePatch?: Partial<SessionState>): Promise
     crashTeardownEngaged: false,
     tearingDown: false,
     lastInterruptAt: null,
+    interruptedTurnId: null,
     rotationSettled: null,
     rotationSendId: null,
     autoRotateLatched: false,
