@@ -466,9 +466,12 @@ byte-for-byte: the `tool_result` content was the fixed prefix
 `PreToolUse:Bash hook error: ` followed by the reason (quotes, backslashes,
 tabs, non-ASCII, braces and backticks intact across 1170 lines). 2.1.283 adds
 that prefix to a structured deny reason; the model reads past it. Above 64 KB
-is unprobed (the probe's CLI argument limit). claw-drive's
-`provide_tool_output` relies on this channel to deliver a human-run command's
-output to a call still paused in the hook.
+is unprobed (the probe's CLI argument limit). The approver hands the reason to
+`jq` on stdin — no command-line size cap applies on claw-drive's side — and
+emits a fail-secure deny envelope (exit 2) on any failure of its own, since a
+hook that exits without a decision does not block the tool (see "What happens
+on timeout" above). claw-drive's `provide_tool_output` relies on this channel
+to deliver a human-run command's output to a call still paused in the hook.
 
 ### Hook event stream behavior
 
