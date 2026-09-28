@@ -29,7 +29,9 @@ set -euo pipefail
 # Every decision leaves through emit_envelope. $1 is allow|deny; the reason is
 # read from stdin as one raw string (-R -s), so only memory bounds its size.
 # The CALLER sets `emitted` afterwards: the function runs as the tail of a
-# pipeline, i.e. in a subshell, where an assignment would not survive.
+# pipeline, i.e. in a subshell, where an assignment would not survive. A
+# failed write exits through the trap (`|| exit 2`), so the fallback goes out
+# even where `set -e` is off.
 emitted=0
 emit_envelope() {
   jq -Rsc --arg d "$1" \
@@ -38,7 +40,7 @@ emit_envelope() {
 
 # Deny with a fixed reason and exit 2.
 deny() {
-  printf '%s' "$1" | emit_envelope deny
+  printf '%s' "$1" | emit_envelope deny || exit 2
   emitted=1
   exit 2
 }
@@ -129,21 +131,19 @@ if [[ "$ok" != "true" ]]; then
 fi
 
 behavior=$(jq -r '.result.behavior // "deny"' <<<"$resp")
-# Command substitution strips ALL trailing newlines unconditionally, and a
-# plain `jq -r` here appends one of its own after the decoded value — so a
-# reason that itself legitimately ends in newline(s) would lose one. Append a
-# sentinel byte (SOH, never expected in a human-readable reason) with `-j`
-# (which adds none of its own), then strip just that byte back off below —
-# this is what keeps the captured reason byte-for-byte intact.
+# `$(...)` strips every trailing newline. `jq -j` prints the reason plus one
+# sentinel byte and no newline of its own; the next line removes exactly that
+# byte, so a reason's trailing newlines survive. (A NUL byte cannot survive a
+# bash variable.)
 reason=$(jq -j '(.result.message // "") + "\u0001"' <<<"$resp")
 reason="${reason%$'\1'}"
 
 if [[ "$behavior" == "allow" ]]; then
-  printf '%s' "${reason:-allowed}" | emit_envelope allow
+  printf '%s' "${reason:-allowed}" | emit_envelope allow || exit 2
   emitted=1
   exit 0
 fi
 
-printf '%s' "${reason:-denied}" | emit_envelope deny
+printf '%s' "${reason:-denied}" | emit_envelope deny || exit 2
 emitted=1
 exit 2
