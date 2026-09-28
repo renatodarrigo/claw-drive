@@ -233,16 +233,16 @@ Approve or reject a paused tool call by `call_id`.
 
 #### `provide_tool_output`
 
-Provide the output of a deferred command run manually by the human. If the
-call is still paused in the approval hook (paused for a decision, not yet
-resolved), the turn that paused it is still running, the call has been paused
-for less than 590 s (the runner's hook window, 5 s inside the approver hook's
-own 595 s timeout), and the composed output fits in 64 KiB, the output is
-released through the hook as that call's own result inside that turn and the
-pending approval auto-resolves as `"defer"`. Otherwise — the call was deferred
-earlier, or the paused call is stale (its turn has ended, its hook window has
-passed, or the composed output is larger than 64 KiB) — the output is injected
-as a new user turn at the next turn boundary.
+Provide the output of a deferred command run manually by the human. If the call
+is still paused in the approval hook (paused for a decision, not yet resolved),
+the turn that paused it is still running, the call has been paused for less
+than 590 s (the runner's hook window, 5 s inside the approver hook's own 595 s
+timeout), and the composed output fits in 64 KiB, the output is released
+through the hook as that call's own result inside that turn and the pending
+approval auto-resolves as `"defer"`. Otherwise — the call was deferred
+earlier, or the paused call is stale (its turn has ended or was interrupted,
+its hook window has passed, or the composed output is larger than 64 KiB) —
+the output is injected as a new user turn at the next turn boundary.
 
 **Required inputs:** `session_id: string`, `call_id: string`
 

@@ -17,6 +17,9 @@ import { eventsPath } from "../../src/lib/paths.js";
 import { readFileSync } from "node:fs";
 import { composeOutputMessage } from "../../src/runner/output-message.js";
 import { HOOK_DELIVERY_MAX_BYTES, HOOK_DELIVERY_WINDOW_MS } from "../../src/lib/spawn-session.js";
+import type { ControlResponse } from "../../src/lib/socket-protocol.js";
+import type { PolicyObject } from "../../src/lib/policy.js";
+import { TIMEOUT_DEFER_MESSAGE } from "../../src/runner/decision-timeout.js";
 
 // v1.4.1 ledger finding: send_turn (and provide_tool_output, which pipes a
 // turn to B the same way) never checked whether B had already exited before
@@ -107,6 +110,7 @@ async function makeCtx(fake: FakeB, overrides?: Partial<RunnerContext>): Promise
     crashTeardownEngaged: false,
     tearingDown: false,
     lastInterruptAt: null,
+    interruptedTurnId: null,
     rotationSettled: null,
     rotationSendId: null,
     autoRotateLatched: false,
@@ -148,6 +152,64 @@ function seedDeferred(ctx: RunnerContext, callId: string): void {
     deferred_at: new Date().toISOString(),
     reason: "human will run this manually",
   });
+}
+
+/**
+ * Register a REAL pending approval through the approve_tool op — the request
+ * bin/claw-drive-approver sends — under a policy that escalates the call
+ * (set ctx.state.policy first). approve_tool awaits the escalation context
+ * and the tool_decision_required append before it registers the entry, so
+ * the helper waits for the entry with setImmediate polling (keep setImmediate
+ * real under fake timers). Returns the still-pending approve_tool promise
+ * inside an object — an async function that returned the bare promise would
+ * adopt it and await its settlement, a deadlock here. It settles when the
+ * hook is released, with the decision the approver renders.
+ */
+async function registerPending(
+  ctx: RunnerContext,
+  callId: string,
+  command: string
+): Promise<{ approvePromise: Promise<ControlResponse> }> {
+  let settled = false;
+  const approvePromise = handleRequest(ctx, {
+    id: `h_${callId}`,
+    op: "approve_tool",
+    pretooluse: {
+      session_id: "claude-sess",
+      cwd: ctx.state.cwd,
+      permission_mode: "default",
+      hook_event_name: "PreToolUse",
+      tool_name: "Bash",
+      tool_input: { command },
+      tool_use_id: callId,
+    },
+  }).finally(() => {
+    settled = true;
+  });
+  // Absorb a rejection until the loop below re-awaits it: without a handler
+  // Node reports it as unhandled one tick before the loop can rethrow it.
+  void approvePromise.catch(() => {});
+  while (!ctx.pendingApprovals.has(callId)) {
+    if (settled) {
+      const outcome = await approvePromise; // a rejection surfaces as itself
+      throw new Error(
+        `approve_tool for ${callId} settled without pausing the call — the policy did not escalate it: ${JSON.stringify(outcome)}`
+      );
+    }
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  return { approvePromise };
+}
+
+/**
+ * Release every entry still pending on a context. A red assertion before a
+ * test's own release would leave that registration's decision timer pending;
+ * the entry's resolve wrapper clears it. For afterEach hooks.
+ */
+function releasePending(ctx: RunnerContext | null): void {
+  for (const entry of ctx?.pendingApprovals.values() ?? []) {
+    entry.resolve({ behavior: "deny", message: "test teardown" });
+  }
 }
 
 describe("send_turn op — dead-B guard", () => {
@@ -232,6 +294,7 @@ describe("provide_tool_output op — dead-B guard (twin of send_turn's)", () => 
       args: { command: "echo hi" },
       default_action: "defer",
       paused_at: Date.now(),
+      clear: () => {},
       resolve: () => {},
     });
     const resp = await handleRequest(ctx, { id: "p3", op: "provide_tool_output", call_id: "toolu_2" });
@@ -364,6 +427,7 @@ describe("provide_tool_output during rotation (twin of the send guard)", () => {
       args: { command: "echo hi" },
       default_action: "defer",
       paused_at: Date.now(),
+      clear: () => {},
       resolve: resolveSpy,
     });
     const resp = await handleRequest(ctx, { id: "pr2", op: "provide_tool_output", call_id: "toolu_r2" });
@@ -574,6 +638,7 @@ describe("provide_tool_output on a pending call delivers through the hook", () =
       args: GATE_ARGS,
       default_action: "defer",
       paused_at: pausedAt,
+      clear: () => {},
       resolve,
     });
   }
@@ -582,6 +647,16 @@ describe("provide_tool_output on a pending call delivers through the hook", () =
     const ctx = await makeCtx(fake, { turnInFlight: true, currentTurnId: "turn_3", ...over });
     ctx.state.turns = 3;
     return ctx;
+  }
+
+  /** Drive the real interrupt op (it stamps ctx.lastInterruptAt, records the
+   * turn in flight in ctx.interruptedTurnId, and removes nothing from
+   * pending); the fake B's pid is blanked first so no SIGINT leaves the test
+   * process. */
+  async function interruptTurn(ctx: RunnerContext): Promise<void> {
+    (ctx.b as { pid?: number }).pid = undefined;
+    const resp = await handleRequest(ctx, { id: "int", op: "interrupt_turn", turn_id: ctx.currentTurnId ?? "turn_3" });
+    expect(resp).toEqual({ id: "int", ok: true });
   }
 
   it("releases the paused hook with the composed output as a denial, inside the running turn", async () => {
@@ -744,6 +819,109 @@ describe("provide_tool_output on a pending call delivers through the hook", () =
     expect(ctx.deferredCalls.get("toolu_7")).toMatchObject({ reason: "auto-deferred by provide_tool_output (approver hook timed out)" });
   });
 
+  it("a pending entry whose turn was interrupted (latch still set) is stale: DEFERRED release, record kept with the interrupted reason, TURN_IN_FLIGHT", async () => {
+    const fake = makeFakeB();
+    const ctx = await pendingCtx(fake);
+    const decisions: Decision[] = [];
+    seedPending(ctx, "toolu_7", (d) => decisions.push(d), Date.now() - 50);
+    await interruptTurn(ctx);
+    const resp = await handleRequest(ctx, { id: "p20", op: "provide_tool_output", call_id: "toolu_7", stdout: "x" });
+    expect(resp).toMatchObject({ ok: false, error: "TURN_IN_FLIGHT" });
+    expect(decisions).toEqual([{ behavior: "deny", message: "DEFERRED: human will run this command manually." }]);
+    const { events } = await readEventsSince(eventsPath(SID), 0);
+    expect(events.map((e) => e.kind)).toEqual(["tool_decision_resolved"]);
+    expect(events[0]).toMatchObject({
+      turn_id: "turn_3", call_id: "toolu_7", action: "defer",
+      reason: "auto-deferred by provide_tool_output (the paused turn was interrupted)", resolved_by: "user_mcp_auto",
+    });
+    expect(ctx.deferredCalls.get("toolu_7")).toMatchObject({ reason: "auto-deferred by provide_tool_output (the paused turn was interrupted)" });
+    expect(ctx.pendingApprovals.has("toolu_7")).toBe(false);
+    expect(fake.writes).toEqual([]);
+  });
+
+  it("an interrupt that hit an earlier turn leaves a later turn's paused call on the hook path", async () => {
+    // turn_2 is interrupted and fails; only a completed turn clears the
+    // stamp, so it survives into turn_3 — whose paused call must still be
+    // answered through its hook.
+    const fake = makeFakeB();
+    const ctx = await makeCtx(fake, { turnInFlight: true, currentTurnId: "turn_2" });
+    ctx.state.turns = 2;
+    await interruptTurn(ctx);
+    await afterEventBookkeeping(
+      ctx,
+      { seq: 9, at: new Date().toISOString(), kind: "turn_failed", turn_id: "turn_2", error: "error_during_execution" } as Event
+    );
+    expect(ctx.lastInterruptAt).not.toBeNull();
+    expect(ctx.interruptedTurnId).toBe("turn_2");
+    const started = await handleRequest(ctx, { id: "s3", op: "send_turn", message: "carry on" });
+    expect(started).toEqual({ id: "s3", ok: true, result: { turn_id: "turn_3" } });
+    const decisions: Decision[] = [];
+    seedPending(ctx, "toolu_7", (d) => decisions.push(d));
+    const resp = await handleRequest(ctx, { id: "p21", op: "provide_tool_output", call_id: "toolu_7", stdout: "x" });
+    expect(resp).toEqual({ id: "p21", ok: true, result: { turn_id: "turn_3", via: "hook" } });
+    expect(decisions).toHaveLength(1);
+    expect(decisions[0]!.message).toContain("Stdout:\nx");
+    expect(ctx.deferredCalls.has("toolu_7")).toBe(false);
+  });
+
+  it("a call that registers after the interrupt, in the interrupted turn, is stale too", async () => {
+    // The hook claude launched before the SIGINT can reach approve_tool after
+    // it: the registration lands after the stamp, but the call belongs to
+    // the turn claude is abandoning.
+    const fake = makeFakeB();
+    const ctx = await pendingCtx(fake);
+    await interruptTurn(ctx);
+    seedPending(ctx, "toolu_7", () => {}, ctx.lastInterruptAt! + 1);
+    const resp = await handleRequest(ctx, { id: "p22", op: "provide_tool_output", call_id: "toolu_7", stdout: "x" });
+    expect(resp).toMatchObject({ ok: false, error: "TURN_IN_FLIGHT" });
+    expect(ctx.deferredCalls.get("toolu_7")).toMatchObject({ reason: "auto-deferred by provide_tool_output (the paused turn was interrupted)" });
+  });
+
+  it("precedence: an interrupted entry past the hook window is reported as interrupted, not as a ghost", async () => {
+    const fake = makeFakeB();
+    const ctx = await pendingCtx(fake);
+    seedPending(ctx, "toolu_7", () => {}, Date.now() - HOOK_DELIVERY_WINDOW_MS - 1);
+    await interruptTurn(ctx);
+    const resp = await handleRequest(ctx, { id: "p23", op: "provide_tool_output", call_id: "toolu_7", stdout: "x" });
+    expect(resp).toMatchObject({ ok: false, error: "TURN_IN_FLIGHT" });
+    expect(ctx.deferredCalls.get("toolu_7")).toMatchObject({ reason: "auto-deferred by provide_tool_output (the paused turn was interrupted)" });
+  });
+
+  it("precedence: an interrupted entry with an oversized output is reported as interrupted, not as too large", async () => {
+    const fake = makeFakeB();
+    const ctx = await pendingCtx(fake);
+    seedPending(ctx, "toolu_7", () => {}, Date.now() - 50);
+    await interruptTurn(ctx);
+    const resp = await handleRequest(ctx, { id: "p24", op: "provide_tool_output", call_id: "toolu_7", stdout: fill(HOOK_DELIVERY_MAX_BYTES + 1), exit_code: 0 });
+    expect(resp).toMatchObject({ ok: false, error: "TURN_IN_FLIGHT" });
+    expect(ctx.deferredCalls.get("toolu_7")).toMatchObject({ reason: "auto-deferred by provide_tool_output (the paused turn was interrupted)" });
+  });
+
+  it("precedence: once the interrupted turn's terminal event lands, its call is reported as turn-ended, not as interrupted", async () => {
+    const fake = makeFakeB();
+    const ctx = await pendingCtx(fake);
+    seedPending(ctx, "toolu_7", () => {}, Date.now() - 50);
+    await interruptTurn(ctx);
+    await afterEventBookkeeping(
+      ctx,
+      { seq: 9, at: new Date().toISOString(), kind: "turn_failed", turn_id: "turn_3", error: "error_during_execution" } as Event
+    );
+    const resp = await handleRequest(ctx, { id: "p25", op: "provide_tool_output", call_id: "toolu_7", stdout: "x" });
+    expect(resp).toEqual({ id: "p25", ok: true, result: { turn_id: "turn_4", via: "turn" } });
+    const { events } = await readEventsSince(eventsPath(SID), 0);
+    expect(events[0]).toMatchObject({ kind: "tool_decision_resolved", reason: "auto-deferred by provide_tool_output (the paused turn has ended)" });
+  });
+
+  it("precedence: a dead B beats the interrupted reason", async () => {
+    const fake = makeFakeB();
+    const ctx = await pendingCtx(fake, { bExited: true });
+    seedPending(ctx, "toolu_7", () => {}, Date.now() - 50);
+    await interruptTurn(ctx);
+    const resp = await handleRequest(ctx, { id: "p26", op: "provide_tool_output", call_id: "toolu_7", stdout: "x" });
+    expect(resp).toMatchObject({ ok: false, error: "SESSION_EXITED" });
+    expect(ctx.deferredCalls.get("toolu_7")).toMatchObject({ reason: "auto-deferred by provide_tool_output" });
+  });
+
   it("a dead B takes the auto-defer path: the call is recorded as deferred and the op refuses SESSION_EXITED", async () => {
     const fake = makeFakeB();
     const ctx = await pendingCtx(fake, { bExited: true });
@@ -767,6 +945,151 @@ describe("provide_tool_output on a pending call delivers through the hook", () =
     expect(resp).toMatchObject({ ok: false, error: "ROTATION_IN_PROGRESS" });
     expect(decisions).toEqual([]);
     expect(ctx.pendingApprovals.has("toolu_7")).toBe(true);
+  });
+});
+
+describe("a real approve_tool registration answered through the hook", () => {
+  const GATE_COMMAND = "echo 'CLAW-GATE: include the changelog?'";
+  const ESCALATING_POLICY = { auto_defer: [{ tool: "Bash", bash_command_matches: "^echo 'CLAW-GATE" }] };
+  let live: RunnerContext | null = null;
+
+  afterEach(() => {
+    releasePending(live);
+    live = null;
+  });
+
+  async function gatedCtx(fake: FakeB): Promise<RunnerContext> {
+    const ctx = await makeCtx(fake, { turnInFlight: true, currentTurnId: "turn_3" });
+    ctx.state.turns = 3;
+    ctx.state.policy = ESCALATING_POLICY;
+    live = ctx;
+    return ctx;
+  }
+
+  it("approve_tool stamps paused_at in milliseconds and pauses the call in the running turn", async () => {
+    const fake = makeFakeB();
+    const ctx = await gatedCtx(fake);
+    const before = Date.now();
+    const { approvePromise } = await registerPending(ctx, "toolu_real", GATE_COMMAND);
+    const entry = ctx.pendingApprovals.get("toolu_real")!;
+    expect(entry).toMatchObject({
+      call_id: "toolu_real", turn_id: "turn_3", tool: "Bash", args: { command: GATE_COMMAND }, default_action: "defer",
+    });
+    // The hook window is measured in milliseconds against this stamp; a
+    // seconds stamp would sit ~1.7e12 ms in the past and make every call a
+    // ghost while the seeded tests stayed green.
+    expect(entry.paused_at).toBeGreaterThanOrEqual(before);
+    expect(Date.now() - entry.paused_at).toBeLessThan(1000);
+    expect(await eventKinds()).toEqual(["tool_decision_required"]);
+    // Release the hook so the promise settles and no decision timer outlives the test.
+    entry.resolve({ behavior: "deny", message: "test teardown" });
+    expect(await approvePromise).toEqual({ id: "h_toolu_real", ok: true, result: { behavior: "deny", message: "test teardown" } });
+  });
+
+  it("provide_tool_output answers the registered call through the hook: the approver receives the composed output as the deny reason", async () => {
+    const fake = makeFakeB();
+    const ctx = await gatedCtx(fake);
+    const { approvePromise } = await registerPending(ctx, "toolu_real", GATE_COMMAND);
+    const resp = await handleRequest(ctx, {
+      id: "p30", op: "provide_tool_output", call_id: "toolu_real",
+      stdout: "yes, include it", exit_code: 0, extra: "answered by the human",
+    });
+    expect(resp).toEqual({ id: "p30", ok: true, result: { turn_id: "turn_3", via: "hook" } });
+    expect(await approvePromise).toEqual({
+      id: "h_toolu_real",
+      ok: true,
+      result: {
+        behavior: "deny",
+        message: composeOutputMessage({
+          tool: "Bash", call_id: "toolu_real", args: { command: GATE_COMMAND },
+          exit_code: 0, stdout: "yes, include it", stderr: "", extra: "answered by the human",
+        }),
+      },
+    });
+    expect(await eventKinds()).toEqual(["tool_decision_required", "tool_decision_resolved", "tool_output_provided"]);
+    expect(ctx.pendingApprovals.has("toolu_real")).toBe(false);
+    expect(ctx.deferredCalls.has("toolu_real")).toBe(false);
+    expect(fake.writes).toEqual([]);
+  });
+});
+
+describe("the decision timer is cancelled the moment a call leaves the pending set", () => {
+  const GATE_COMMAND = "echo 'CLAW-GATE: include the changelog?'";
+  const DEFER_POLICY: PolicyObject = { auto_defer: [{ tool: "Bash", bash_command_matches: "^echo 'CLAW-GATE" }] };
+  const PLAIN_ESCALATION: PolicyObject = { escalate_default: true }; // timeout default: approve
+  let live: RunnerContext | null = null;
+
+  beforeEach(() => {
+    // Only the decision timer is faked: Date stays real (paused_at, the hook
+    // window) and setImmediate stays real (registerPending polls with it).
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  });
+  afterEach(() => {
+    releasePending(live);
+    live = null;
+    vi.useRealTimers();
+  });
+
+  async function gatedCtx(fake: FakeB, policy: PolicyObject): Promise<RunnerContext> {
+    const ctx = await makeCtx(fake, { turnInFlight: true, currentTurnId: "turn_3" });
+    ctx.state.turns = 3;
+    ctx.state.policy = policy;
+    ctx.state.decision_timeout_seconds = 1;
+    live = ctx;
+    return ctx;
+  }
+
+  it("a timeout expiring while provide_tool_output writes its events does not reach the hook and leaves no stray record", async () => {
+    const fake = makeFakeB();
+    const ctx = await gatedCtx(fake, DEFER_POLICY);
+    const { approvePromise } = await registerPending(ctx, "toolu_race", GATE_COMMAND);
+    // The resolution drops the call from pending synchronously, then awaits
+    // two appends; the clock passes the timer's deadline inside that window.
+    const outputPromise = handleRequest(ctx, { id: "p40", op: "provide_tool_output", call_id: "toolu_race", stdout: "42", exit_code: 0 });
+    vi.advanceTimersByTime(1000);
+    expect(await outputPromise).toEqual({ id: "p40", ok: true, result: { turn_id: "turn_3", via: "hook" } });
+    const decision = await approvePromise;
+    expect(decision).toMatchObject({ ok: true, result: { behavior: "deny" } });
+    const message = (decision as unknown as { result: { message: string } }).result.message;
+    expect(message).toContain("Stdout:\n42");
+    expect(message).not.toBe(TIMEOUT_DEFER_MESSAGE);
+    const { events } = await readEventsSince(eventsPath(SID), 0);
+    expect(events.map((e) => e.kind)).toEqual(["tool_decision_required", "tool_decision_resolved", "tool_output_provided"]);
+    expect(events[1]).toMatchObject({ action: "defer", resolved_by: "user_mcp_auto" });
+    expect(ctx.deferredCalls.has("toolu_race")).toBe(false);
+  });
+
+  it("a timeout expiring while resolve_tool_call writes its events cannot allow a call the human rejected", async () => {
+    const fake = makeFakeB();
+    const ctx = await gatedCtx(fake, PLAIN_ESCALATION);
+    const { approvePromise } = await registerPending(ctx, "toolu_race", "rm -rf build");
+    const resolvePromise = handleRequest(ctx, { id: "r40", op: "resolve_tool_call", call_id: "toolu_race", action: "reject", reason: "not in this session" });
+    vi.advanceTimersByTime(1000);
+    expect(await resolvePromise).toEqual({ id: "r40", ok: true });
+    expect(await approvePromise).toEqual({ id: "h_toolu_race", ok: true, result: { behavior: "deny", message: "not in this session" } });
+    const { events } = await readEventsSince(eventsPath(SID), 0);
+    expect(events.map((e) => e.kind)).toEqual(["tool_decision_required", "tool_decision_resolved"]);
+    expect(events[1]).toMatchObject({ action: "reject", resolved_by: "user_mcp" });
+    expect(ctx.deferredCalls.has("toolu_race")).toBe(false);
+  });
+
+  it("a timeout expiring while the stale fallback writes its event is cancelled too", async () => {
+    const fake = makeFakeB();
+    const ctx = await gatedCtx(fake, PLAIN_ESCALATION);
+    const { approvePromise } = await registerPending(ctx, "toolu_race", "cat notes.txt");
+    (ctx.b as { pid?: number }).pid = undefined;
+    await handleRequest(ctx, { id: "int", op: "interrupt_turn", turn_id: "turn_3" }); // the call is stale: interrupted
+    const outputPromise = handleRequest(ctx, { id: "p41", op: "provide_tool_output", call_id: "toolu_race", stdout: "x" });
+    vi.advanceTimersByTime(1000);
+    expect(await outputPromise).toMatchObject({ ok: false, error: "TURN_IN_FLIGHT" });
+    expect(await approvePromise).toEqual({
+      id: "h_toolu_race", ok: true,
+      result: { behavior: "deny", message: "DEFERRED: human will run this command manually." },
+    });
+    const { events } = await readEventsSince(eventsPath(SID), 0);
+    expect(events.map((e) => e.kind)).toEqual(["tool_decision_required", "tool_decision_resolved"]);
+    expect(events[1]).toMatchObject({ reason: "auto-deferred by provide_tool_output (the paused turn was interrupted)", resolved_by: "user_mcp_auto" });
+    expect(ctx.deferredCalls.get("toolu_race")).toMatchObject({ reason: "auto-deferred by provide_tool_output (the paused turn was interrupted)" });
   });
 });
 

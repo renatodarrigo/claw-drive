@@ -14,28 +14,57 @@
 #     as {"id":"h_<nonce>","op":"approve_tool","pretooluse":<raw>}.
 #   - Runner matches policy → returns {"ok":true,"result":{"behavior":"allow"|"deny",...}}.
 #   - Translates the verdict to claude's hookSpecificOutput envelope and exits
-#     0 (allow) or 2 (deny).
-#   - Self-times-out at 595s. On runner unreachable or timeout, fails secure
-#     (exits 2 with a deny envelope) — because claude's default on hook timeout
-#     is ALLOW, and we must never let that slip policy.
+#     0 (allow) or 2 (deny). The reason reaches jq on stdin, never as a
+#     command-line argument (Linux caps one argument at 128 KiB).
+#   - Self-times-out at 595s. On runner unreachable, on timeout, and on ANY
+#     failure of its own (a failed command, a missing dependency), fails
+#     secure: exits 2 with a deny envelope — because claude's default for a
+#     hook that times out or exits without a decision is ALLOW, and we must
+#     never let that slip policy.
 #
 # Runtime deps: jq, nc with -U (OpenBSD nc or nmap ncat).
 
 set -euo pipefail
 
+# Every decision leaves through emit_envelope. $1 is allow|deny; the reason is
+# read from stdin as one raw string (-R -s), so only memory bounds its size.
+# The CALLER sets `emitted` afterwards: the function runs as the tail of a
+# pipeline, i.e. in a subshell, where an assignment would not survive. A
+# failed write exits through the trap (`|| exit 2`), so the fallback goes out
+# even where `set -e` is off.
+emitted=0
+emit_envelope() {
+  jq -Rsc --arg d "$1" \
+    '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:$d,permissionDecisionReason:.}}'
+}
+
+# Deny with a fixed reason and exit 2.
+deny() {
+  printf '%s' "$1" | emit_envelope deny || exit 2
+  emitted=1
+  exit 2
+}
+
+# Fail secure on any exit that has not emitted a decision: a command failing
+# under set -e, an unbound variable under set -u, jq missing from PATH. The
+# fallback envelope is a literal — it must not depend on jq.
+on_exit() {
+  if (( emitted == 0 )); then
+    printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"approver: internal failure — fail-secure deny"}}'
+    exit 2
+  fi
+}
+trap on_exit EXIT
+
 SESSION_ID="${1:-}"
 if [[ -z "$SESSION_ID" ]]; then
-  jq -nc --arg r "approver: session_id argument missing" \
-    '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}'
-  exit 2
+  deny "approver: session_id argument missing"
 fi
 
 SOCKET="${CLAW_DRIVE_HOME:-$HOME/.claw-drive}/sessions/$SESSION_ID/control.sock"
 
 if [[ ! -S "$SOCKET" ]]; then
-  jq -nc --arg r "approver: control socket missing at $SOCKET" \
-    '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}'
-  exit 2
+  deny "approver: control socket missing at $SOCKET"
 fi
 
 # Pick a Unix-socket-capable nc. Prefer ncat (nmap) for portability; fall back
@@ -52,9 +81,7 @@ if command -v ncat >/dev/null 2>&1; then
 elif command -v nc >/dev/null 2>&1; then
   NC="nc -U"
 else
-  jq -nc --arg r "approver: neither ncat nor nc found on PATH" \
-    '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}'
-  exit 2
+  deny "approver: neither ncat nor nc found on PATH"
 fi
 
 # Read the PreToolUse payload from stdin. Expect a single JSON object, possibly
@@ -62,9 +89,7 @@ fi
 payload=$(cat)
 
 if [[ -z "$payload" ]]; then
-  jq -nc --arg r "approver: empty stdin payload" \
-    '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}'
-  exit 2
+  deny "approver: empty stdin payload"
 fi
 
 req_id="h_$$_$(date +%s%N)"
@@ -85,19 +110,14 @@ resp=$(printf '%s\n' "$req" | timeout "$APPROVER_TIMEOUT" $NC "$SOCKET" 2>/dev/n
   end_ns=$(date +%s%N)
   elapsed_s=$(( (end_ns - start_ns) / 1000000000 ))
   if (( elapsed_s < SPLIT_THRESHOLD_S )); then
-    msg="approver: runner unreachable (socket: $SOCKET) — runner may have crashed; check 'claw-drive sessions'"
+    deny "approver: runner unreachable (socket: $SOCKET) — runner may have crashed; check 'claw-drive sessions'"
   else
-    msg="approver: gate unresolved within ${APPROVER_TIMEOUT}s — fail-secure deny (the human did not resolve in time)"
+    deny "approver: gate unresolved within ${APPROVER_TIMEOUT}s — fail-secure deny (the human did not resolve in time)"
   fi
-  jq -nc --arg r "$msg" \
-    '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}'
-  exit 2
 }
 
 if [[ -z "$resp" ]]; then
-  jq -nc --arg r "approver: runner returned empty response" \
-    '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}'
-  exit 2
+  deny "approver: runner returned empty response"
 fi
 
 # Parse the runner's response. Expected shape:
@@ -107,20 +127,23 @@ ok=$(jq -r '.ok // false' <<<"$resp")
 if [[ "$ok" != "true" ]]; then
   err_code=$(jq -r '.error // "unknown"' <<<"$resp")
   err_msg=$(jq -r '.message // ""' <<<"$resp")
-  jq -nc --arg r "approver: runner error $err_code: $err_msg" \
-    '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}'
-  exit 2
+  deny "approver: runner error $err_code: $err_msg"
 fi
 
 behavior=$(jq -r '.result.behavior // "deny"' <<<"$resp")
-reason=$(jq -r '.result.message // ""' <<<"$resp")
+# `$(...)` strips every trailing newline. `jq -j` prints the reason plus one
+# sentinel byte and no newline of its own; the next line removes exactly that
+# byte, so a reason's trailing newlines survive. (A NUL byte cannot survive a
+# bash variable.)
+reason=$(jq -j '(.result.message // "") + "\u0001"' <<<"$resp")
+reason="${reason%$'\1'}"
 
 if [[ "$behavior" == "allow" ]]; then
-  jq -nc --arg r "${reason:-allowed}" \
-    '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"allow",permissionDecisionReason:$r}}'
+  printf '%s' "${reason:-allowed}" | emit_envelope allow || exit 2
+  emitted=1
   exit 0
-else
-  jq -nc --arg r "${reason:-denied}" \
-    '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}'
-  exit 2
 fi
+
+printf '%s' "${reason:-denied}" | emit_envelope deny || exit 2
+emitted=1
+exit 2

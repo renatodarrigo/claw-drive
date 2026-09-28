@@ -138,6 +138,10 @@ export interface RunnerContext {
    * later turn_completed proved B alive. Gates rotate (INTERRUPT_GRACE) —
    * an interrupted claude process can exit on its next turn. */
   lastInterruptAt: number | null;
+  /** The turn in flight when interrupt_turn last fired, or null when B was
+   * idle then. provide_tool_output compares it by id with a paused call's
+   * turn, so it never needs clearing: a later turn has a later id. */
+  interruptedTurnId: string | null;
   /** Resolves when the in-flight rotate op settles (success, refusal, or
    * failure). The crash teardown and teardownSession's finish await this
    * (bounded) before writing session_stopped: the rotate op is the single
@@ -179,7 +183,7 @@ export interface RunnerContext {
   checkpointEpoch: number;
 }
 
-// Placeholder type; populated in Task 13 when the approval flow lands.
+/** A call paused in the approval hook, awaiting a decision. */
 interface PendingApproval {
   call_id: string;
   turn_id: string;
@@ -188,7 +192,24 @@ interface PendingApproval {
   default_action: DecisionAction;
   /** Date.now() at registration — bounds hook delivery (HOOK_DELIVERY_WINDOW_MS). */
   paused_at: number;
+  /** Cancels the decision timer. Idempotent; every resolution site removes
+   * the entry through dropPending, which calls it before any await (the
+   * timer's own onFire removes the entry only once it has fired). */
+  clear: () => void;
   resolve: (decision: { behavior: "allow" | "deny"; message?: string }) => void;
+}
+
+/**
+ * Remove a paused call from the pending set and cancel its decision timer in
+ * the same synchronous step. Every resolution path writes its audit events
+ * (awaited appends) before releasing the hook; a timer firing inside that
+ * window would record a second, timeout-resolved decision (for a defer
+ * default, a stray deferred call too) and could hand the hook the timeout's
+ * verdict, so the timer must be gone before the first await.
+ */
+function dropPending(ctx: RunnerContext, pending: PendingApproval): void {
+  ctx.pendingApprovals.delete(pending.call_id);
+  pending.clear();
 }
 
 /**
@@ -1310,6 +1331,7 @@ export async function handleRequest(
           args,
           default_action: decision.default_action,
           paused_at: Date.now(),
+          clear: scheduled.clear,
           resolve: (dec) => {
             scheduled.clear();
             resolve({ id: req.id, ok: true, result: dec });
@@ -1357,7 +1379,7 @@ export async function handleRequest(
       }
 
       // plan.mode === "commit" — resolve the call for real.
-      ctx.pendingApprovals.delete(req.call_id);
+      dropPending(ctx, pending);
 
       await emitEvent(ctx, {
         kind: "tool_decision_resolved",
@@ -1441,8 +1463,11 @@ export async function handleRequest(
 
     case "interrupt_turn": {
       // Stamp first, unconditionally: rotate's INTERRUPT_GRACE gate must
-      // cover the request even when the SIGINT itself is a no-op.
+      // cover the request even when the SIGINT itself is a no-op. The turn
+      // in flight is recorded too: claude abandons that turn's paused hooks
+      // with it, whether they registered before this request or after.
       ctx.lastInterruptAt = Date.now();
+      ctx.interruptedTurnId = ctx.turnInFlight ? ctx.currentTurnId : null;
       if (ctx.b.pid) {
         try {
           process.kill(ctx.b.pid, "SIGINT");
@@ -1514,18 +1539,26 @@ export async function handleRequest(
           });
           // The hook can carry the output only while the turn that paused the
           // call is still running (a turn ends only after its tool calls
-          // settle, so an ended turn — an interrupt, say — means claude has
-          // given the hook up), while the approver process is still alive
-          // (HOOK_DELIVERY_WINDOW_MS; it self-times-out at 595 s, so the last
-          // seconds before that are refused early), and while the text fits
-          // what the deny channel was observed to carry intact
-          // (HOOK_DELIVERY_MAX_BYTES), and only while B itself is alive. Anything
-          // else is stale: the call is auto-deferred with a reason naming the cause
-          // (a dead B's is the plain one) and the new-turn path below decides.
+          // settle, so an ended turn means claude has given the hook up) and
+          // was not interrupted (after a SIGINT the latch stays set until the
+          // aborted turn's terminal event lands, but claude is abandoning the
+          // hook with the turn — interrupt_turn records the turn in flight at
+          // the SIGINT, and a call of that turn is stale whether it paused
+          // before the interrupt or registered after it; an earlier turn's
+          // record can never match a later turn's call), while the approver
+          // process is still alive (HOOK_DELIVERY_WINDOW_MS; it self-times-out
+          // at 595 s, so the last seconds before that are refused early), and
+          // while the text fits what the deny channel was observed to carry
+          // intact (HOOK_DELIVERY_MAX_BYTES), and only while B itself is alive.
+          // Anything else is stale: the call is auto-deferred with a reason
+          // naming the cause (a dead B's is the plain one) and the new-turn
+          // path below decides.
           let stale: string | null = null;
           if (ctx.bExited) stale = "auto-deferred by provide_tool_output";
           else if (!(ctx.turnInFlight && ctx.currentTurnId === pending.turn_id))
             stale = "auto-deferred by provide_tool_output (the paused turn has ended)";
+          else if (ctx.interruptedTurnId !== null && ctx.interruptedTurnId === pending.turn_id)
+            stale = "auto-deferred by provide_tool_output (the paused turn was interrupted)";
           else if (Date.now() - pending.paused_at >= HOOK_DELIVERY_WINDOW_MS)
             stale = "auto-deferred by provide_tool_output (approver hook timed out)";
           else if (Buffer.byteLength(message) > HOOK_DELIVERY_MAX_BYTES)
@@ -1541,7 +1574,7 @@ export async function handleRequest(
             // nothing can mis-stamp the running turn. Both audit events land
             // on disk BEFORE the hook is released, so B's continuation can
             // never precede them.
-            ctx.pendingApprovals.delete(req.call_id);
+            dropPending(ctx, pending);
             await emitEvent(ctx, {
               kind: "tool_decision_resolved",
               turn_id: pending.turn_id,
@@ -1566,7 +1599,7 @@ export async function handleRequest(
           // and what B reads if the approver is still listening — record the
           // call as deferred with the reason, and let the new-turn path below
           // decide (SESSION_EXITED / TURN_IN_FLIGHT / a turn).
-          ctx.pendingApprovals.delete(req.call_id);
+          dropPending(ctx, pending);
           await emitEvent(ctx, {
             kind: "tool_decision_resolved",
             turn_id: pending.turn_id,
@@ -2020,6 +2053,7 @@ export async function runRunner(sessionId: string): Promise<void> {
     crashTeardownEngaged: false,
     tearingDown: false,
     lastInterruptAt: null,
+    interruptedTurnId: null,
     rotationSettled: null,
     rotationSendId: null,
     autoRotateLatched: false,

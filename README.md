@@ -12,7 +12,7 @@ Drive-as-user MCP server + CLI for Claude Code. Lets one Claude Code session dri
 
 - Your **dev session** (Session A, running Claude Code where you're building something) asks claw-drive to spawn one or more fresh **driven sessions** — Session B, C, D, …, each in its own directory.
 - Each driven session is a real `claude -p --input-format=stream-json --output-format=stream-json` subprocess. It runs like a user would — it even uses hooks. Sessions run in parallel; each has its own policy, scenario brief, and event log.
-- Every tool call a driven session makes is gated through a PreToolUse hook that talks to claw-drive's runner. Policy rules auto-approve, auto-reject, or escalate to you.
+- Every tool call a driven session makes is gated through a PreToolUse hook that talks to claw-drive's runner. Policy rules auto-approve a call, pause it for you, or deny it outright.
 - Events stream to `~/.claw-drive/sessions/<id>/events.jsonl` per session — MCP `poll_*` tools and `claw-drive tail` both read it. `claw-drive pending` (and the MCP tool listing) shows awaiting-approval calls across every running session in one view.
 
 ## Install
@@ -249,7 +249,7 @@ A policy is either `"bypass"` (no gating) or an object. Rules are evaluated `aut
 }
 ```
 
-On timeout: the `default_action` for escalated calls is `approve` (when `escalate_default: true`) or `reject` (when `escalate_default: false`). The approver script self-times-out 5s before claude's 600s hook ceiling and fails secure (exit 2 / deny).
+On timeout: a paused call nobody resolves is denied in B by the approver hook's own fail-secure timeout — the approver script self-times-out 5s before claude's 600s hook ceiling (exit 2 / deny). A `decision_timeout_seconds` shorter than that releases the call with the rule's `default_action` instead — `approve` for a call no list matched (paused by `escalate_default: true`), `reject` for an `auto_reject` match, `defer` for an `auto_defer` match. With `escalate_default: false` an unmatched call never pauses: it is denied at once, by policy.
 
 ### Session budget (circuit-breaker)
 
@@ -308,7 +308,7 @@ Some commands can't run inside B (sudo, interactive logins, anything needing aut
 
 When B attempts a matching call, the approver hook pauses it and a `tool_decision_required` event (`default_action: "defer"`) surfaces to the monitor; the human runs the command locally. Once they have the output, call `claw-drive provide-output <call_id> --stdout "<output>" --exit 0` (or the `provide_tool_output` MCP tool). While the call is still paused — its turn still running, its hook not timed out (about 10 minutes from the pause) and the composed output within 64 KiB — the output reaches B through the hook as that call's own result inside the same turn (`via: "hook"`), and B continues.
 
-Otherwise the output takes the turn path: it goes in as a new user turn at the next turn boundary (`via: "turn"`; `TURN_IN_FLIGHT` while B is still finishing its turn — retry when it completes). That covers a call you released earlier with `claw-drive defer <call_id>`, which sends B a `DEFERRED:` denial, and a paused call that has gone stale (its turn has ended, its hook has timed out, or the composed output exceeds 64 KiB). It is also the fallback when nobody answers in time: the hook releases B with a denial — the rule's `DEFERRED` default once `decision_timeout_seconds` passes, or the approver's own fail-secure deny after about 10 minutes, whichever comes first. B continues without the command's output — typically it reports the gate and ends its turn — and the output then goes in as the next turn.
+Otherwise the output takes the turn path: it goes in as a new user turn at the next turn boundary (`via: "turn"`; `TURN_IN_FLIGHT` while B is still finishing its turn — retry when it completes). That covers a call you released earlier with `claw-drive defer <call_id>`, which sends B a `DEFERRED:` denial, and a paused call that has gone stale (its turn has ended or was interrupted, its hook has timed out, or the composed output exceeds 64 KiB). It is also the fallback when nobody answers in time: the hook releases B with a denial — the rule's `DEFERRED` default once `decision_timeout_seconds` passes, or the approver's own fail-secure deny after about 10 minutes, whichever comes first. B continues without the command's output — typically it reports the gate and ends its turn — and the output then goes in as the next turn.
 
 ### Review gates (B pauses for human OK mid-task)
 
@@ -337,7 +337,7 @@ B's echo fires the hook → the defer rule pauses the call → monitor alerts A 
 | `resolve_tool_call` | Approve/reject a paused tool call found in the fleet view (`fleet` / `all_fleets` widen the scan); optionally remember as policy, preview the derived rule, or append an explicit one |
 | `update_policy` | Replace a session's policy |
 | `interrupt_turn` | SIGINT B to cancel the current turn; the turn ends with a terminal event, normally `turn_failed`, and a send before that is refused with `TURN_IN_FLIGHT` |
-| `provide_tool_output` | Feed a human-run command's output back to B: through the paused hook as the call's own result while the call is still pending, its turn still running, its hook not timed out and its composed output within 64 KiB (`via: "hook"`), or as a new turn at the next boundary otherwise — a call deferred earlier, or a paused call whose turn has ended, whose hook timed out, or whose composed output exceeds 64 KiB (`via: "turn"`; refused with `TURN_IN_FLIGHT` mid-turn) |
+| `provide_tool_output` | Feed a human-run command's output back to B: through the paused hook as the call's own result while the call is still pending, its turn still running, its hook not timed out and its composed output within 64 KiB (`via: "hook"`), or as a new turn at the next boundary otherwise — a call deferred earlier, or a paused call whose turn has ended or was interrupted, whose hook timed out, or whose composed output exceeds 64 KiB (`via: "turn"`; refused with `TURN_IN_FLIGHT` mid-turn) |
 | `rotate_session` | Rotate a session at its context threshold: B writes a structured handover, a successor spawns in the same cwd/policy with the handover embedded in its first turn, the alias transfers, and the predecessor stops. LONG-RUNNING (up to ~20 min worst case). |
 | `recover_session` | Continue a DEAD session from its `crash-handover.md` (or a freshly distilled one) by spawning a successor with the lineage stamped and the alias re-claimed if free. |
 
@@ -406,9 +406,9 @@ If you see `error` events with `"unparseable stream-json line"`, claude's output
 
 ### `decision_timeout_seconds: 3600` (1 hour)
 
-The v0.2 start-time default. If an escalation sits unresolved for this long, the runner fires the rule's `default_action` (`approve` for plain escalations, `reject` for `auto_reject` matches, `defer` for `auto_defer` matches) and emits `tool_decision_resolved(resolved_by:"timeout")`. You can override per-session via `start_session`'s `decision_timeout_seconds` arg, or per-policy via the policy object's field.
+The v0.2 start-time default. If an escalation sits unresolved for this long, the runner fires the rule's `default_action` (`approve` for plain escalations, `reject` for `auto_reject` matches, `defer` for `auto_defer` matches) and emits `tool_decision_resolved(resolved_by:"timeout")`. The approver hook has its own fail-secure timeout of about 10 minutes (595s, under claude's 600s hook ceiling): a decision still open then is denied in B whatever the rule's default, and an approve, reject or default after that point is recorded but no longer reaches B — so a default meant to reach B needs a shorter value. You can override per-session via `start_session`'s `decision_timeout_seconds` arg, or per-policy via the policy object's field.
 
-The v0.1 default was 300 s. It was a footgun for long-running interactive sessions — if the driver's monitor had a transient gap, sensitive calls auto-approved silently. 1 h gives humans enough slack.
+The v0.1 default was 300 s. It was a footgun for long-running interactive sessions — if the driver's monitor had a transient gap, sensitive calls auto-approved silently. 1 h keeps the approve default from ever reaching an unattended call: the approver hook's own deny comes first.
 
 ### `claw-drive watch` defaults to current seq
 
