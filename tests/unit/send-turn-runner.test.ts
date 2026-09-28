@@ -186,6 +186,9 @@ async function registerPending(
   }).finally(() => {
     settled = true;
   });
+  // Absorb a rejection until the loop below re-awaits it: without a handler
+  // Node reports it as unhandled one tick before the loop can rethrow it.
+  void approvePromise.catch(() => {});
   while (!ctx.pendingApprovals.has(callId)) {
     if (settled) {
       const outcome = await approvePromise; // a rejection surfaces as itself
@@ -196,6 +199,17 @@ async function registerPending(
     await new Promise<void>((resolve) => setImmediate(resolve));
   }
   return { approvePromise };
+}
+
+/**
+ * Release every entry still pending on a context. A red assertion before a
+ * test's own release would leave that registration's decision timer pending;
+ * the entry's resolve wrapper clears it. For afterEach hooks.
+ */
+function releasePending(ctx: RunnerContext | null): void {
+  for (const entry of ctx?.pendingApprovals.values() ?? []) {
+    entry.resolve({ behavior: "deny", message: "test teardown" });
+  }
 }
 
 describe("send_turn op — dead-B guard", () => {
@@ -938,12 +952,7 @@ describe("a real approve_tool registration answered through the hook", () => {
   let live: RunnerContext | null = null;
 
   afterEach(() => {
-    // A red assertion before the release would leave the registration's
-    // decision timer pending; release whatever is left so nothing outlives
-    // the test (the entry's resolve wrapper clears the timer).
-    for (const entry of live?.pendingApprovals.values() ?? []) {
-      entry.resolve({ behavior: "deny", message: "test teardown" });
-    }
+    releasePending(live);
     live = null;
   });
 
@@ -1014,12 +1023,7 @@ describe("the decision timer is cancelled the moment a call leaves the pending s
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   });
   afterEach(() => {
-    // A red assertion before the release would leave the registration's
-    // decision timer pending; release whatever is left so nothing outlives
-    // the test (the entry's resolve wrapper clears the timer).
-    for (const entry of live?.pendingApprovals.values() ?? []) {
-      entry.resolve({ behavior: "deny", message: "test teardown" });
-    }
+    releasePending(live);
     live = null;
     vi.useRealTimers();
   });
@@ -1038,7 +1042,7 @@ describe("the decision timer is cancelled the moment a call leaves the pending s
     const ctx = await gatedCtx(fake, DEFER_POLICY);
     const { approvePromise } = await registerPending(ctx, "toolu_race", GATE_COMMAND);
     // The resolution drops the call from pending synchronously, then awaits
-    // two appends; the timer fires inside that window.
+    // two appends; the clock passes the timer's deadline inside that window.
     const outputPromise = handleRequest(ctx, { id: "p40", op: "provide_tool_output", call_id: "toolu_race", stdout: "42", exit_code: 0 });
     vi.advanceTimersByTime(1000);
     expect(await outputPromise).toEqual({ id: "p40", ok: true, result: { turn_id: "turn_3", via: "hook" } });
