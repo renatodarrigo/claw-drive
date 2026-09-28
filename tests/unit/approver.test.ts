@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { spawn, spawnSync } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import * as net from "node:net";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
@@ -33,6 +33,8 @@ const PAYLOAD = JSON.stringify({
 
 let root: string;
 let server: net.Server | null = null;
+let child: ChildProcess | null = null;
+const sockets = new Set<net.Socket>();
 
 beforeEach(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), "apprv-"));
@@ -40,9 +42,25 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  if (server) await new Promise<void>((resolve) => server!.close(() => resolve()));
-  server = null;
-  await fs.rm(root, { recursive: true, force: true });
+  try {
+    // A hung approver (bash + `timeout 595 nc`) must not outlive the test:
+    // kill its whole process group, then drop the fake runner's connections
+    // so server.close() does not wait on them.
+    if (child !== null && child.exitCode === null && child.signalCode === null && child.pid !== undefined) {
+      try {
+        process.kill(-child.pid, "SIGKILL");
+      } catch {
+        /* already gone */
+      }
+    }
+    child = null;
+    for (const sock of sockets) sock.destroy();
+    sockets.clear();
+    if (server) await new Promise<void>((resolve) => server!.close(() => resolve()));
+    server = null;
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
 });
 
 function socketPath(): string {
@@ -51,10 +69,13 @@ function socketPath(): string {
 
 /** A fake runner: answers the first request line on the session socket with
  * reply(request) — a raw line, so a malformed reply can be modelled too —
- * and closes, which is what ends the approver's nc. */
+ * and, like the real runner, leaves the connection open: the approver's own
+ * `head -n1` is what ends its nc. */
 async function fakeRunner(reply: (req: Record<string, unknown>) => string): Promise<Record<string, unknown>[]> {
   const seen: Record<string, unknown>[] = [];
   server = net.createServer((sock) => {
+    sockets.add(sock);
+    sock.on("close", () => sockets.delete(sock));
     let buf = "";
     sock.on("error", () => {});
     sock.on("data", (chunk: Buffer) => {
@@ -63,7 +84,7 @@ async function fakeRunner(reply: (req: Record<string, unknown>) => string): Prom
       if (nl === -1) return;
       const req = JSON.parse(buf.slice(0, nl)) as Record<string, unknown>;
       seen.push(req);
-      sock.end(reply(req) + "\n");
+      sock.write(reply(req) + "\n");
     });
   });
   await new Promise<void>((resolve) => server!.listen(socketPath(), () => resolve()));
@@ -72,18 +93,24 @@ async function fakeRunner(reply: (req: Record<string, unknown>) => string): Prom
 
 function runApprover(env: Record<string, string> = {}): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
-    const child = spawn(BASH, [APPROVER, SID], {
+    child = spawn(BASH, [APPROVER, SID], {
       env: { ...process.env, CLAW_DRIVE_HOME: root, ...env },
       stdio: ["pipe", "pipe", "pipe"],
+      detached: true,
     });
+    const proc = child;
     const out: Buffer[] = [];
     const err: Buffer[] = [];
-    child.stdout.on("data", (c: Buffer) => out.push(c));
-    child.stderr.on("data", (c: Buffer) => err.push(c));
-    child.on("close", (code) =>
+    // stdio is the literal ["pipe","pipe","pipe"] above, so these streams are
+    // never null; the assertions are needed only because `proc`'s type comes
+    // from the module-level `ChildProcess | null` declaration, which widens
+    // away spawn()'s more specific per-call return type.
+    proc.stdout!.on("data", (c: Buffer) => out.push(c));
+    proc.stderr!.on("data", (c: Buffer) => err.push(c));
+    proc.on("close", (code) =>
       resolve({ code, stdout: Buffer.concat(out).toString("utf-8"), stderr: Buffer.concat(err).toString("utf-8") })
     );
-    child.stdin.end(PAYLOAD + "\n");
+    proc.stdin!.end(PAYLOAD + "\n");
   });
 }
 
