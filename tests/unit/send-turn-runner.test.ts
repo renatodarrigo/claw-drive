@@ -649,9 +649,10 @@ describe("provide_tool_output on a pending call delivers through the hook", () =
     return ctx;
   }
 
-  /** Drive the real interrupt op (it stamps ctx.lastInterruptAt and removes
-   * nothing from pending); the fake B's pid is blanked first so no SIGINT
-   * leaves the test process. */
+  /** Drive the real interrupt op (it stamps ctx.lastInterruptAt, records the
+   * turn in flight in ctx.interruptedTurnId, and removes nothing from
+   * pending); the fake B's pid is blanked first so no SIGINT leaves the test
+   * process. */
   async function interruptTurn(ctx: RunnerContext): Promise<void> {
     (ctx.b as { pid?: number }).pid = undefined;
     const resp = await handleRequest(ctx, { id: "int", op: "interrupt_turn", turn_id: ctx.currentTurnId ?? "turn_3" });
@@ -851,6 +852,7 @@ describe("provide_tool_output on a pending call delivers through the hook", () =
       { seq: 9, at: new Date().toISOString(), kind: "turn_failed", turn_id: "turn_2", error: "error_during_execution" } as Event
     );
     expect(ctx.lastInterruptAt).not.toBeNull();
+    expect(ctx.interruptedTurnId).toBe("turn_2");
     const started = await handleRequest(ctx, { id: "s3", op: "send_turn", message: "carry on" });
     expect(started).toEqual({ id: "s3", ok: true, result: { turn_id: "turn_3" } });
     const decisions: Decision[] = [];

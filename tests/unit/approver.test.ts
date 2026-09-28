@@ -43,9 +43,11 @@ beforeEach(async () => {
 
 afterEach(async () => {
   try {
-    // A hung approver (bash + `timeout 595 nc`) must not outlive the test:
-    // kill its whole process group, then drop the fake runner's connections
-    // so server.close() does not wait on them.
+    // A hung approver must not outlive the test: SIGKILL the bash's process
+    // group (bash, the `$(...)` subshell and `head` — GNU `timeout` puts
+    // itself and `nc` in their own group), then destroy the fake runner's
+    // connections so `nc` reads EOF and `timeout` exits with it, and
+    // server.close() does not wait on them.
     if (child !== null && child.exitCode === null && child.signalCode === null && child.pid !== undefined) {
       try {
         process.kill(-child.pid, "SIGKILL");
