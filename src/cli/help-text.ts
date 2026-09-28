@@ -56,11 +56,11 @@ POLICY & SAFETY
   (approve everything — sandboxes only). A session started with no policy
   runs under bypass, so pass one. A session budget / circuit-breaker caps
   spend and trips on repeated failures. A decision nobody resolves is denied
-  in B by the approver hook's own fail-secure timeout (about 10 minutes); a
-  shorter decision_timeout_seconds (default 3600) releases the call with the
-  rule's default instead — approve for a plain escalation, reject or defer for
-  auto_reject / auto_defer. Lint a policy with 'policy lint'; dry-run a
-  command against one with 'policy-test'.
+  in B by the approver hook's own fail-secure timeout (about 10 minutes);
+  a decision_timeout_seconds shorter than that (default 3600) releases the
+  call with the rule's default instead — approve for a plain escalation,
+  reject or defer for auto_reject / auto_defer. Lint a policy with 'policy
+  lint'; dry-run a command against one with 'policy-test'.
   A rotation block bounds context per session: at threshold_tokens the runner
   emits context_threshold_reached (re-fires each completed turn while above)
   and 'rotate' becomes available; max_generations (default 10) caps the
