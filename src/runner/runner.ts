@@ -183,7 +183,7 @@ export interface RunnerContext {
   checkpointEpoch: number;
 }
 
-// Placeholder type; populated in Task 13 when the approval flow lands.
+/** A call paused in the approval hook, awaiting a decision. */
 interface PendingApproval {
   call_id: string;
   turn_id: string;
@@ -192,7 +192,22 @@ interface PendingApproval {
   default_action: DecisionAction;
   /** Date.now() at registration — bounds hook delivery (HOOK_DELIVERY_WINDOW_MS). */
   paused_at: number;
+  /** Cancels the decision timer. Idempotent; dropPending calls it at every
+   * site that removes the entry, before any await. */
+  clear: () => void;
   resolve: (decision: { behavior: "allow" | "deny"; message?: string }) => void;
+}
+
+/**
+ * Remove a paused call from the pending set and cancel its decision timer in
+ * the same synchronous step. Every resolution path writes its audit events
+ * (awaited appends) before releasing the hook; a timer firing inside that
+ * window would hand the hook the timeout's verdict and record a stray
+ * deferred call, so the timer must be gone before the first await.
+ */
+function dropPending(ctx: RunnerContext, pending: PendingApproval): void {
+  ctx.pendingApprovals.delete(pending.call_id);
+  pending.clear();
 }
 
 /**
@@ -1314,6 +1329,7 @@ export async function handleRequest(
           args,
           default_action: decision.default_action,
           paused_at: Date.now(),
+          clear: scheduled.clear,
           resolve: (dec) => {
             scheduled.clear();
             resolve({ id: req.id, ok: true, result: dec });
@@ -1361,7 +1377,7 @@ export async function handleRequest(
       }
 
       // plan.mode === "commit" — resolve the call for real.
-      ctx.pendingApprovals.delete(req.call_id);
+      dropPending(ctx, pending);
 
       await emitEvent(ctx, {
         kind: "tool_decision_resolved",
@@ -1556,7 +1572,7 @@ export async function handleRequest(
             // nothing can mis-stamp the running turn. Both audit events land
             // on disk BEFORE the hook is released, so B's continuation can
             // never precede them.
-            ctx.pendingApprovals.delete(req.call_id);
+            dropPending(ctx, pending);
             await emitEvent(ctx, {
               kind: "tool_decision_resolved",
               turn_id: pending.turn_id,
@@ -1581,7 +1597,7 @@ export async function handleRequest(
           // and what B reads if the approver is still listening — record the
           // call as deferred with the reason, and let the new-turn path below
           // decide (SESSION_EXITED / TURN_IN_FLIGHT / a turn).
-          ctx.pendingApprovals.delete(req.call_id);
+          dropPending(ctx, pending);
           await emitEvent(ctx, {
             kind: "tool_decision_resolved",
             turn_id: pending.turn_id,
