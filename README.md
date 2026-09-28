@@ -513,7 +513,7 @@ A `respawn` block (`mode: "auto"`) lets the crash teardown run this same choreog
 
 ## Testing
 
-- `npm run test:unit` — 1449 unit tests, no real claude invocation
+- `npm run test:unit` — 1469 unit tests, no real claude invocation
 - `npm run test:integration` — 37 integration tests. The suite spawns real claude sessions and costs real tokens; the rotation lineage test is the long one, running several minutes across two full context rotations.
 - `bash scripts/self-dogfood.sh` — end-to-end acceptance smoke
 
