@@ -152,7 +152,7 @@ export const MCP_TOOL_DEFS: McpToolDef[] = [
     description:
       "Provide the output of a deferred command that the human ran manually. " +
       "If the call is still paused in the approval hook (paused for a decision, not yet resolved), its turn is still running, its hook has not timed out and the composed output fits in 64 KiB, the output is delivered to B as that call's own result inside that turn — the call auto-resolves as `defer` and the response says via: \"hook\". " +
-      "Otherwise — the call was deferred earlier, or the paused call is stale (its turn has ended, the approver hook timed out, or the composed output exceeds 64 KiB) — the output is sent as a new user turn at the next turn boundary (via: \"turn\"); refused with TURN_IN_FLIGHT while a turn is running — retry after its turn_completed or turn_failed.",
+      "Otherwise — the call was deferred earlier, or the paused call is stale (its turn has ended or was interrupted, the approver hook timed out, or the composed output exceeds 64 KiB) — the output is sent as a new user turn at the next turn boundary (via: \"turn\"); refused with TURN_IN_FLIGHT while a turn is running — retry after its turn_completed or turn_failed.",
     inputSchema: {
       type: "object",
       properties: {

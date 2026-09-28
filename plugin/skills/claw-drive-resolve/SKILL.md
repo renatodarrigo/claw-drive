@@ -55,7 +55,7 @@ The user has invoked this skill to resolve a tool call that's paused waiting for
    }
    ```
 
-   The response's `via` says how it reached B: `"hook"` — the call was still paused in a running turn and the output arrived as that call's own result inside that turn; `"turn"` — the call was deferred earlier, or was stale (its turn had ended, its hook had timed out, or the composed output exceeded 64 KiB), and the output went in as a new turn. A `TURN_IN_FLIGHT` refusal means B's turn is still running: wait for its `turn_completed` or `turn_failed` (`poll_turn` reports `completed` / `failed`; the Monitor may hide a `turn_completed` that ends without a sentinel token), then call again — the deferred record is kept.
+   The response's `via` says how it reached B: `"hook"` — the call was still paused in a running turn and the output arrived as that call's own result inside that turn; `"turn"` — the call was deferred earlier, or was stale (its turn had ended or been interrupted, its hook had timed out, or the composed output exceeded 64 KiB), and the output went in as a new turn. A `TURN_IN_FLIGHT` refusal means B's turn is still running: wait for its `turn_completed` or `turn_failed` (`poll_turn` reports `completed` / `failed`; the Monitor may hide a `turn_completed` that ends without a sentinel token), then call again — the deferred record is kept.
 
    **C. `defer` without stdout/exit:** run `claw-drive defer <call_id>` — MCP `resolve_tool_call` accepts only `approve` and `reject`. The hook is released with a `DEFERRED:` denial, B continues (usually ending its turn to wait for the output), and the output is provided later via case B, where it goes in as a new turn (`via: "turn"`). The `--remember` flag is honoured here — derives a defer rule.
 
