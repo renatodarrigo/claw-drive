@@ -23,7 +23,8 @@ MENTAL MODEL
                  and appends events to the session's log.
   Approver hook  the gate B's tool calls pass through; auto_approve resolves
                  here, auto_reject/auto_defer/escalate_default pause for you.
-  Events flow A <- B. Consume them with 'watch' (for the Monitor tool) or 'tail'.
+  Events flow A <- B. Consume them with 'watch' (for the Monitor tool) or
+  'tail'.
 
 THE DRIVING LOOP
   1. start    spawn B in a cwd with a policy (and optional brief).
@@ -40,8 +41,8 @@ THE DRIVING LOOP
   Sentinel vocabulary: B emits [NEEDS-INPUT] when it needs you and [DONE] when
   the task is complete; watch surfaces a turn as actionable only when one of
   those trailing tokens is present. An idle event fires when a session goes
-  quiet (default 600s). A silent-miss backstop catches turns that end without a
-  sentinel.
+  quiet (default 600s). A silent-miss backstop surfaces a token-less turn
+  whose final line ends in '?'.
 
 POLICY & SAFETY
   Each session runs under a policy of ordered rule lists:
