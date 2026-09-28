@@ -249,7 +249,7 @@ A policy is either `"bypass"` (no gating) or an object. Rules are evaluated `aut
 }
 ```
 
-On timeout: a paused call nobody resolves is denied in B by the approver hook's own fail-secure timeout — the approver script self-times-out 5s before claude's 600s hook ceiling (exit 2 / deny). A shorter `decision_timeout_seconds` releases the call with the rule's `default_action` instead — `approve` for a call no list matched (paused by `escalate_default: true`), `reject` for an `auto_reject` match, `defer` for an `auto_defer` match. With `escalate_default: false` an unmatched call never pauses: it is denied at once, by policy.
+On timeout: a paused call nobody resolves is denied in B by the approver hook's own fail-secure timeout — the approver script self-times-out 5s before claude's 600s hook ceiling (exit 2 / deny). A `decision_timeout_seconds` shorter than that releases the call with the rule's `default_action` instead — `approve` for a call no list matched (paused by `escalate_default: true`), `reject` for an `auto_reject` match, `defer` for an `auto_defer` match. With `escalate_default: false` an unmatched call never pauses: it is denied at once, by policy.
 
 ### Session budget (circuit-breaker)
 
@@ -406,9 +406,9 @@ If you see `error` events with `"unparseable stream-json line"`, claude's output
 
 ### `decision_timeout_seconds: 3600` (1 hour)
 
-The v0.2 start-time default. If an escalation sits unresolved for this long, the runner fires the rule's `default_action` (`approve` for plain escalations, `reject` for `auto_reject` matches, `defer` for `auto_defer` matches) and emits `tool_decision_resolved(resolved_by:"timeout")`. You can override per-session via `start_session`'s `decision_timeout_seconds` arg, or per-policy via the policy object's field.
+The v0.2 start-time default. If an escalation sits unresolved for this long, the runner fires the rule's `default_action` (`approve` for plain escalations, `reject` for `auto_reject` matches, `defer` for `auto_defer` matches) and emits `tool_decision_resolved(resolved_by:"timeout")`. The approver hook has its own fail-secure timeout of about 10 minutes (595s, under claude's 600s hook ceiling): a decision still open then is denied in B whatever the rule's default, and a resolution or default after that point is recorded but no longer reaches B — so a default meant to reach B needs a shorter value. You can override per-session via `start_session`'s `decision_timeout_seconds` arg, or per-policy via the policy object's field.
 
-The v0.1 default was 300 s. It was a footgun for long-running interactive sessions — if the driver's monitor had a transient gap, sensitive calls auto-approved silently. 1 h gives humans enough slack.
+The v0.1 default was 300 s. It was a footgun for long-running interactive sessions — if the driver's monitor had a transient gap, sensitive calls auto-approved silently. 1 h keeps the approve default from ever reaching an unattended call: the approver hook's own deny comes first.
 
 ### `claw-drive watch` defaults to current seq
 

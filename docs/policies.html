@@ -175,6 +175,8 @@ claw-drive policy lint --max-severity warn ./my-policy.json   # exit 1 on any wa
       <li><code>auto_defer</code> match → <code>defer</code> on timeout.</li>
     </ul>
 
+    <p>The approver hook has its own fail-secure timeout of about 10 minutes (595s, under claude's 600s hook ceiling): a decision still open then is denied in B whatever the rule's default, and a resolution or default after that point is recorded but no longer reaches B — so a default meant to reach B needs a shorter <code>decision_timeout_seconds</code>.</p>
+
     <p>Override per-session via <code>start_session</code>'s <code>decision_timeout_seconds</code> argument, or per-policy via the field above.</p>
 
     <div class="callout">
