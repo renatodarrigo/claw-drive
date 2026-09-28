@@ -192,8 +192,9 @@ interface PendingApproval {
   default_action: DecisionAction;
   /** Date.now() at registration — bounds hook delivery (HOOK_DELIVERY_WINDOW_MS). */
   paused_at: number;
-  /** Cancels the decision timer. Idempotent; dropPending calls it at every
-   * site that removes the entry, before any await. */
+  /** Cancels the decision timer. Idempotent; every resolution site removes
+   * the entry through dropPending, which calls it before any await (the
+   * timer's own onFire removes the entry only once it has fired). */
   clear: () => void;
   resolve: (decision: { behavior: "allow" | "deny"; message?: string }) => void;
 }
@@ -202,8 +203,9 @@ interface PendingApproval {
  * Remove a paused call from the pending set and cancel its decision timer in
  * the same synchronous step. Every resolution path writes its audit events
  * (awaited appends) before releasing the hook; a timer firing inside that
- * window would hand the hook the timeout's verdict and record a stray
- * deferred call, so the timer must be gone before the first await.
+ * window would record a second, timeout-resolved decision (for a defer
+ * default, a stray deferred call too) and could hand the hook the timeout's
+ * verdict, so the timer must be gone before the first await.
  */
 function dropPending(ctx: RunnerContext, pending: PendingApproval): void {
   ctx.pendingApprovals.delete(pending.call_id);
