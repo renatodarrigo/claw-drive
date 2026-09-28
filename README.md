@@ -12,7 +12,7 @@ Drive-as-user MCP server + CLI for Claude Code. Lets one Claude Code session dri
 
 - Your **dev session** (Session A, running Claude Code where you're building something) asks claw-drive to spawn one or more fresh **driven sessions** — Session B, C, D, …, each in its own directory.
 - Each driven session is a real `claude -p --input-format=stream-json --output-format=stream-json` subprocess. It runs like a user would — it even uses hooks. Sessions run in parallel; each has its own policy, scenario brief, and event log.
-- Every tool call a driven session makes is gated through a PreToolUse hook that talks to claw-drive's runner. Policy rules auto-approve a call, pause it for you (with an approve, reject or defer default if nobody answers), or deny it outright.
+- Every tool call a driven session makes is gated through a PreToolUse hook that talks to claw-drive's runner. Policy rules auto-approve a call, pause it for you, or deny it outright.
 - Events stream to `~/.claw-drive/sessions/<id>/events.jsonl` per session — MCP `poll_*` tools and `claw-drive tail` both read it. `claw-drive pending` (and the MCP tool listing) shows awaiting-approval calls across every running session in one view.
 
 ## Install
@@ -249,7 +249,7 @@ A policy is either `"bypass"` (no gating) or an object. Rules are evaluated `aut
 }
 ```
 
-On timeout: a paused call nobody resolves within `decision_timeout_seconds` gets the rule's `default_action` — `approve` for a call no list matched (paused by `escalate_default: true`), `reject` for an `auto_reject` match, `defer` for an `auto_defer` match. With `escalate_default: false` an unmatched call never pauses: it is denied at once, by policy. The approver script self-times-out 5s before claude's 600s hook ceiling and fails secure (exit 2 / deny).
+On timeout: a paused call nobody resolves is denied in B by the approver hook's own fail-secure timeout — the approver script self-times-out 5s before claude's 600s hook ceiling (exit 2 / deny). A shorter `decision_timeout_seconds` releases the call with the rule's `default_action` instead — `approve` for a call no list matched (paused by `escalate_default: true`), `reject` for an `auto_reject` match, `defer` for an `auto_defer` match. With `escalate_default: false` an unmatched call never pauses: it is denied at once, by policy.
 
 ### Session budget (circuit-breaker)
 
